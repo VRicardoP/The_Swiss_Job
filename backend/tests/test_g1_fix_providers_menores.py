@@ -10,11 +10,7 @@
 
 import xml.etree.ElementTree as ET
 
-import providers.dailyremote as dailyremote_mod
-import providers.workingnomads as workingnomads_mod
-from providers.careerjet import CareerjetProvider
 from providers.ictjobs import ICTJobsProvider
-from providers.jobgether import JobgetherProvider
 from providers.jsearch import JSearchProvider
 from providers.translatorscafe import TranslatorsCafeProvider
 
@@ -39,28 +35,6 @@ class TestP31NullExplicito:
         raw = {"job_title": None, "employer_name": "Acme", "job_apply_link": None}
         result = JSearchProvider().normalize_job(raw)
         assert result["title"] == ""
-
-
-class TestP33PaginacionSegura:
-    def test_safe_int_string(self):
-        assert JobgetherProvider._safe_int("5") == 5
-
-    def test_safe_int_basura_es_falsy(self):
-        # 0 falsy → el llamante sigue paginando hasta su tope (sin default 1
-        # silencioso ni TypeError con `page >= "5"`).
-        assert JobgetherProvider._safe_int(None) == 0
-        assert JobgetherProvider._safe_int("cinco") == 0
-        assert CareerjetProvider._safe_int({}) == 0
-
-
-class TestP34SetsMuertos:
-    def test_workingnomads_sin_set_muerto(self):
-        assert not hasattr(workingnomads_mod, "_RELEVANT_CATEGORIES"), (
-            "set muerto reintroducido sin cablearlo a ningún filtro"
-        )
-
-    def test_dailyremote_sin_set_muerto(self):
-        assert not hasattr(dailyremote_mod, "_RELEVANT_CATEGORIES")
 
 
 class TestP35Salarios:

@@ -9,11 +9,9 @@
 
 import json
 
-import httpx
 import pytest
 from bs4 import BeautifulSoup
 
-from providers.publicjobs import PublicJobsProvider
 from scrapers.tes import TESScraper
 from utils import fetch_diagnostics as diag
 
@@ -26,55 +24,6 @@ def _fast_backoff(monkeypatch):
         return None
 
     monkeypatch.setattr("utils.http.asyncio.sleep", _no_sleep)
-
-
-class TestP11PublicjobsMudo:
-    @pytest.mark.asyncio
-    async def test_http_500_sale_como_error_no_empty(self, monkeypatch):
-        """G1/P1-1: un 500 debe registrar issue → classify `error`, no `empty`."""
-
-        async def _fake_get(self, url, **kwargs):
-            return httpx.Response(500, text="boom")
-
-        monkeypatch.setattr(httpx.AsyncClient, "get", _fake_get)
-
-        diag.begin()
-        jobs = await PublicJobsProvider().fetch_jobs("")
-        issues = diag.issues()
-
-        assert jobs == []
-        assert issues, "el fallo HTTP debe quedar registrado en fetch_diagnostics"
-        assert diag.classify(len(jobs), issues) == "error"
-
-    @pytest.mark.asyncio
-    async def test_json_ilegible_sale_como_error(self, monkeypatch):
-        async def _fake_get(self, url, **kwargs):
-            return httpx.Response(200, text="<html>not json</html>")
-
-        monkeypatch.setattr(httpx.AsyncClient, "get", _fake_get)
-
-        diag.begin()
-        jobs = await PublicJobsProvider().fetch_jobs("")
-        issues = diag.issues()
-
-        assert jobs == []
-        assert diag.classify(len(jobs), issues) == "error"
-
-    @pytest.mark.asyncio
-    async def test_estructura_sveltekit_desconocida_sale_como_error(self, monkeypatch):
-        """Un 200 con JSON válido pero sin 'nodes' es estructura rota, no sequía."""
-
-        async def _fake_get(self, url, **kwargs):
-            return httpx.Response(200, json={"renamed": []})
-
-        monkeypatch.setattr(httpx.AsyncClient, "get", _fake_get)
-
-        diag.begin()
-        jobs = await PublicJobsProvider().fetch_jobs("")
-        issues = diag.issues()
-
-        assert jobs == []
-        assert diag.classify(len(jobs), issues) == "error"
 
 
 def _next_data_html(payload: dict) -> BeautifulSoup:

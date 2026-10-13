@@ -20,7 +20,6 @@ from models.job_filter import JobFilter
 from models.user import User
 from services.matching.identity import resolve_core_profile_id
 from services.profiles.core_client import default_client_factory
-from services.routing import CAPABILITY_MATCHING, legacy_owns, resolve_mode
 
 logger = logging.getLogger(__name__)
 
@@ -100,12 +99,7 @@ async def sync_exclusions_to_core(
             return {"status": "idle"}
         sent_version = row.version
         payload = {"version": sent_version, "exclusions": row.exclusions}
-        mode = await resolve_mode(db, CAPABILITY_MATCHING, user_id)
-        pid = (
-            await resolve_core_profile_id(db, user_id)
-            if not legacy_owns(mode)
-            else None
-        )
+        pid = await resolve_core_profile_id(db, user_id)
         await db.execute(
             update(ExclusionSyncState)
             .where(
@@ -114,8 +108,6 @@ async def sync_exclusions_to_core(
             .values(last_attempt_at=func.now())
         )
         await db.commit()  # no database lock/transaction while waiting for HTTP
-        if legacy_owns(mode):
-            return {"status": "local", "mode": mode}
         if pid is None:
             raise ValueError("sin_vinculo")
         async with (client_factory or default_client_factory)() as client:

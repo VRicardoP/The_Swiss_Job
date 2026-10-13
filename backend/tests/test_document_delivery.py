@@ -16,7 +16,6 @@ from models.generated_document import GeneratedDocument
 from models.jobhunt_profile_map import JobhuntProfileMap
 from models.user import User
 from services.documents.core_client import CoreDocuments
-from services.routing import set_routing
 from services.documents.delivery import (
     DocumentDeliveryError,
     deliver,
@@ -24,7 +23,7 @@ from services.documents.delivery import (
     operation_status,
 )
 from tests.conftest import TestSessionLocal
-from tests.test_documents_contract import seed_user
+from tests.test_applications_contract import seed_user
 
 
 @pytest.fixture
@@ -33,7 +32,6 @@ async def prepared(db_session, monkeypatch):
     pid, operation = uuid.uuid4(), uuid.uuid4()
     db_session.add(JobhuntProfileMap(user_id=uid, core_profile_id=pid))
     await db_session.commit()
-    await set_routing(db_session, "documents", "core_primary", profile_id=uid)
     monkeypatch.setattr(settings, "CORE_CONSUMER_KEY", "test.only")
     args = dict(
         operation_id=operation,

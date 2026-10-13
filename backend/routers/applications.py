@@ -1,15 +1,7 @@
-"""Job application tracking endpoints — CRUD + stats.
+"""Locally owned job application CRUD and statistics endpoints.
 
-A.SEAM (plan §15bis) + escrituras C-4: estos endpoints consumen la capacidad
-CANDIDATURAS a traves de la costura (services/applications) — la
-implementacion la decide `jobhunt_routing` por perfil+capacidad, con default
-'local'. Con routing 'local' el comportamiento es byte-identico al previo (la
-logica vive movida verbatim en services/applications/local.py). Con routing
-core_primary/rollback_pending el CRUD lo sirve el cliente C-4 del core SIN
-fallback silencioso: CoreUnavailableError → 503 y
-ApplicationsUnsupportedError (cotas del contrato, p.ej. applied_url) → 501
-honestos, nunca una escritura local que bifurque el estado. La validacion
-HTTP sigue aqui.
+The router owns HTTP validation and delegates to the fixed SwissJob storage
+authority.
 """
 
 import logging

@@ -161,14 +161,6 @@ def setup_schedules() -> None:
             replace_existing=True,
         )
 
-    # Semantic dedup: daily at 04:00 CET
-    scheduler.add_job(
-        _dispatch_dedup_semantic,
-        CronTrigger(hour=4, timezone="Europe/Zurich"),
-        id="dedup_semantic",
-        replace_existing=True,
-    )
-
     # URL health check: DIARIA a las 03:00 CET (antes: semanal los domingos).
     # V.4 — con 3000 ofertas por ejecución, una pasada completa del corpus
     # (~19k activas) tarda <=7 días. Semanal + 200/run tardaba ~2,3 años y
@@ -180,15 +172,7 @@ def setup_schedules() -> None:
         replace_existing=True,
     )
 
-    # Run saved searches every N minutes
-    scheduler.add_job(
-        _dispatch_saved_searches,
-        IntervalTrigger(minutes=settings.SCHEDULER_SEARCH_INTERVAL_MINUTES),
-        id="run_saved_searches",
-        replace_existing=True,
-    )
-
-    # Limpieza de ofertas caducadas: diario a las 03:30 CET (antes del dedup de las 04:00)
+    # Limpieza de ofertas caducadas: diario a las 03:30 CET.
     scheduler.add_job(
         _dispatch_cleanup_stale,
         CronTrigger(hour=3, minute=30, timezone="Europe/Zurich"),
@@ -240,11 +224,9 @@ def setup_schedules() -> None:
         )
 
     logger.info(
-        "Scheduler configured: daily harvest=%s, dedup daily 04:00, "
-        "URL check daily 03:00, saved searches every %d min, "
+        "Scheduler configured: daily harvest=%s, URL check daily 03:00, "
         "cleanup stale jobs daily 03:30",
         settings.SCHEDULER_DAILY_HARVEST_ENABLED,
-        settings.SCHEDULER_SEARCH_INTERVAL_MINUTES,
     )
 
 
@@ -258,19 +240,9 @@ def _dispatch_fetch_providers() -> None:
     logger.debug("Dispatched tasks.fetch_providers")
 
 
-def _dispatch_dedup_semantic() -> None:
-    celery_app.send_task("tasks.dedup_semantic_batch")
-    logger.debug("Dispatched tasks.dedup_semantic_batch")
-
-
 def _dispatch_check_urls() -> None:
     celery_app.send_task("tasks.check_job_urls")
     logger.debug("Dispatched tasks.check_job_urls")
-
-
-def _dispatch_saved_searches() -> None:
-    celery_app.send_task("tasks.search_tasks.run_saved_searches")
-    logger.debug("Dispatched tasks.search_tasks.run_saved_searches")
 
 
 def _dispatch_fetch_scrapers() -> None:

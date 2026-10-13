@@ -151,30 +151,9 @@ class HarvestPolicy(NamedTuple):
 # ---------------------------------------------------------------------------
 _POLICIES: dict[str, HarvestPolicy] = {
     # --- WINDOW — el inventario confirmó fecha de publicación utilizable ---
-    "ostjob": HarvestPolicy(WINDOW, "API chmedia: dateFirstPublished (ISO8601)"),
-    "zentraljob": HarvestPolicy(WINDOW, "API chmedia: dateFirstPublished (ISO8601)"),
-    "nav_arbeidsplassen": HarvestPolicy(WINDOW, "API: _source.published (ISO8601)"),
-    "publicjobs": HarvestPolicy(WINDOW, "API: publicFrom (ISO8601 Z)"),
-    "jobgether": HarvestPolicy(WINDOW, "API: createdAt (ISO8601 Z)"),
-    "arbeitnow": HarvestPolicy(WINDOW, "API: created_at (epoch en segundos)"),
     # Reclasificada de FULL ("INCIERTO: /api/jobs devolvió página de error")
     # en VD.9: la API real es api.thehub.io y su detalle SÍ trae fecha.
-    "thehub": HarvestPolicy(
-        WINDOW,
-        "API v2 (api.thehub.io): createdAt del detalle (ISO8601 Z) — es la"
-        " fecha de publicación: la página pública lo muestra como 'Posted'"
-        " con el mismo valor (sonda VD.9, 2026-08-15)",
-    ),
-    "remotive": HarvestPolicy(WINDOW, "API: publication_date (ISO8601 sin TZ)"),
-    "workingnomads": HarvestPolicy(WINDOW, "API: pub_date (ISO8601 con offset)"),
-    "weworkremotely": HarvestPolicy(WINDOW, "RSS: pubDate (RFC822)"),
-    "euremotejobs": HarvestPolicy(WINDOW, "RSS WP: pubDate (RFC822)"),
-    "jobspresso": HarvestPolicy(WINDOW, "RSS WP: pubDate (RFC822)"),
-    "globaljobs": HarvestPolicy(WINDOW, "RSS: pubDate (RFC822, a medianoche)"),
-    "zebis": HarvestPolicy(WINDOW, "RSS: pubDate (RFC822)"),
-    "financejobs": HarvestPolicy(WINDOW, "__NEXT_DATA__: datePosted (ISO8601)"),
     "tes": HarvestPolicy(WINDOW, "__NEXT_DATA__: advert.startDate (ISO8601)"),
-    "irishjobs": HarvestPolicy(WINDOW, "__PRELOADED_STATE__: datePosted (ISO8601 Z)"),
     "schuljobs": HarvestPolicy(
         WINDOW, "JSON-LD del detalle (ya descargado): datePosted (YYYY-MM-DD)"
     ),

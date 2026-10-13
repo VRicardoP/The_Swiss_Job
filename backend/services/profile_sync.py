@@ -14,17 +14,16 @@ from sqlalchemy import func, select, update
 from config import settings
 from database import async_session
 from models.profile_sync_state import ProfileSyncState
+from models.user import User
 from services.matching.identity import resolve_core_profile_id, set_profile_link
 from services.profiles.core_client import default_client_factory
-from services.routing import (
-    CAPABILITY_MATCHING,
-    MODE_CORE_PRIMARY,
-    legacy_owns,
-    resolve_mode,
-    set_routing,
-)
 
 logger = logging.getLogger(__name__)
+
+
+async def lock_profile_writer(db, user_id):
+    """Lock the account root before a profile row to match erasure order."""
+    await db.execute(select(User.id).where(User.id == user_id).with_for_update())
 
 
 async def profile_sync_status(db, user_id):
@@ -98,7 +97,6 @@ async def sync_profile_snapshot(db, user_id, client_factory=None):
         factory = client_factory or default_client_factory
         if factory is default_client_factory and not settings.CORE_CONSUMER_KEY:
             raise ValueError("not_configured")
-        mode = await resolve_mode(db, CAPABILITY_MATCHING, user_id)
         pid = await _ensure_core_profile_id(db, user_id, factory)
         await db.execute(
             update(ProfileSyncState)
@@ -118,14 +116,6 @@ async def sync_profile_snapshot(db, user_id, client_factory=None):
             raise ValueError("invalid_ack")
         if ack > sent_version:
             raise ValueError("core_version_ahead")
-        if legacy_owns(mode):
-            await set_routing(
-                db,
-                CAPABILITY_MATCHING,
-                MODE_CORE_PRIMARY,
-                profile_id=user_id,
-                updated_by="profile_snapshot_delivery",
-            )
         await db.execute(
             update(ProfileSyncState)
             .where(

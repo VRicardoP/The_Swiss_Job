@@ -19,21 +19,13 @@ import httpx
 import pytest
 
 from config import settings
-from providers.arbeitnow import ArbeitnowProvider
-from providers.base_chmedia import build_chmedia_url
 from providers.careerjet import CareerjetProvider
-from providers.euremotejobs import EURemoteJobsProvider
-from providers.globaljobs import GlobalJobsProvider
-from providers.jobgether import JobgetherProvider
-from providers.jobspresso import JobspressoProvider
 from providers.jooble import JoobleProvider
-from providers.nav_arbeidsplassen import NavArbeidsplassenProvider
 from providers.proz import ProzProvider
 from providers.reliefweb import ReliefWebProvider
 from providers.remoteco import RemoteCoProvider
 from providers.restricted import RestrictedPartnerProvider
 from providers.untalent import UNTalentProvider
-from providers.weworkremotely import WeWorkRemotelyProvider
 from utils import fetch_diagnostics as diag
 from utils.http import fetch_rss, fetch_with_retry
 
@@ -199,14 +191,7 @@ class TestP13SeguirRedirecciones:
         assert waits == [1.0, 2.0, 4.0], f"backoff exponencial esperado, hubo {waits}"
 
 
-_RSS_PROVIDERS = [
-    GlobalJobsProvider,
-    WeWorkRemotelyProvider,
-    JobspressoProvider,
-    EURemoteJobsProvider,
-    ProzProvider,
-    RemoteCoProvider,
-]
+_RSS_PROVIDERS = [ProzProvider, RemoteCoProvider]
 
 
 class TestP26EstructuraIlegibleEsError:
@@ -371,86 +356,6 @@ class TestP311JoobleTotalCount:
         assert len(jobs) == JoobleProvider.MAX_PAGES
 
 
-class TestP312ChmediaUrlConstante:
-    """G3/P3-12: sin enlace usable NO se inventa https://{domain} (VD.1)."""
-
-    def test_sin_enlace_devuelve_cadena_vacia(self):
-        assert build_chmedia_url("ostjob.ch", {}) == ""
-
-    def test_mailto_sin_alternativa_devuelve_cadena_vacia(self):
-        raw = {"urlApplication": "mailto:hr@schule.ch"}
-        assert build_chmedia_url("ostjob.ch", raw) == ""
-
-    def test_dos_ofertas_sin_enlace_no_comparten_url(self):
-        a = build_chmedia_url("ostjob.ch", {"urlApplication": "mailto:a@x.ch"})
-        b = build_chmedia_url("ostjob.ch", {"urlApplication": "mailto:b@y.ch"})
-        assert a == b == ""  # ambas se descartan en _process_raw_jobs, no colisionan
-
-    def test_externalid_sigue_construyendo_url(self):
-        raw = {"externalId": "12345"}
-        assert build_chmedia_url("ostjob.ch", raw) == "https://ostjob.ch/stelle/12345"
-
-
-class TestP313IdentidadCanonica:
-    """G3/P3-13: la reemisión de la misma vacante creaba una fila nueva."""
-
-    def test_arbeitnow_mismo_puesto_con_id_distinto_comparte_hash(self):
-        provider = ArbeitnowProvider()
-        base = {
-            "title": "Senior Google Performance Analytics Manager",
-            "company_name": "eFly Marketplace Services GmbH",
-            "description": "<p>x</p>",
-            "location": "Stuttgart",
-        }
-        url = (
-            "https://www.arbeitnow.com/jobs/companies/efly-marketplace-services-gmbh/"
-            "senior-google-performance-analytics-manager-stuttgart-"
-        )
-        first = provider.normalize_job({**base, "url": url + "459633"})
-        repost = provider.normalize_job({**base, "url": url + "198909"})
-
-        assert first["hash"] == repost["hash"]
-        # La URL publicada sigue siendo la real de cada emisión.
-        assert repost["url"].endswith("198909")
-
-    def test_arbeitnow_puestos_distintos_no_colapsan(self):
-        provider = ArbeitnowProvider()
-        base = {"company_name": "ACME", "description": "", "location": "Bern"}
-        a = provider.normalize_job(
-            {**base, "title": "Lehrer", "url": "https://x.com/jobs/lehrer-1"}
-        )
-        b = provider.normalize_job(
-            {**base, "title": "Koch", "url": "https://x.com/jobs/koch-2"}
-        )
-        assert a["hash"] != b["hash"]
-
-    def test_jobgether_mismo_puesto_con_objectid_distinto_comparte_hash(self):
-        provider = JobgetherProvider()
-        base = {
-            "title": "Partnership Engagement Manager",
-            "companyData": {"name": "ACME"},
-            "requiredLocations": "Remote",
-        }
-        first = provider.normalize_job(
-            {**base, "slug": "6a805c16490731f1e1a56c93-partnership-engagement-manager"}
-        )
-        repost = provider.normalize_job(
-            {**base, "slug": "6b9091270000000000000000-partnership-engagement-manager"}
-        )
-
-        assert first["hash"] == repost["hash"]
-        assert repost["url"].endswith(
-            "/offer/6b9091270000000000000000-partnership-engagement-manager"
-        )
-
-    def test_jobgether_slug_sin_objectid_se_respeta_entero(self):
-        provider = JobgetherProvider()
-        base = {"title": "Accountant", "companyData": {"name": "ACME"}}
-        a = provider.normalize_job({**base, "slug": "accountant-madrid"})
-        b = provider.normalize_job({**base, "slug": "accountant-berlin"})
-        assert a["hash"] != b["hash"]
-
-
 class TestP314NullExplicito:
     """G3/P3-14: `null` explícito rompía con AttributeError (o mentía)."""
 
@@ -494,56 +399,9 @@ class TestP314NullExplicito:
         assert ReliefWebProvider().normalize_job(raw)["remote"] is True
 
 
-class TestP315NavTotalYRestricted:
-    """G3/P3-15: `hits.total` en formato ES6 y el `[]` mudo de restricted."""
-
-    @staticmethod
-    def _hit(idx: int) -> dict:
-        return {
-            "_id": f"uuid-{idx}",
-            "_source": {
-                "title": f"Rådgiver {idx}",
-                "businessName": "NAV",
-                "uuid": f"uuid-{idx}",
-                "properties": {"remote": "Hjemmekontor"},
-            },
-        }
-
-    def test_total_hits_formato_es6_y_es7(self):
-        provider = NavArbeidsplassenProvider()
-        assert provider._total_hits({"total": 1234}) == 1234
-        assert provider._total_hits({"total": {"value": 1234}}) == 1234
-        assert provider._total_hits({"total": "1234"}) == 1234
-        assert provider._total_hits({}) == 0
-
+class TestRestrictedProviderVisibility:
     @pytest.mark.asyncio
-    async def test_formato_es6_no_rompe_ni_corta_la_paginacion(self, monkeypatch):
-        seen: list[int] = []
-
-        def _handler(request: httpx.Request) -> httpx.Response:
-            offset = int(request.url.params.get("from", 0))
-            seen.append(offset)
-            return httpx.Response(
-                200,
-                json={
-                    "hits": {
-                        "total": 1000,  # ES6: entero, no {"value": N}
-                        "hits": [self._hit(len(seen))],
-                    }
-                },
-            )
-
-        _mock_transport(monkeypatch, _handler)
-
-        jobs = await NavArbeidsplassenProvider().fetch_jobs("")
-
-        assert jobs, "un total en formato ES6 no debe tumbar la fuente"
-        assert len(seen) > len(  # más de una página por faceta
-            [o for o in seen if o == 0]
-        )
-
-    @pytest.mark.asyncio
-    async def test_restricted_con_credencial_y_sin_conector_registra_issue(self):
+    async def test_configured_without_connector_is_visible_as_error(self):
         class _Fake(RestrictedPartnerProvider):
             SOURCE_NAME = "fake_partner"
             AUTHORIZED_ROUTE = "feed partner"
@@ -552,20 +410,16 @@ class TestP315NavTotalYRestricted:
                 return "tok"
 
         diag.begin()
-        jobs = await _Fake().fetch_jobs("")
-
-        assert jobs == []
+        assert await _Fake().fetch_jobs("") == []
         assert diag.classify(0, diag.issues()) == "error"
 
     @pytest.mark.asyncio
-    async def test_restricted_sin_credencial_sigue_mudo_y_sin_peticiones(self):
+    async def test_unconfigured_provider_performs_no_request(self):
         class _Fake(RestrictedPartnerProvider):
             SOURCE_NAME = "fake_partner_off"
             CREDENTIAL_ATTR = "MISSING_TOKEN_ATTR"
             AUTHORIZED_ROUTE = "feed partner"
 
         diag.begin()
-        jobs = await _Fake().fetch_jobs("")
-
-        assert jobs == []
+        assert await _Fake().fetch_jobs("") == []
         assert diag.classify(0, diag.issues()) == "empty"

@@ -98,13 +98,7 @@ class Settings(BaseSettings):
     SCHEDULER_ENABLED: bool = True
     SCHEDULER_FETCH_INTERVAL_MINUTES: int = 30
 
-    # Per-source core handover (JSON arrays of exact registry names).
-    # Empty preserves current operation. Requires worker drain/restart BEFORE
-    # core activation; startup flags cannot revoke a task already in flight.
-    LEGACY_DISABLED_PROVIDERS: list[str] = Field(default_factory=list)
-    LEGACY_DISABLED_SCRAPERS: list[str] = Field(default_factory=list)
-
-    # Cosecha diaria autónoma: encadena fetch → embeddings → dedup → matching
+    # Cosecha diaria autónoma: encadena las dos familias de productores retenidas.
     # UNA vez al día a hora VARIABLE (patrón circadiano; evita intervalos de
     # reloj, ver a.txt §5/§10). Cuando está activa, sustituye al fetch por
     # intervalos (providers/scrapers) y todo corre sin intervención del usuario.
@@ -113,17 +107,6 @@ class Settings(BaseSettings):
     # Jitter en horas: la ejecución se adelanta/retrasa hasta ±N horas, de modo
     # que cada día cae a una hora distinta dentro de la franja diurna.
     SCHEDULER_DAILY_HARVEST_JITTER_HOURS: int = 4
-
-    # Embedding model
-    EMBEDDING_MODEL_NAME: str = "paraphrase-multilingual-MiniLM-L12-v2"
-    EMBEDDING_DEVICE: str = "cpu"
-    EMBEDDING_BATCH_SIZE: int = 64
-    # Precarga del modelo en la API al arrancar. La API NO embebe (el matching usa
-    # embeddings precalculados; los embeddings de perfil/ofertas son tareas del
-    # worker), así que por defecto NO precarga (False): evita cargar ~400MB en el
-    # proceso de la API para nada. El worker de la cola "ai" lo carga perezosamente.
-    # (True = warming en background, por si algún día la API llegara a necesitarlo.)
-    EMBEDDING_PRELOAD_ON_STARTUP: bool = False
 
     # CV upload
     CV_MAX_SIZE_MB: int = 10
@@ -298,13 +281,12 @@ class Settings(BaseSettings):
     # cada fuente, así que un umbral uniforme cerraría ofertas VIVAS.
     MAINTENANCE_URL_CHECK_LIMIT: int = 3000
 
-    # A.SEAM (plan §15bis) — costura por capacidad + jobhunt_routing
+    # Core service connection for transferred capabilities.
     # URL interna del /v1 del core (plan §21: puerto dedicado, SOLO red
     # interna de compose, nunca ngrok). El servicio compose es `core-api`.
     CORE_API_BASE_URL: str = "http://core-api:8000/v1"
     # Credencial de consumer emitida por el core: "key_id.secret" (ADR-09).
-    # Vacia => toda ruta a core falla como CoreUnavailable (y core_read cae
-    # a local); no se hace ni una peticion sin credencial.
+    # Empty credentials fail closed before any Core request.
     CORE_CONSUMER_KEY: str = ""
     CORE_INBOX_TOKEN: str = ""
     # H9/T12: presupuesto TOTAL del recorrido del feed. CORE_HTTP_TIMEOUT_SECONDS
@@ -324,10 +306,6 @@ class Settings(BaseSettings):
     FEEDBACK_WRITES_FROZEN: bool = False
     # Freeze CRUD/manual runs AND scheduled search writers during handover.
     SAVED_SEARCH_WRITES_FROZEN: bool = False
-    # TTL de la cache en proceso del routing: acota la staleness entre
-    # procesos/workers (la invalidacion transaccional cubre el proceso local).
-    ROUTING_CACHE_TTL_SECONDS: float = 5.0
-
     # Compliance (TD-06)
     COMPLIANCE_BLOCK_THRESHOLD: int = 3
     # Reintento del kill-switch (V.0): horas tras el último bloqueo antes de

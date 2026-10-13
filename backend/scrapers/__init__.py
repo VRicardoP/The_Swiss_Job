@@ -1,10 +1,6 @@
 """Scraper registry: discover and instantiate all HTML-scraping providers."""
 
-from config import settings
-from services.legacy_sources import disabled_sources
-from scrapers.financejobs import FinancejobsScraper
 from scrapers.gastrojob import GastrojobScraper
-from scrapers.irishjobs import IrishJobsScraper
 from scrapers.myscience import MyScienceScraper
 from scrapers.schuljobs import SchulJobsScraper
 from scrapers.stelle_admin import StelleAdminScraper
@@ -24,14 +20,7 @@ _SCRAPER_CLASSES: dict[str, type[BaseJobProvider]] = {
     "stelle_admin": StelleAdminScraper,
     "tes": TESScraper,
     "schuljobs": SchulJobsScraper,
-    # Reactivados gracias a la capa anti-detección (scraper_stealth): con las
-    # cabeceras realistas (client hints + Sec-Fetch) ambos vuelven a devolver
-    # HTTP 200 con datos. Sonda en vivo: myscience ~14 jobs/pág, financejobs ~10.
     "myscience": MyScienceScraper,
-    "financejobs": FinancejobsScraper,
-    # Irlanda: IrishJobs.ie + Jobs.ie (misma plataforma StepStone, SSR
-    # __PRELOADED_STATE__; remoto derivado del scope /jobs/work-from-home)
-    "irishjobs": IrishJobsScraper,
     # medjobs (med-jobs.com) SIGUE deshabilitado: está tras un challenge duro de
     # Cloudflare (/cdn-cgi/challenge-platform) que el Playwright endurecido local
     # NO supera. Requiere un browser stealth remoto de pago vía CDP
@@ -54,17 +43,13 @@ _SCRAPER_CLASSES: dict[str, type[BaseJobProvider]] = {
 
 
 def get_all_scrapers() -> list[BaseJobProvider]:
-    """Construct only scrapers not handed over to the core."""
-    disabled = disabled_sources(settings.LEGACY_DISABLED_SCRAPERS, _SCRAPER_CLASSES)
-    return [cls() for name, cls in _SCRAPER_CLASSES.items() if name not in disabled]
+    """Construct every registered scraper."""
+    return [cls() for cls in _SCRAPER_CLASSES.values()]
 
 
 def get_scraper(name: str) -> BaseJobProvider | None:
     """Return a single scraper instance by name, or None."""
     cls = _SCRAPER_CLASSES.get(name)
-    disabled = disabled_sources(settings.LEGACY_DISABLED_SCRAPERS, _SCRAPER_CLASSES)
-    if name in disabled:
-        return None
     return cls() if cls else None
 
 

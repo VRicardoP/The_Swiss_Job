@@ -60,7 +60,7 @@ async def test_school_without_canonical_vacancy_can_be_saved_cleared_and_viewed(
         return httpx.Response(
             200,
             json={
-                "profile_id": fake.profile_id,
+                "profile_id": str(fake.profile_id),
                 "school_job_id": jid,
                 **json.loads(request.content),
             },

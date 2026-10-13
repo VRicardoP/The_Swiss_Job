@@ -1,4 +1,4 @@
-"""Tests for the provider registry."""
+"""Tests for the providers SwissJob still owns."""
 
 from providers import (
     get_all_providers,
@@ -8,91 +8,48 @@ from providers import (
 )
 from services.job_service import BaseJobProvider
 
+EXPECTED = {
+    "adzuna",
+    "careerjet",
+    "jooble",
+    "jsearch",
+    "remoteco",
+    "proz",
+    "jobcloud_partner",
+    "linkedin_authorized",
+    "indeed_partner",
+    "glassdoor_partner",
+    "xing_partner",
+    "jobicy",
+}
 
-class TestProviderRegistry:
-    def test_get_provider_names_registered(self):
-        # 20 providers "clásicos" (17 + 3 remoto UE-norte: thehub/jobgether/
-        # nav_arbeidsplassen + jobicy, reactivado 2026-09-02: ya no es
-        # tech-only y su API respondió con el nicho de los perfiles reales)
-        # + 5 fuentes RESTRINGIDAS (restricted_ready) = 26.
-        # remoteok/himalayas/ictjobs/swisstechjobs están desactivados a
-        # propósito (tech-only); authenticjobs/dailyremote/translatorscafe
-        # retirados en VD.6 (2026-08-14): sus feeds ya no existen en el portal.
-        # Las restringidas se registran pero arrancan deshabilitadas (gated
-        # por credencial de partner).
-        names = get_provider_names()
-        assert len(names) == 26
-        # Las retiradas de VD.6 NO deben reaparecer sin decisión explícita.
-        assert "authenticjobs" not in names
-        assert "dailyremote" not in names
-        assert "translatorscafe" not in names
-        assert "remotive" in names
-        assert "jooble" in names
-        assert "careerjet" in names
-        assert "ostjob" in names
-        assert "zebis" in names
-        assert "publicjobs" in names
-        assert "globaljobs" in names
-        # Nuevas fuentes de remoto europeo/nórdico
-        assert "thehub" in names
-        assert "jobgether" in names
-        assert "nav_arbeidsplassen" in names
-        # Fuentes restringidas presentes en el catálogo
-        assert "jobcloud_partner" in names
-        assert "linkedin_authorized" in names
 
-    def test_get_provider_known(self):
-        provider = get_provider("remotive")
-        assert provider is not None
-        assert isinstance(provider, BaseJobProvider)
-        assert provider.get_source_name() == "remotive"
+def test_registry_contains_exactly_owned_sources():
+    assert set(get_provider_names()) == EXPECTED
 
-    def test_get_provider_unknown_returns_none(self):
-        assert get_provider("nonexistent") is None
 
-    def test_get_provider_without_key_returns_none(self):
-        # jsearch requires JSEARCH_RAPIDAPI_KEY which is empty by default
-        provider = get_provider("jsearch")
-        assert provider is None
+def test_known_free_provider_is_constructed():
+    provider = get_provider("proz")
+    assert isinstance(provider, BaseJobProvider)
+    assert provider.get_source_name() == "proz"
 
-    def test_get_all_providers_returns_no_key_providers(self):
-        """Should return at least the 10 providers that don't need API keys."""
-        providers = get_all_providers()
-        names = [p.get_source_name() for p in providers]
-        assert len(providers) >= 10
-        # These should always be present (no key required)
-        assert "remotive" in names
-        assert "arbeitnow" in names
-        assert "weworkremotely" in names
-        assert "workingnomads" in names
-        assert "ostjob" in names
-        assert "zentraljob" in names
-        assert "publicjobs" in names
-        assert "zebis" in names
-        assert "globaljobs" in names
-        assert "proz" in names
 
-    def test_all_providers_are_base_job_provider(self):
-        for provider in get_all_providers():
-            assert isinstance(provider, BaseJobProvider)
+def test_unknown_and_missing_key_are_not_constructed():
+    assert get_provider("nonexistent") is None
+    assert get_provider("jsearch") is None
 
-    def test_all_providers_have_unique_source_names(self):
-        providers = get_all_providers()
-        names = [p.get_source_name() for p in providers]
-        assert len(names) == len(set(names))
 
-    def test_log_provider_status_returns_all_providers(self):
-        status = log_provider_status()
-        assert len(status) == 26
-        # Free providers should be enabled
-        assert status["remotive"] == "enabled"
-        assert status["arbeitnow"] == "enabled"
-        # Los 3 nuevos (API pública sin key) arrancan habilitados
-        assert status["thehub"] == "enabled"
-        assert status["jobgether"] == "enabled"
-        assert status["nav_arbeidsplassen"] == "enabled"
-        # Key-gated providers should show disabled reason
-        assert "disabled" in status.get("jsearch", "")
-        # Fuentes restringidas: deshabilitadas sin credencial de partner
-        assert "disabled" in status.get("jobcloud_partner", "")
-        assert "disabled" in status.get("xing_partner", "")
+def test_constructed_providers_are_unique_base_providers():
+    providers = get_all_providers()
+    names = [provider.get_source_name() for provider in providers]
+    assert all(isinstance(provider, BaseJobProvider) for provider in providers)
+    assert len(names) == len(set(names))
+    assert {"proz", "remoteco", "jobicy"} <= set(names)
+
+
+def test_status_reports_exact_registry_and_key_gates():
+    status = log_provider_status()
+    assert set(status) == EXPECTED
+    assert status["proz"] == "enabled"
+    assert "disabled" in status["jsearch"]
+    assert "disabled" in status["jobcloud_partner"]

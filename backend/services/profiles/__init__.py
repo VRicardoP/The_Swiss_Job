@@ -1,10 +1,4 @@
-"""Capacidad PERFILES detras de costura — A.SEAM (plan §15bis).
-
-API publica del paquete: el puerto, sus errores y el resolver que decide
-implementacion (local|core) via jobhunt_routing. El vinculo de identidad
-usuario legacy -> perfil core se comparte con matching
-(services/matching/identity.py: es POR USUARIO, no por capacidad).
-"""
+"""Locally owned editable profile and Core delivery client support."""
 
 from .core_client import CoreProfile, clear_profile_cache
 from .local import LocalProfile
@@ -14,12 +8,11 @@ from .port import (
     ProfilePort,
     ProfileUnsupportedError,
 )
-from .seam import FallbackProfile, resolve_profiles
+from .seam import resolve_profiles
 
 __all__ = [
     "CoreProfile",
     "CoreUnavailableError",
-    "FallbackProfile",
     "LocalProfile",
     "ProfileError",
     "ProfilePort",

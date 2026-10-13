@@ -17,107 +17,18 @@ propia paginación quedaron fuera:
   el "error" parcial del colegio 1 lo borraba el "known_page" del colegio 2.
 """
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
-from scrapers.irishjobs import IrishJobsScraper
 from scrapers.schuljobs import SchulJobsScraper
 from scrapers.swiss_schools_inspired import SwissSchoolsInspiredScraper
 from scrapers.swiss_schools_nae import SwissSchoolsNAEScraper
 from utils import fetch_diagnostics as diag
 
 
-def _irish_page(n_items: int, first_id: int = 1) -> MagicMock:
-    """Respuesta de listado StepStone con `n_items` ofertas parseables."""
-    items = [
-        {
-            "id": first_id + i,
-            "title": f"Teacher {first_id + i}",
-            "url": f"/job/t{first_id + i}",
-        }
-        for i in range(n_items)
-    ]
-    blob = json.dumps({"searchResults": {"items": items}})
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.text = (
-        "<html><head><script>"
-        f'window.__PRELOADED_STATE__["app-unifiedResultlist"] = {blob};'
-        "</script></head><body></body></html>"
-    )
-    return resp
-
-
-def _irish_scraper() -> IrishJobsScraper:
-    scraper = IrishJobsScraper()
-    scraper.RATE_LIMIT_SECONDS = 0.0
-    scraper.MAX_RETRIES = 0
-    scraper.RETRY_BACKOFF_SECONDS = 0.0
-    return scraper
-
-
 @pytest.mark.asyncio
-class TestP21IrishjobsRunConHambre:
-    async def test_error_de_red_en_la_pagina_2_marca_el_run(self):
-        """Cosecha parcial + ConnectTimeout → `_stop_reason='error'`."""
-        scraper = _irish_scraper()
-        client = MagicMock()
-        client.get = AsyncMock(
-            side_effect=[_irish_page(25), httpx.ConnectTimeout("boom")]
-        )
-        diag.begin()
-
-        stubs = await scraper._harvest_host(client, "https://www.irishjobs.ie", set())
-
-        assert len(stubs) == 25, "la página 1 sí se cosechó (degradación parcial)"
-        assert scraper._stop_reason == "error", (
-            "el run terminó «con hambre»: el cursor NO debe aprender la página 1"
-        )
-
-    async def test_estado_no_200_en_la_pagina_2_marca_el_run(self):
-        """Fin de listado por HTTP de error ≠ fin de listado real."""
-        scraper = _irish_scraper()
-        bad = MagicMock()
-        bad.status_code = 500
-        bad.text = ""
-        client = MagicMock()
-        client.get = AsyncMock(side_effect=[_irish_page(25), bad])
-        diag.begin()
-
-        await scraper._harvest_host(client, "https://www.irishjobs.ie", set())
-
-        assert scraper._stop_reason == "error"
-
-    async def test_blob_indescifrable_en_la_pagina_2_marca_el_run(self):
-        """Redeploy/HTML inesperado: tampoco es fin de listado."""
-        scraper = _irish_scraper()
-        broken = MagicMock()
-        broken.status_code = 200
-        broken.text = "<html><body>sin blob</body></html>"
-        client = MagicMock()
-        client.get = AsyncMock(side_effect=[_irish_page(25), broken])
-        diag.begin()
-
-        await scraper._harvest_host(client, "https://www.irishjobs.ie", set())
-
-        assert scraper._stop_reason == "error"
-
-    async def test_fin_de_listado_limpio_no_marca_error(self):
-        """No-regresión: la página incompleta es fin de listado legítimo."""
-        scraper = _irish_scraper()
-        client = MagicMock()
-        client.get = AsyncMock(side_effect=[_irish_page(3)])
-        diag.begin()
-
-        stubs = await scraper._harvest_host(client, "https://www.irishjobs.ie", set())
-
-        assert len(stubs) == 3
-        assert scraper._stop_reason is None
-
-
 def _schuljobs_initial_html(n_jobs: int) -> str:
     cards = "".join(
         f'<div class="card"><h3><a class="js-joboffer-detail" '

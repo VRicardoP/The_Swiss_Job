@@ -1,32 +1,7 @@
-"""Puerto de la capacidad PERFILES — A.SEAM (plan §15bis).
+"""Port for the editable profile owned by SwissJob.
 
-Subinterfaz POR CAPACIDAD (no fachada unica `JobHunting`). La operacion es la
-LECTURA del perfil que hoy consume el router (`routers/profile.py` GET
-/api/v1/profile): `get` devuelve un objeto validable como `ProfileResponse`
-o None si el usuario no tiene fila local (el router traduce None a 404).
-
-ESCRITURAS FUERA DEL PUERTO — cota REGISTRADA, no implementada:
-PUT /profile (preferencias y score_weights), POST/DELETE /profile/cv y el
-autofill del CV (tasks/profile_tasks.analyze_cv_and_autofill) quedan SIEMPRE
-en local en esta etapa. Matriz de escritor del plan §15bis: el legacy es el
-escritor autoritativo de `user_profiles` hasta el cutover; la sombra (CDC ->
-proyector B-02) replica {title, cv_text, skills} al core como revisiones de
-perfil. El cambio de escritor llega en Fase C como escritura sincrona contra
-el escritor activo + idempotency key. Consecuencia LEIDA en esta etapa: los
-campos que el core NO tiene se sirven del escritor local (overlay en
-CoreProfile — criterio unificador: ningun estado local puede ser
-inaccesible), y la respuesta del PUT es el recibo del escritor local, nunca
-pasa por la costura.
-
-Export/delete de cuenta y perfil no pasan por esta costura. E.9 exporta ademas
-los documentos desde su autoridad; erase remoto/backups requiere confirmacion
-separada, nunca se infiere del DELETE local.
-
-Dos implementaciones detras del mismo puerto:
-- `LocalProfile` (services/profiles/local.py): lectura actual, sin cambios.
-- `CoreProfile` (services/profiles/core_client.py): cliente de
-  GET /v1/profiles/{id} del core (ETag) + overlay local.
-La eleccion la decide `jobhunt_routing` (services/profiles/seam.py).
+The API reads and writes the local profile. Core receives durable snapshots
+through profile_sync and owns the capabilities transferred separately.
 """
 
 from typing import Protocol

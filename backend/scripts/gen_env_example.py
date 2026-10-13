@@ -2,8 +2,7 @@
 
 El fichero de ejemplo se escribía a mano y derivaba: el 2026-09-28 tenía 28
 claves frente a 130 campos de `Settings`, y le faltaban `CORE_API_BASE_URL`,
-`CORE_CONSUMER_KEY`, `MATCH_SCORE_THRESHOLD` y las listas `LEGACY_DISABLED_*`
-—justo las que deciden qué cosecha quién—. Generarlo desde la fuente de verdad
+`CORE_CONSUMER_KEY` y `MATCH_SCORE_THRESHOLD`. Generarlo desde la fuente de verdad
 convierte la deriva en imposible, y `tests/test_env_example_covers_settings.py`
 falla si alguien vuelve a editarlo a mano y se queda corto.
 
@@ -31,23 +30,6 @@ SENSIBLE = re.compile(r"(PASSWORD|SECRET|KEY|TOKEN|DSN|_URL$|URL_ASYNC$|_BACKEND
 # Valores de producción conocidos que difieren del defecto del código. Vienen del
 # acta del punto 4 (traspaso nativo) y del .env efectivo; NO son secretos.
 PRODUCCION = {
-    "LEGACY_DISABLED_PROVIDERS": [
-        "arbeitnow",
-        "euremotejobs",
-        "globaljobs",
-        "jobgether",
-        "jobspresso",
-        "nav_arbeidsplassen",
-        "ostjob",
-        "publicjobs",
-        "remotive",
-        "thehub",
-        "weworkremotely",
-        "workingnomads",
-        "zebis",
-        "zentraljob",
-    ],
-    "LEGACY_DISABLED_SCRAPERS": ["financejobs", "irishjobs"],
     "MATCH_SCORE_THRESHOLD": 42.0,
 }
 

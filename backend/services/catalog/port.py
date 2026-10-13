@@ -1,13 +1,7 @@
-"""Puerto de la capacidad CATALOGO — A.SEAM (plan §15bis).
+"""Read port for the catalog owned by Core.
 
-Subinterfaz POR CAPACIDAD (no fachada unica `JobHunting`). Las operaciones
-son exactamente las que hoy consumen los routers de jobs/busqueda
-(`routers/jobs.py`): busqueda con filtros, estadisticas, fuentes y detalle.
-
-Dos implementaciones detras del mismo puerto:
-- `LocalCatalog` (services/catalog/local.py): motor actual, sin cambios.
-- `CoreCatalog` (services/catalog/core_client.py): cliente HTTP del /v1 del core.
-La eleccion la decide `jobhunt_routing` (services/catalog/seam.py).
+The HTTP router keeps request validation while CoreCatalog implements search
+and detail access. Aggregate operations remain explicit unsupported methods.
 """
 
 from dataclasses import dataclass

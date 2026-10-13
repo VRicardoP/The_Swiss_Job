@@ -30,7 +30,6 @@ nada visible es no-accionable y ningun estado local es inaccesible):
 
 import hashlib
 import json
-import logging
 import uuid
 
 import httpx
@@ -46,17 +45,9 @@ from services.matching import set_profile_link
 from services.profiles import (
     CoreProfile,
     CoreUnavailableError,
-    FallbackProfile,
     LocalProfile,
-    ProfileUnsupportedError,
     clear_profile_cache,
-    core_client,
     resolve_profiles,
-)
-from services.routing import (
-    CAPABILITY_PROFILES,
-    invalidate_routing_cache,
-    set_routing,
 )
 
 TEST_CONSUMER_KEY = "testkid.testsecret"
@@ -105,10 +96,8 @@ LOCAL_ONLY_FIELDS = (
 def _clean_seam_caches():
     """Las caches de routing y de representaciones del perfil son de
     proceso: sin esto un test podria leer el modo o la copia de otro test."""
-    invalidate_routing_cache()
     clear_profile_cache()
     yield
-    invalidate_routing_cache()
     clear_profile_cache()
 
 
@@ -237,7 +226,6 @@ async def seeded(db_session):
     await set_profile_link(db_session, user.id, core_profile_id, updated_by="tests")
     fake = FakeProfileApi(core_profile_id, str(user.id), dict(PROJECTED_CONTENT))
     ports = {
-        "local": LocalProfile(db_session),
         "core": make_core_profile(db_session, fake.transport()),
     }
     return user, ports, fake
@@ -255,7 +243,7 @@ def _response(view) -> ProfileResponse:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("impl", ["local", "core"])
+@pytest.mark.parametrize("impl", ["core"])
 async def test_get_shape_validates_as_profile_response(seeded, impl):
     """FORMA: la vista de ambos backends pasa por el mapeo REAL del router
     y valida como ProfileResponse."""
@@ -265,15 +253,6 @@ async def test_get_shape_validates_as_profile_response(seeded, impl):
     resp = _response(view)
     assert resp.user_id == user.id
     assert resp.has_cv_embedding is True
-
-
-async def test_get_semantics_equivalent_local_vs_core(seeded):
-    """Con la proyeccion al dia (content EXACTO, PF.5) ambas implementaciones
-    sirven la MISMA respuesta HTTP, campo a campo."""
-    user, ports, _ = seeded
-    local = _response(await ports["local"].get(user))
-    core = _response(await ports["core"].get(user))
-    assert core.model_dump() == local.model_dump()
 
 
 async def test_core_serves_projected_fields_from_core(db_session):
@@ -431,34 +410,9 @@ async def test_core_revision_missing_projected_key_is_unavailable(db_session):
 # ---------------------------------------------------------------------------
 
 
-async def test_resolve_profiles_default_is_local(db_session):
+async def test_resolve_profiles_is_local(db_session):
     port = await resolve_profiles(db_session, uuid.uuid4())
     assert isinstance(port, LocalProfile)
-
-
-async def test_resolve_profiles_core_read_is_fallback(db_session):
-    user_id = uuid.uuid4()
-    await set_routing(db_session, CAPABILITY_PROFILES, "core_read", profile_id=user_id)
-    port = await resolve_profiles(db_session, user_id)
-    assert isinstance(port, FallbackProfile)
-
-
-async def test_resolve_profiles_core_primary_has_no_fallback(db_session):
-    user_id = uuid.uuid4()
-    await set_routing(
-        db_session, CAPABILITY_PROFILES, "core_primary", profile_id=user_id
-    )
-    port = await resolve_profiles(db_session, user_id)
-    assert isinstance(port, CoreProfile)
-
-
-async def test_resolve_profiles_profile_row_beats_wildcard(db_session):
-    """Canary POR PERFIL: la fila exacta gana al comodin del consumer."""
-    user_id = uuid.uuid4()
-    await set_routing(db_session, CAPABILITY_PROFILES, "core_primary")  # comodin
-    await set_routing(db_session, CAPABILITY_PROFILES, "local", profile_id=user_id)
-    assert isinstance(await resolve_profiles(db_session, user_id), LocalProfile)
-    assert isinstance(await resolve_profiles(db_session, uuid.uuid4()), CoreProfile)
 
 
 # ---------------------------------------------------------------------------
@@ -466,163 +420,9 @@ async def test_resolve_profiles_profile_row_beats_wildcard(db_session):
 # ---------------------------------------------------------------------------
 
 
-async def test_fallback_serves_local_when_core_down(seeded, db_session):
-    user, ports, _ = seeded
-
-    def refuse(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("connection refused", request=request)
-
-    seam = FallbackProfile(
-        make_core_profile(db_session, httpx.MockTransport(refuse)),
-        ports["local"],
-    )
-    view = await seam.get(user)
-    assert view is not None
-    assert view.title == LOCAL_PROFILE["title"]
-
-
-async def test_canary_warn_levels_separate_expected_from_actionable(caplog):
-    """Regla de la 2ª rev. A.SEAM catalogo, aplicada a perfiles: Unsupported
-    (cota del contrato, esperado) va a DEBUG; el core CAIDO
-    (CoreUnavailableError) es el UNICO WARNING del canary."""
-
-    class _Unsupported:
-        async def get(self, user):
-            raise ProfileUnsupportedError("cota contrato")
-
-    class _Down:
-        async def get(self, user):
-            raise CoreUnavailableError("core caido")
-
-    class _Fallback:
-        async def get(self, user):
-            return None
-
-    with caplog.at_level(logging.DEBUG, logger="services.profiles.seam"):
-        await FallbackProfile(_Unsupported(), _Fallback()).get(None)
-        await FallbackProfile(_Down(), _Fallback()).get(None)
-    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
-    debugs = [r for r in caplog.records if r.levelno == logging.DEBUG]
-    assert len(warns) == 1 and "core caido" in warns[0].getMessage()
-    assert len(debugs) == 1 and "cota contrato" in debugs[0].getMessage()
-
-
 # ---------------------------------------------------------------------------
 # Router: la costura llega a HTTP con las semanticas de la matriz de escritor
 # ---------------------------------------------------------------------------
-
-
-async def _register(client) -> tuple[uuid.UUID, dict]:
-    email = f"seam-{uuid.uuid4().hex[:8]}@example.com"
-    resp = await client.post(
-        "/api/v1/auth/register",
-        json={"email": email, "password": "TestPass123!", "gdpr_consent": True},
-    )
-    assert resp.status_code == 201
-    headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
-    me = await client.get("/api/v1/auth/me", headers=headers)
-    return uuid.UUID(me.json()["id"]), headers
-
-
-async def test_router_core_primary_core_down_read_503_writes_local_200(
-    client, db_session, monkeypatch
-):
-    """core_primary SIN fallback silencioso: core inaccesible => 503 en la
-    LECTURA; las ESCRITURAS y GDPR son del escritor LOCAL y siguen sirviendo
-    (criterio unificador: ningun estado local inaccesible por el routing)."""
-    monkeypatch.setattr(settings, "CORE_CONSUMER_KEY", "")
-    user_id, headers = await _register(client)
-    await set_routing(
-        db_session, CAPABILITY_PROFILES, "core_primary", profile_id=user_id
-    )
-    resp = await client.get("/api/v1/profile", headers=headers)
-    assert resp.status_code == 503
-    # PUT: escritor local + recibo local, no pasa por la costura de lectura.
-    resp = await client.put(
-        "/api/v1/profile", headers=headers, json={"title": "Written Locally"}
-    )
-    assert resp.status_code == 200
-    assert resp.json()["title"] == "Written Locally"
-    # DELETE /cv: escritor local.
-    resp = await client.delete("/api/v1/profile/cv", headers=headers)
-    assert resp.status_code == 200
-    # GDPR export: siempre almacen local, fuera de la costura.
-    resp = await client.get("/api/v1/profile/export", headers=headers)
-    assert resp.status_code == 200
-    assert resp.json()["profile"]["title"] == "Written Locally"
-
-
-async def test_router_core_read_falls_back_to_local(client, db_session, monkeypatch):
-    """core_read = canary: con el core inaccesible el perfil se sirve LOCAL."""
-    monkeypatch.setattr(settings, "CORE_CONSUMER_KEY", "")
-    user_id, headers = await _register(client)
-    await set_routing(db_session, CAPABILITY_PROFILES, "core_read", profile_id=user_id)
-    resp = await client.get("/api/v1/profile", headers=headers)
-    assert resp.status_code == 200
-    assert resp.json()["user_id"] == str(user_id)
-
-
-async def test_router_default_local_untouched(client):
-    """Sin filas de routing todo sigue local (default seguro del plan)."""
-    _, headers = await _register(client)
-    resp = await client.get("/api/v1/profile", headers=headers)
-    assert resp.status_code == 200
-
-
-@pytest.mark.parametrize("mode", ["core_read", "core_primary"])
-async def test_router_serves_core_content_and_local_write_receipt(
-    client, db_session, monkeypatch, mode
-):
-    """Cableado completo: {title, cv_text, skills} del CORE + resto del
-    escritor local; el PUT devuelve su recibo LOCAL y la lectura siguiente
-    sigue sirviendo la proyeccion (la frescura es la METRICA del canary —
-    GATE-SOMBRA — no un defecto a ocultar)."""
-    user_id, headers = await _register(client)
-    # El perfil creado en el registro esta vacio: darle estado local.
-    resp = await client.put(
-        "/api/v1/profile",
-        headers=headers,
-        json={"title": "Local Title", "salary_min": 80000},
-    )
-    assert resp.status_code == 200
-    core_profile_id = uuid.uuid4()
-    await set_profile_link(db_session, user_id, core_profile_id)
-    fake = FakeProfileApi(
-        core_profile_id,
-        str(user_id),
-        {"title": "Projected Title", "cv_text": None, "skills": ["core-skill"]},
-    )
-
-    def factory() -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            base_url="http://core-api:8000/v1",
-            headers={"Authorization": f"Bearer {TEST_CONSUMER_KEY}"},
-            timeout=1.0,
-            transport=fake.transport(),
-        )
-
-    monkeypatch.setattr(settings, "CORE_CONSUMER_KEY", TEST_CONSUMER_KEY)
-    monkeypatch.setattr(core_client, "default_client_factory", factory)
-    await set_routing(db_session, CAPABILITY_PROFILES, mode, profile_id=user_id)
-
-    resp = await client.get("/api/v1/profile", headers=headers)
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["title"] == "Projected Title"  # del core
-    assert body["skills"] == ["core-skill"]  # del core
-    assert body["salary_min"] == 80000  # del escritor local (cota /v1)
-
-    # Escritura local: recibo inmediato del escritor...
-    resp = await client.put(
-        "/api/v1/profile", headers=headers, json={"title": "Fresh Local Title"}
-    )
-    assert resp.status_code == 200
-    assert resp.json()["title"] == "Fresh Local Title"
-    # ...y la LECTURA sigue sirviendo la proyeccion hasta que la sombra
-    # aterrice (lag del CDC = metrica del canary, cota documentada).
-    resp = await client.get("/api/v1/profile", headers=headers)
-    assert resp.status_code == 200
-    assert resp.json()["title"] == "Projected Title"
 
 
 # ---------------------------------------------------------------------------
@@ -693,24 +493,3 @@ async def test_core_non_list_skills_in_content_is_unavailable(db_session):
     core = make_core_profile(db_session, httpx.MockTransport(handler))
     with pytest.raises(CoreUnavailableError, match="payload invalido"):
         await core.get(user)
-
-
-async def test_fallback_serves_local_on_invalid_payload(seeded, db_session, caplog):
-    """core_read con payload invalido: FallbackProfile sirve el perfil LOCAL
-    (fallback REAL con su WARNING de canary) — el escenario del revisor."""
-    import logging
-
-    user, ports, _ = seeded
-
-    def garbled(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"current_revision": "no-dict"})
-
-    seam = FallbackProfile(
-        make_core_profile(db_session, httpx.MockTransport(garbled)),
-        ports["local"],
-    )
-    with caplog.at_level(logging.WARNING, logger="services.profiles.seam"):
-        view = await seam.get(user)
-    assert view is not None and view.title == LOCAL_PROFILE["title"]
-    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert warns and "payload invalido" in warns[0].getMessage()

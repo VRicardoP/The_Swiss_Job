@@ -1,16 +1,8 @@
-"""Smoke test de migraciones: modelo <-> migracion SIN divergencia (A.SEAM).
+"""Smoke test for runtime table models against the Alembic chain.
 
-Aplica la cadena REAL de Alembic (subprocess, mismo patron que
-jobhunt_core/tests/alembic_runner.py) sobre una BD desechable y compara el
-esquema resultante de las tablas de la costura con el que produce
-`Base.metadata.create_all` del modelo: columnas, PK (nombre incluido),
-check constraints e indices.
-
-Alcance deliberado — SOLO las tablas de A.SEAM (`jobhunt_routing` de
-b7d1a5c9e402 y `jobhunt_profile_map` de c81f4d2e9a57): el resto del esquema
-legacy tiene divergencias conocidas y deliberadas fuera del ORM (columna
-tsvector `search_vector` + trigger creados por migracion/conftest, indice
-HNSW de pgvector), asi que una comparacion global daria ruido, no señal.
+The chain is applied to a disposable database and compared with
+Base.metadata.create_all for the tables that still have runtime ORM models.
+Historical migration-only tables are intentionally outside this comparison.
 """
 
 import os
@@ -34,7 +26,6 @@ _SMOKE_URL = f"{_BASE_URL}/{_SMOKE_DB}"
 
 # tabla de costura -> nombre de PK exigido por el plan/modelo
 SEAM_TABLES = {
-    "jobhunt_routing": "pk_jobhunt_routing",
     "jobhunt_profile_map": "pk_jobhunt_profile_map",
     "generated_documents": "generated_documents_pkey",
     "document_deliveries": "document_deliveries_pkey",

@@ -12,6 +12,14 @@ from tests.conftest import TestSessionLocal
 from tests.test_analytics_router import _auth
 
 
+@pytest.fixture(autouse=True)
+def _school_preference(monkeypatch):
+    async def preference(db, user_id, local_value, *, enabled=None):
+        return local_value if enabled is None else enabled
+
+    monkeypatch.setattr("routers.profile.school_preference", preference)
+
+
 class Core:
     def __init__(self):
         self.version = 0
@@ -72,7 +80,6 @@ def core(monkeypatch):
     remote = Core()
     monkeypatch.setattr(settings, "CORE_PROFILE_SYNC_ENABLED", True)
     monkeypatch.setattr(settings, "CORE_CONSUMER_KEY", "synthetic-test-key")
-    monkeypatch.setattr(sync, "resolve_mode", AsyncMock(return_value="core_primary"))
     monkeypatch.setattr(
         sync, "resolve_core_profile_id", AsyncMock(return_value=uuid.uuid4())
     )
@@ -181,38 +188,6 @@ async def test_missing_enrollment_is_provisioned_before_snapshot(
         ANY, uid, core.enrollment_id, updated_by="profile_snapshot_delivery"
     )
     assert core.body["content"] is not None
-
-
-async def test_local_profile_moves_to_core_only_after_snapshot_ack(
-    client, core, monkeypatch
-):
-    _, uid = await _auth(client)
-    monkeypatch.setattr(sync, "resolve_mode", AsyncMock(return_value="local"))
-    route = AsyncMock()
-    monkeypatch.setattr(sync, "set_routing", route)
-
-    assert (await _deliver(uid))["status"] == "ok"
-    route.assert_awaited_once_with(
-        ANY,
-        sync.CAPABILITY_MATCHING,
-        sync.MODE_CORE_PRIMARY,
-        profile_id=uid,
-        updated_by="profile_snapshot_delivery",
-    )
-
-
-async def test_failed_snapshot_does_not_move_local_profile(client, core, monkeypatch):
-    headers, uid = await _auth(client)
-    monkeypatch.setattr(sync, "resolve_mode", AsyncMock(return_value="local"))
-    route = AsyncMock()
-    monkeypatch.setattr(sync, "set_routing", route)
-    core.fail = True
-
-    assert (await _deliver(uid))["status"] == "pending"
-    route.assert_not_awaited()
-    assert (await client.get("/api/v1/profile/sync-status", headers=headers)).json()[
-        "pending"
-    ]
 
 
 async def test_status_requires_authentication(client):

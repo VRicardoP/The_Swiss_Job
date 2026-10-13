@@ -33,17 +33,8 @@ def _get_watchlist_sources() -> tuple[str, ...]:
     la lista hardcoded cuando se añadían nuevos scrapers (Fase 2-3).
     """
     from scrapers import _SCRAPER_CLASSES
-    from config import settings
-    from services.legacy_sources import disabled_sources
 
-    # Handed-over sources no longer update legacy compliance timestamps. Their
-    # health belongs to core; alerting here would invent a silent-scraper fault.
-    disabled = disabled_sources(settings.LEGACY_DISABLED_SCRAPERS, _SCRAPER_CLASSES)
-    return tuple(
-        k
-        for k in _SCRAPER_CLASSES
-        if k.startswith("swiss_schools_") and k not in disabled
-    )
+    return tuple(k for k in _SCRAPER_CLASSES if k.startswith("swiss_schools_"))
 
 
 # Umbral de "scraper silencioso": si lleva más de N horas sin éxito
@@ -249,7 +240,7 @@ async def _send_digest_async() -> dict[str, Any]:
     from models.match_result import MatchResult
     from models.notification import Notification
     from models.user import User
-    from services.routing import CAPABILITY_MATCHING, legacy_owned_sql
+    from services.matching.identity import core_profile_unlinked_sql
 
     # G1/P3-20 — ventana por MARCA DE AGUA (antes: now-24h fija, que con la
     # deriva del schedule producía solapes o huecos). Primera corrida:
@@ -284,7 +275,7 @@ async def _send_digest_async() -> dict[str, Any]:
             # Preserve the anti-double-matcher gate; school preferences have
             # their own authority, independent of local/core matching.
             users = await enabled_users(
-                db, extra_condition=legacy_owned_sql(User.id, CAPABILITY_MATCHING)
+                db, extra_condition=core_profile_unlinked_sql(User.id)
             )
 
             notified = 0

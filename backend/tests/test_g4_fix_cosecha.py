@@ -77,16 +77,9 @@ import httpx  # noqa: E402
 import pytest  # noqa: E402
 
 from providers.adzuna import AdzunaProvider  # noqa: E402
-from providers.arbeitnow import ArbeitnowProvider  # noqa: E402
 from providers.careerjet import CareerjetProvider  # noqa: E402
-from providers.jobgether import JobgetherProvider  # noqa: E402
 from providers.jooble import JoobleProvider  # noqa: E402
 from providers.jsearch import JSearchProvider  # noqa: E402
-from providers.nav_arbeidsplassen import NavArbeidsplassenProvider  # noqa: E402
-from providers.ostjob import OstjobProvider  # noqa: E402
-from providers.remotive import RemotiveProvider  # noqa: E402
-from providers.workingnomads import WorkingNomadsProvider  # noqa: E402
-from providers.zentraljob import ZentraljobProvider  # noqa: E402
 from config import settings  # noqa: E402
 from utils import fetch_diagnostics as diag  # noqa: E402
 
@@ -121,19 +114,10 @@ def _credenciales(monkeypatch):
 # (provider, cuerpo 200 ilegible)
 _PROVIDERS_ILEGIBLES = [
     (AdzunaProvider, {}),
-    (ArbeitnowProvider, {}),
     (CareerjetProvider, {}),
     (CareerjetProvider, []),
-    (JobgetherProvider, {}),
     (JoobleProvider, {}),
     (JSearchProvider, {}),
-    (NavArbeidsplassenProvider, {}),
-    (OstjobProvider, {}),
-    (OstjobProvider, {"renombrado": []}),
-    (RemotiveProvider, {}),
-    (WorkingNomadsProvider, {}),
-    (ZentraljobProvider, {}),
-    (ZentraljobProvider, {"renombrado": []}),
 ]
 
 
@@ -153,112 +137,3 @@ async def test_un_200_ilegible_sale_error_y_no_empty(
         "indistinguible de un feed legítimamente vacío, que es la clase V.0"
     )
     assert diag.classify(len(jobs), issues) == "error"
-
-
-@pytest.mark.asyncio
-async def test_un_feed_legitimamente_vacio_sigue_saliendo_empty(monkeypatch):
-    """Cota: la estructura CORRECTA sin resultados no puede dar falso positivo."""
-    _mock_transport(monkeypatch, {"items": []})
-    diag.begin()
-    jobs = await OstjobProvider().fetch_jobs("", "Switzerland")
-
-    assert jobs == []
-    assert diag.classify(len(jobs), diag.issues()) == "empty"
-
-
-# ---------------------------------------------------------------------------
-# P3-4 / P3-5 — irishjobs: las DOS señales del run de dos hosts
-# ---------------------------------------------------------------------------
-
-from tests.test_g3_fix_flancos_gemelos import (  # noqa: E402
-    _client_factory,
-    _identities,
-    _irish_scraper,
-    _page,
-)
-from unittest.mock import AsyncMock, MagicMock  # noqa: E402
-
-
-class TestP34LaSenalConHambreSobreviveAlSegundoHost:
-    """`_stop_reason` tiene TRES estados y cada uno lo consume un guard
-    distinto. El acumulador `had_error` solo conservaba uno."""
-
-    @pytest.mark.asyncio
-    async def test_el_known_page_del_host_2_no_borra_el_hambre_del_host_1(
-        self, monkeypatch
-    ):
-        scraper = _irish_scraper()
-        # Presupuesto de 1 página: el host 1 lo agota SIN early-stop — se queda
-        # «con hambre» (`_stop_reason is None`), que es lo que dispara el
-        # re-bootstrap de scraping_tasks.
-        monkeypatch.setattr(scraper, "_max_pages_this_run", 1)
-        # El cursor conoce entero el host 2 → su página 1 es `known_page`.
-        scraper._known_urls = set(_identities(101))
-
-        client = MagicMock()
-        client.get = AsyncMock(
-            side_effect=[_page("ie", first_id=1), _page("js", first_id=101)]
-        )
-        diag.begin()
-        with patch("scrapers.irishjobs.httpx.AsyncClient", _client_factory(client)):
-            await scraper._scrape_with_httpx("")
-
-        assert scraper._stop_reason is None, (
-            "el `known_page` del host 2 borró el «con hambre» del host 1: el "
-            "re-bootstrap del presupuesto (ebb2c51) no se dispara y las "
-            "ofertas hundidas bajo el horizonte no se descargan nunca"
-        )
-
-    @pytest.mark.asyncio
-    async def test_el_error_sigue_ganando_a_todo(self, monkeypatch):
-        """No-regresión de G3/P2-1: el `error` mantiene la máxima prioridad."""
-        scraper = _irish_scraper()
-        scraper._known_urls = set(_identities(101))
-        client = MagicMock()
-        client.get = AsyncMock(
-            side_effect=[
-                _page("ie", first_id=1),
-                httpx.ConnectTimeout("boom"),
-                _page("js", first_id=101),
-            ]
-        )
-        diag.begin()
-        with patch("scrapers.irishjobs.httpx.AsyncClient", _client_factory(client)):
-            await scraper._scrape_with_httpx("")
-
-        assert scraper._stop_reason == "error"
-
-    def test_la_prioridad_esta_declarada(self):
-        from services.scraper_engine import BaseScraper
-
-        combinar = BaseScraper.combine_stop_reasons
-        assert combinar(["error", None, "known_page"]) == "error"
-        assert combinar([None, "known_page"]) is None
-        assert combinar(["known_page", "known_page"]) == "known_page"
-        assert combinar([]) is None
-
-
-class TestP35UnBloqueoCortaElRun:
-    @pytest.mark.asyncio
-    async def test_los_dos_hosts_no_suman_dos_bloqueos_en_un_run(self):
-        """Los dos hosts comparten `SOURCE_NAME`: sin el corte, el kill-switch
-        de 3 bloques salta en 2 runs en vez de 3."""
-        scraper = _irish_scraper()
-        reportes: list[str] = []
-
-        async def _harvest_bloqueado(client, host, seen_ids):
-            """Host que topa con un challenge y reporta bloqueo a compliance."""
-            reportes.append(host)
-            scraper._run_block_reported = True
-            return []
-
-        with (
-            patch.object(scraper, "_harvest_host", _harvest_bloqueado),
-            patch("scrapers.irishjobs.httpx.AsyncClient", _client_factory(MagicMock())),
-        ):
-            await scraper._scrape_with_httpx("")
-
-        assert len(reportes) == 1, (
-            f"{len(reportes)} bloqueos reportados en UN run: el kill-switch "
-            "(threshold 3) saltaría en 2 runs en vez de 3"
-        )

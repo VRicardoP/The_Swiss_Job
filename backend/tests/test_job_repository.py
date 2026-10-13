@@ -263,7 +263,7 @@ class TestJobRepository:
 
 @pytest.mark.anyio
 class TestUpsertContentVersioning:
-    """PF.1: content_hash + invalidación de embedding al cambiar el contenido."""
+    """PF.1: persist the stable content hash used by downstream change tracking."""
 
     async def test_content_hash_set_on_insert(self, db_session):
         repo = JobRepository(db_session)
@@ -277,118 +277,6 @@ class TestUpsertContentVersioning:
         ).scalar_one()
         assert ch is not None
         assert len(ch) == 32
-
-    async def test_embedding_invalidated_when_content_changes(self, db_session):
-        """Contenido cambiado -> embedding=NULL para forzar re-embed + re-match."""
-        repo = JobRepository(db_session)
-        h = _job_dict()["hash"]
-
-        await repo.upsert_job(_job_dict(description="v1"))
-        await db_session.commit()
-        # Simular el embedding ya generado por el pipeline.
-        await db_session.execute(
-            update(Job).where(Job.hash == h).values(embedding=[0.1] * 384)
-        )
-        await db_session.commit()
-
-        await repo.upsert_job(_job_dict(description="v2"))
-        await db_session.commit()
-
-        emb = (
-            await db_session.execute(select(Job.embedding).where(Job.hash == h))
-        ).scalar_one()
-        assert emb is None
-
-    async def test_embedding_preserved_when_content_unchanged(self, db_session):
-        repo = JobRepository(db_session)
-        h = _job_dict()["hash"]
-
-        await repo.upsert_job(_job_dict(description="same"))
-        await db_session.commit()
-        await db_session.execute(
-            update(Job).where(Job.hash == h).values(embedding=[0.2] * 384)
-        )
-        await db_session.commit()
-
-        await repo.upsert_job(_job_dict(description="same"))
-        await db_session.commit()
-
-        emb = (
-            await db_session.execute(select(Job.embedding).where(Job.hash == h))
-        ).scalar_one()
-        assert emb is not None
-
-    async def test_embedding_preserved_when_prior_content_hash_null(self, db_session):
-        """Fila anterior a la columna (content_hash=NULL): el re-upsert NO invalida
-        el embedding — evita un re-embed masivo del corpus al desplegar la columna;
-        solo empieza a rastrear el hash de ahí en adelante."""
-        repo = JobRepository(db_session)
-        h = _job_dict()["hash"]
-
-        await repo.upsert_job(_job_dict(description="v1"))
-        await db_session.commit()
-        # Simular fila migrada: content_hash NULL + embedding ya generado.
-        await db_session.execute(
-            update(Job)
-            .where(Job.hash == h)
-            .values(content_hash=None, embedding=[0.3] * 384)
-        )
-        await db_session.commit()
-
-        await repo.upsert_job(_job_dict(description="v1"))  # mismo contenido
-        await db_session.commit()
-
-        emb = (
-            await db_session.execute(select(Job.embedding).where(Job.hash == h))
-        ).scalar_one()
-        assert emb is not None  # conservado
-
-    async def test_embedding_invalidated_when_prior_null_and_text_changed(
-        self, db_session
-    ):
-        """Fila anterior a la columna (content_hash=NULL) cuyo TEXTO cambia: el
-        embedding SÍ se invalida (no queda obsoleto)."""
-        repo = JobRepository(db_session)
-        h = _job_dict()["hash"]
-        await repo.upsert_job(_job_dict(description="legacy-v1"))
-        await db_session.commit()
-        await db_session.execute(
-            update(Job)
-            .where(Job.hash == h)
-            .values(content_hash=None, embedding=[0.4] * 384)
-        )
-        await db_session.commit()
-
-        await repo.upsert_job(_job_dict(description="provider-v2"))  # texto cambia
-        await db_session.commit()
-
-        emb = (
-            await db_session.execute(select(Job.embedding).where(Job.hash == h))
-        ).scalar_one()
-        assert emb is None  # invalidado
-
-    async def test_embedding_preserved_on_non_text_field_change(self, db_session):
-        """Cambiar un campo que NO entra en el texto embebido (logo/salario) NO
-        invalida el embedding (evita re-embeber texto idéntico)."""
-        repo = JobRepository(db_session)
-        h = _job_dict()["hash"]
-        await repo.upsert_job(_job_dict(description="stable", logo=None))
-        await db_session.commit()
-        await db_session.execute(
-            update(Job).where(Job.hash == h).values(embedding=[0.5] * 384)
-        )
-        await db_session.commit()
-
-        # Mismo description/tags; cambian logo y salario (fuera de build_job_text).
-        await repo.upsert_job(
-            _job_dict(description="stable", logo="new-logo", salary_min_chf=99000)
-        )
-        await db_session.commit()
-
-        emb = (
-            await db_session.execute(select(Job.embedding).where(Job.hash == h))
-        ).scalar_one()
-        assert emb is not None  # conservado
 
 
 @pytest.mark.anyio

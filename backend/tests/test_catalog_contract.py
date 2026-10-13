@@ -31,17 +31,14 @@ from datetime import datetime, timezone
 
 import httpx
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
-from models.job import Job
-from schemas.job import JobResponse, JobSearchResponse, JobStats, SourceInfo
+from schemas.job import JobResponse, JobSearchResponse
 from services.catalog import (
     CatalogSearchParams,
     CatalogUnsupportedError,
     CoreCatalog,
     CoreUnavailableError,
-    LocalCatalog,
 )
 from services.catalog.core_client import clear_catalog_feed_cache
 
@@ -220,39 +217,6 @@ def make_core_catalog(
     return CoreCatalog(client_factory=factory)
 
 
-async def seed_local_cases(db: AsyncSession) -> None:
-    for name, case in CASES.items():
-        db.add(
-            Job(
-                hash=CASE_LOCAL_REFS[name],
-                source=case["source"],
-                title=case["title"],
-                company=case["company"],
-                url=case["url"],
-                description=case["description"],
-                location=case["location"],
-                remote=case["remote"],
-                tags=case["tags"],
-                salary_original=case["salary_text"],
-                first_seen_at=FIRST_SEEN,
-                last_seen_at=LAST_SEEN,
-                is_active=True,
-            )
-        )
-    # Vacante retirada: el catalogo (ambos backends) no debe servirla.
-    db.add(
-        Job(
-            hash=INACTIVE_LOCAL_REF,
-            source="test_source",
-            title="Retired Job",
-            company="Gone GmbH",
-            url="https://example.com/job/retired",
-            is_active=False,
-        )
-    )
-    await db.commit()
-
-
 @pytest.fixture(autouse=True)
 def _clean_catalog_feed_cache():
     """La cache de paginas por ETag es de modulo: se limpia por test."""
@@ -262,11 +226,8 @@ def _clean_catalog_feed_cache():
 
 
 @pytest.fixture
-async def catalogs(db_session):
-    """(catalogo, refs_por_caso, ref_inexistente) por implementacion."""
-    await seed_local_cases(db_session)
+async def catalogs():
     return {
-        "local": (LocalCatalog(db_session), CASE_LOCAL_REFS, MISSING_REFS["local"]),
         "core": (make_core_catalog(), CASE_CORE_REFS, MISSING_REFS["core"]),
     }
 
@@ -276,7 +237,7 @@ async def catalogs(db_session):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("impl", ["local", "core"])
+@pytest.mark.parametrize("impl", ["core"])
 @pytest.mark.parametrize("case_name", list(CASES))
 async def test_get_shape_is_job_response(catalogs, impl, case_name):
     """FORMA: el detalle de ambos backends valida como JobResponse."""
@@ -290,80 +251,15 @@ async def test_get_shape_is_job_response(catalogs, impl, case_name):
     assert validated.last_seen_at.tzinfo is not None
 
 
-@pytest.mark.parametrize("case_name", list(CASES))
-async def test_get_semantics_equivalent_local_vs_core(catalogs, case_name):
-    """SEMANTICA: campos exigidos por el contrato identicos entre backends."""
-    local_catalog, local_refs, _ = catalogs["local"]
-    core_catalog, core_refs, _ = catalogs["core"]
-    local_job = JobResponse.model_validate(
-        await local_catalog.get(local_refs[case_name])
-    )
-    core_job = JobResponse.model_validate(await core_catalog.get(core_refs[case_name]))
-    for field in CONTRACT_EQUIVALENT_FIELDS:
-        assert getattr(local_job, field) == getattr(core_job, field), field
-    # La identidad difiere POR CONTRATO: MD5 legacy vs UUID de vacante core.
-    assert local_job.hash == local_refs[case_name]
-    assert core_job.hash == core_refs[case_name]
-
-
-@pytest.mark.parametrize("impl", ["local", "core"])
+@pytest.mark.parametrize("impl", ["core"])
 async def test_get_missing_returns_none(catalogs, impl):
     catalog, _, missing_ref = catalogs[impl]
     assert await catalog.get(missing_ref) is None
 
 
-async def test_get_inactive_not_served_by_either(catalogs):
-    """Solo vacantes ACTIVAS (contrato §2 core; is_active en legacy)."""
-    local_catalog, _, _ = catalogs["local"]
-    core_catalog, _, _ = catalogs["core"]
-    assert await local_catalog.get(INACTIVE_LOCAL_REF) is None
-    # En el core una vacante archivada simplemente no existe en /v1 => 404.
-    assert (
-        await core_catalog.get(str(uuid.uuid5(uuid.NAMESPACE_URL, "archived"))) is None
-    )
-
-
-async def test_core_get_with_legacy_md5_ref_returns_none():
-    """Una ref MD5 legacy (32 hex) PARSEA como UUID sin guiones — el cliente
-    debe cortocircuitar por forma canonica: None y CERO peticiones al core.
-    El transporte falla el test si recibe CUALQUIER peticion, para que no
-    vuelva a pasar por la razon equivocada (antes pasaba via 404 del fake)."""
-
-    def fail_on_any_request(request: httpx.Request) -> httpx.Response:
-        pytest.fail(
-            f"el cliente core emitio una peticion para una ref MD5 legacy: "
-            f"{request.method} {request.url}"
-        )
-
-    catalog = make_core_catalog(transport=httpx.MockTransport(fail_on_any_request))
-    md5_ref = CASE_LOCAL_REFS["python_zurich"]
-    assert len(md5_ref) == 32  # precondicion: forma MD5 legacy, sin guiones
-    assert await catalog.get(md5_ref) is None
-    # Misma cota para la variante en mayusculas (tambien parsea como UUID).
-    assert await catalog.get(md5_ref.upper()) is None
-
-
 # ---------------------------------------------------------------------------
 # search: equivalencia local vs core; stats/sources: cota del contrato /v1
 # ---------------------------------------------------------------------------
-
-
-async def test_search_local_serves_case_set(catalogs):
-    local_catalog, _, _ = catalogs["local"]
-    result = await local_catalog.search(CatalogSearchParams())
-    assert isinstance(result, JobSearchResponse)
-    assert result.total == len(CASES)  # la retirada no se sirve
-    assert {b.title for b in result.data} == {c["title"] for c in CASES.values()}
-
-
-async def test_stats_and_sources_local_shapes(catalogs):
-    local_catalog, _, _ = catalogs["local"]
-    stats = await local_catalog.stats()
-    assert isinstance(stats, JobStats)
-    assert stats.total_jobs == len(CASES)
-    sources = await local_catalog.sources()
-    assert all(isinstance(s, SourceInfo) for s in sources)
-    assert {s.name for s in sources} == {c["source"] for c in CASES.values()}
 
 
 @pytest.mark.parametrize("operation", ["stats", "sources"])
@@ -411,43 +307,6 @@ async def test_core_down_raises_unavailable():
         await catalog.get(CASE_CORE_REFS["python_zurich"])
 
 
-@pytest.mark.asyncio
-async def test_canary_warn_levels_separate_expected_from_actionable(caplog):
-    """2ª rev. A.SEAM: Unsupported (cota /v1, esperado) va a DEBUG; el core
-    CAÍDO (CoreUnavailableError) es el ÚNICO WARNING — la señal del canary
-    no puede ahogarse en ruido esperado por contrato."""
-    import logging
-
-    from services.catalog.core_client import (
-        CatalogUnsupportedError,
-        CoreUnavailableError,
-    )
-    from services.catalog.seam import FallbackCatalog
-
-    class _Primary:
-        async def search(self, params):
-            raise CatalogUnsupportedError("cota /v1")
-
-        async def get(self, job_ref):
-            raise CoreUnavailableError("core caido")
-
-    class _Fallback:
-        async def search(self, params):
-            return {"items": []}
-
-        async def get(self, job_ref):
-            return None
-
-    seam = FallbackCatalog(_Primary(), _Fallback())
-    with caplog.at_level(logging.DEBUG, logger="services.catalog.seam"):
-        await seam.search(None)
-        await seam.get("x")
-    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
-    debugs = [r for r in caplog.records if r.levelno == logging.DEBUG]
-    assert len(warns) == 1 and "core caido" in warns[0].getMessage()
-    assert len(debugs) == 1 and "cota /v1" in debugs[0].getMessage()
-
-
 # ---------------------------------------------------------------------------
 # Payloads invalidos en un 200 (P2 rev. externa): CoreUnavailableError
 # ---------------------------------------------------------------------------
@@ -489,36 +348,12 @@ async def test_core_incompatible_schema_200_is_unavailable(body):
         await catalog.get(CASE_CORE_REFS["python_zurich"])
 
 
-async def test_core_read_falls_back_to_local_on_invalid_payload(db_session, caplog):
-    """core_read con payload invalido del core: FallbackCatalog cae al motor
-    LOCAL (fallback REAL con su WARNING de canary) en vez de propagar un
-    error de forma como 500."""
-    import logging
-
-    from services.catalog import LocalCatalog
-    from services.catalog.seam import FallbackCatalog
-
-    await seed_local_cases(db_session)
-    seam = FallbackCatalog(
-        make_core_catalog(transport=_transport_returning(b"not-json")),
-        LocalCatalog(db_session),
-    )
-    with caplog.at_level(logging.WARNING, logger="services.catalog.seam"):
-        # Ref UUID del core: el payload roto NO revienta la peticion...
-        assert await seam.get(CASE_CORE_REFS["python_zurich"]) is None
-    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert warns and "payload invalido" in warns[0].getMessage()
-    # ...y el resto del catalogo local sigue sirviendose con normalidad.
-    job = await seam.get(CASE_LOCAL_REFS["python_zurich"])
-    assert job is not None and job.title == CASES["python_zurich"]["title"]
-
-
 # ---------------------------------------------------------------------------
 # search por el feed /v1 (cierre de cota C-API-R + filtros 5e8e849)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("impl", ["local", "core"])
+@pytest.mark.parametrize("impl", ["core"])
 async def test_search_shape_and_total(catalogs, impl):
     """FORMA: ambas implementaciones sirven JobSearchResponse con total
     exacto, limit/offset espejados y has_more coherente."""
@@ -536,45 +371,6 @@ SEARCH_FILTER_CASES = {
     "source_csv": (CatalogSearchParams(source="adzuna"), {"devops_remote"}),
     "remote_only": (CatalogSearchParams(remote_only=True), {"devops_remote"}),
 }
-
-
-@pytest.mark.parametrize("impl", ["local", "core"])
-@pytest.mark.parametrize("filter_name", list(SEARCH_FILTER_CASES))
-async def test_search_filters_equivalent_local_vs_core(catalogs, impl, filter_name):
-    """SEMANTICA: los filtros expresables (q/source/remote) seleccionan el
-    MISMO subconjunto de casos en ambos backends."""
-    params, expected = SEARCH_FILTER_CASES[filter_name]
-    catalog, _, _ = catalogs[impl]
-    result = await catalog.search(params)
-    assert {b.title for b in result.data} == {CASES[n]["title"] for n in expected}
-    assert result.total == len(expected)
-
-
-async def test_search_brief_semantics_equivalent(catalogs):
-    """Campos del brief exigidos por el contrato identicos entre backends.
-    La identidad difiere POR CONTRATO (MD5 legacy vs UUID de vacante core:
-    la misma que sirve `get`, para que el detalle haga round-trip)."""
-    local_catalog, local_refs, _ = catalogs["local"]
-    core_catalog, core_refs, _ = catalogs["core"]
-    local_page = await local_catalog.search(CatalogSearchParams())
-    core_page = await core_catalog.search(CatalogSearchParams())
-    local = {b.title: b for b in local_page.data}
-    core = {b.title: b for b in core_page.data}
-    assert set(local) == set(core)
-    for title, brief in local.items():
-        for field in (
-            "company",
-            "location",
-            "remote",
-            "tags",
-            "url",
-            "source",
-            "first_seen_at",
-            "is_active",
-        ):
-            assert getattr(brief, field) == getattr(core[title], field), (title, field)
-    assert {b.hash for b in local.values()} == set(local_refs.values())
-    assert {b.hash for b in core.values()} == set(core_refs.values())
 
 
 UNSUPPORTED_SEARCH_PARAMS = {

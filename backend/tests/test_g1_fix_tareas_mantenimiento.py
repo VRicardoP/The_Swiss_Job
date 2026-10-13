@@ -31,7 +31,6 @@ from tasks.maintenance_tasks import (
     _check_job_urls_async,
     _cleanup_stale_jobs_async,
     check_job_urls,
-    dedup_semantic_batch,
 )
 
 
@@ -137,10 +136,7 @@ class TestP213LinkErrorEnLaCadena:
     def test_la_cadena_se_despacha_con_link_error(self):
         from tasks.pipeline_tasks import daily_harvest
 
-        with (
-            patch("tasks.pipeline_tasks.chain") as mock_chain,
-            patch("tasks.pipeline_tasks._matching_stage_enabled", return_value=True),
-        ):
+        with patch("tasks.pipeline_tasks.chain") as mock_chain:
             mock_chain.return_value.apply_async.return_value = SimpleNamespace(
                 id="chain-1"
             )
@@ -334,31 +330,3 @@ class TestP215AlertaProfesor:
         result = await self._run(db_session, monkeypatch, fake_redis, email_mock)
         assert result["matched"] == 0
         email_mock.send.assert_not_called()
-
-
-class TestP322DedupNoTragaLaExcepcion:
-    def test_fallo_persistente_lanza(self):
-        """G1/P3-22: la cadena debe DETENERSE, no seguir con corpus sin dedup."""
-        # El impl se sustituye por una función SÍNCRONA: si no, la corrutina
-        # creada como argumento de asyncio.run (parcheado para lanzar) quedaba
-        # sin esperar y emitía un RuntimeWarning en un test AJENO (visto en la
-        # suite completa — acoplamiento entre tests que aquí se corta).
-        with (
-            patch(
-                "tasks.maintenance_tasks._dedup_semantic_batch_async",
-                new=lambda batch_size: None,
-            ),
-            patch(
-                "tasks.maintenance_tasks.asyncio.run",
-                side_effect=RuntimeError("BD caída"),
-            ),
-        ):
-            with pytest.raises(Exception):
-                # .apply() ejecuta en proceso; con max_retries=1 el segundo
-                # fallo relanza (Retry/RuntimeError, ambas Exception).
-                result = dedup_semantic_batch.apply(throw=True)
-                if result.failed():
-                    raise result.result
-                assert result.result.get("status") != "error", (
-                    "el fallo no puede volver como retorno normal"
-                )

@@ -11,7 +11,7 @@ FROM python:3.12-slim
 
 ARG INSTALL_BROWSERS=true
 
-# build-essential para psycopg/numpy wheels; curl para healthcheck.
+# build-essential para extensiones con wheels nativas; curl para healthcheck.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
@@ -20,8 +20,6 @@ RUN apt-get update \
 
 # Playwright deja el binario en esta ruta global accesible por cualquier user
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-ENV HF_HOME=/home/app/.cache/huggingface
-ENV SENTENCE_TRANSFORMERS_HOME=/home/app/.cache/huggingface/sentence-transformers
 
 # Python sin buffering para que los logs salgan al stdout en tiempo real
 ENV PYTHONUNBUFFERED=1
@@ -29,8 +27,6 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app
 
 RUN useradd --create-home --shell /bin/bash app
-RUN mkdir -p ${HF_HOME} ${SENTENCE_TRANSFORMERS_HOME} \
-    && chown -R app:app /home/app/.cache
 
 WORKDIR /app
 

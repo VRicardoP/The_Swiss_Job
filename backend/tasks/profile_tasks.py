@@ -77,8 +77,8 @@ async def _analyze_and_autofill_async(user_id: str) -> dict[str, Any]:
     from services.cv_analyzer import CVAnalyzer
     from services.gemini_service import GeminiService
     from services.groq_service import GroqService
-    from services.job_matcher import JobMatcher
-    from services.profile_inputs import autofill_snapshot, embedding_snapshot
+    from services.profile_inputs import autofill_snapshot
+    from services.profile_sync import lock_profile_writer
 
     uid = uuid_mod.UUID(user_id)
     r = aioredis.from_url(settings.REDIS_URL)
@@ -122,6 +122,7 @@ async def _analyze_and_autofill_async(user_id: str) -> dict[str, Any]:
         # --- Guardar campos (transacción corta) ---
         await progress("saving", 70, "Completing your profile…")
         async with task_session() as db:
+            await lock_profile_writer(db, uid)
             p = (
                 await db.execute(
                     select(UserProfile)
@@ -149,42 +150,10 @@ async def _analyze_and_autofill_async(user_id: str) -> dict[str, Any]:
                 p.experience_years = fields["experience_years"]
             if fields.get("remote_pref"):
                 p.remote_pref = RemotePreference(fields["remote_pref"])
-            title_for_emb = p.title or ""
-            skills_for_emb = list(p.skills or [])
-            vector_input = embedding_snapshot(p)
             await db.commit()
 
-        # --- Embedding FUERA de transacción (evita idle_in_transaction si tarda) ---
-        await progress("embedding", 88, "Indexing your profile for matching…")
-        matcher = JobMatcher()
-        combined = " ".join(
-            x for x in [title_for_emb, cv_text, " ".join(skills_for_emb)] if x
-        )
-        emb = await asyncio.to_thread(matcher.encode, combined)
-        async with task_session() as db:
-            p = (
-                await db.execute(
-                    select(UserProfile)
-                    .where(UserProfile.user_id == uid)
-                    .with_for_update()
-                    .execution_options(populate_existing=True)
-                )
-            ).scalar_one_or_none()
-            if p is None or embedding_snapshot(p) != vector_input:
-                await db.rollback()
-                await progress(
-                    "done", 100, "Newer profile kept; old indexing discarded"
-                )
-                return {"status": "discarded_profile_changed"}
-            p.cv_embedding = emb.tolist()
-            await db.commit()
+        await progress("done", 100, "Profile auto-completed from your CV")
 
-        done_msg = (
-            "Profile auto-completed from your CV"
-            if fields
-            else "Profile indexed for matching"
-        )
-        await progress("done", 100, done_msg)
         logger.info(
             "analyze_cv_and_autofill OK user=%s fields=%s", user_id, sorted(fields)
         )

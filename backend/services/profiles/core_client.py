@@ -1,52 +1,7 @@
-"""Implementacion CORE de la capacidad perfiles — A.SEAM (plan §15bis).
+"""Core profile transport primitives and the retained read adapter.
 
-Cliente de GET /v1/profiles/{id} del core. Contrato REAL: jobhunt_core/api/
-v1.py + api/schemas.py — ProfileDTO {id, external_ref, created_at,
-current_revision:{content, content_hash, text_hash}}; ETag de representacion
-con If-None-Match -> 304; auth Bearer key_id.secret, scope profiles:read;
-ownership por consumer con 404 indistinguible de ausente.
-
-DECISIONES (documentadas; las fija test_profiles_contract.py):
-
-IDENTIDAD DE PERFIL. El /v1 solo busca perfiles por SU UUID. El consumer del
-BFF ES `swissjob-shadow` (DECISION DELEGADA sobre CONTRATOS §3: es el
-consumer de SwissJob — el mismo bajo el que la sombra proyecta
-external_ref=str(users.id); el flip de Fase C lo consolida), de modo que los
-perfiles proyectados SON de nuestro tenant y visibles con CORE_CONSUMER_KEY.
-Como el /v1 no expone lookup por external_ref, el vinculo usuario legacy ->
-perfil core se resuelve en la tabla LOCAL `jobhunt_profile_map`
-(services/matching/identity.py — el vinculo es POR USUARIO, no por
-capacidad: la misma fila sirve a matching y a perfiles). La puebla el
-operador al enrolar el canary. Sin vinculo o sin CORE_CONSUMER_KEY:
-CoreUnavailableError SIN emitir peticiones (como catalogo).
-
-MAPEO DTO HONESTO. El core solo tiene del perfil legacy lo que la sombra
-proyecta: content = {title, cv_text, skills} EXACTO (PF.5, proyector B-02).
-Esos TRES campos se sirven del CORE (es la lectura que el canary valida).
-TODO lo demas (experience_years, languages, locations, salary_min/max,
-remote_pref, score_weights, watchlist_schools_enabled, cv_embedding,
-updated_at e ids del contrato legacy) es estado del ESCRITOR LOCAL que el
-/v1 no expone: se sirve de la fila local (criterio unificador — docstring de
-services/profiles/seam.py: ningun estado local puede ser inaccesible).
-Cota registrada: esos campos entraran al core cuando el flip de escritor de
-Fase C amplie el contenido del perfil; mientras, NO se inventan.
-
-RESPALDO LOCAL OBLIGATORIO. Sin fila `user_profiles` no hay overlay ni nada
-editable (el PUT local devolveria 404): se responde None (404 legacy) SIN
-tocar la red — un perfil visible solo-core seria no-accionable.
-
-REVISION VIGENTE OBLIGATORIA. `current_revision` null o sin alguna de las
-tres claves proyectadas = la proyeccion sombra no aterrizo o es anomala
-(PF.5 garantiza las claves): servir huecos ocultaria estado local =>
-CoreUnavailableError (senal WARNING accionable del canary, no un perfil
-vacio en silencio).
-
-FRESCURA. El escritor sigue siendo local: tras un PUT, el core sirve
-{title, cv_text, skills} proyectados con el lag del CDC. Ese lag es la
-METRICA del canary (GATE-SOMBRA), no un defecto a ocultar; el recibo
-inmediato del escritor es la respuesta del propio PUT (local, fuera de la
-costura). ETag por perfil: en el refresco tipico el core responde 304 sin
-cuerpo y se reutiliza la representacion cacheada.
+Profile edits stay local and durable snapshot delivery provisions the linked Core
+identity. The read adapter remains for erasure and contract verification.
 """
 
 import logging

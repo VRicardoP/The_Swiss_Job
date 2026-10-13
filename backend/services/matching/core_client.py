@@ -1,65 +1,7 @@
-"""Implementacion CORE de la capacidad matching — A.SEAM (plan §15bis).
+"""HTTP adapter for the matching feed owned by Core.
 
-Cliente del feed /v1/profiles/{id}/matches del core. Contrato REAL:
-jobhunt_core/api/v1.py + api/schemas.py (A-08/A-09) — aqui, a diferencia de
-catalogo, el core SI sirve la capacidad completa de lectura:
-
-- GET /v1/profiles/{pid}/matches?limit&cursor -> MatchesPageDTO
-  {items[{vacancy, evaluation, state}], next_cursor}. Orden score_final DESC,
-  keyset opaco; ETag de pagina (If-None-Match -> 304); solo vacantes ACTIVAS
-  y sin dismissed; auth Bearer key_id.secret, scope matches:read; ownership
-  por consumer con 404 indistinguible de ausente.
-
-DECISIONES (documentadas; las fija test_matching_contract.py):
-
-IDENTIDAD DE PERFIL. El /v1 solo busca perfiles por SU UUID; el vinculo
-usuario legacy -> perfil core se resuelve en la tabla LOCAL
-`jobhunt_profile_map` (racional en models/jobhunt_profile_map.py). Sin
-vinculo o sin credencial: CoreUnavailableError SIN emitir peticiones.
-
-IDENTIDAD DE VACANTE (leccion del MD5). Cada item del feed se presenta con
-el `job_hash` LEGACY cuando la vacante tiene ALGUN listing de la sombra: el
-proyector B-02 crea fuentes `legacy:<source>` con `external_id` = hash MD5
-del job, y ese external_id viaja en el listing (primary o no — con orden de
-ingestion core→legacy el attach por URL deja el listing legacy como
-NO-primary; P2 rev. externa). La resolucion es DETERMINISTA: candidatos =
-external_id del primary si es `legacy:*`, luego los de los demas listings
-`legacy:*` ordenados por (source, external_id); se sirve el PRIMER candidato
-con Job local de respaldo — asi las ESCRITURAS (feedback, status), que
-siguen en local, operan sobre la misma identidad que el usuario esta viendo.
-Si la vacante no tiene listing legacy (core-nativa), su identidad
-presentable seria el UUID en FORMA CANONICA con guiones — round-trip
-`str(UUID(x))` — nunca una forma que colisione con un MD5 de 32 hex (lo
-fija `legacy_job_ref`); pero en esta etapa esos items NO llegan al feed
-(ver EXCLUSION POR ACCIONABILIDAD).
-
-OVERLAY DEL ESCRITOR LOCAL. Hasta Fase C el BFF es el escritor de
-feedback/status/borradores y la sombra NO proyecta match_results: leer ese
-estado del core seria leer a un no-escritor. El feed del core aporta orden,
-scores y contenido; el estado local se superpone por job_hash y los items
-con feedback negativo local se EXCLUYEN (misma semantica que el motor
-local: "not for me" desaparece de inmediato aunque el core aun lo sirva).
-Corolario: 'saved' es proyeccion PURA de ese estado local (feedback
-positivo) => `saved` se sirve SIEMPRE del escritor local, tambien detras de
-este cliente (criterio unificador, docstring de services/matching/seam.py:
-ningun estado local puede ser inaccesible por el routing).
-
-EXCLUSION POR ACCIONABILIDAD (criterio unificador: nada visible puede ser
-no-accionable mientras el escritor sea local). Un item sin fila local en
-`jobs` — core-nativo, o legacy cuyo Job ya no existe aqui — no admite
-feedback del escritor local (404): se EXCLUYE del feed en esta etapa. Cota
-registrada: esos items reapareceran en Fase C, cuando el flip de escritor
-(escritura sincrona contra el escritor activo + idempotency key) los haga
-accionables. Los huerfanos CON Job local pero sin fila MatchResult si se
-sirven (defaults del modelo) y su feedback upserta la fila minima
-(MatchResultService.submit_feedback).
-
-PAGINACION/TOTAL. El contrato legacy exige `total` exacto y la exclusion por
-feedback local puede tocar cualquier pagina => se recorre el feed COMPLETO
-(paginas de MAX_PAGE_LIMIT, cota MAX_FEED_PAGES contra bucles de cursor) y
-se pagina localmente. El cache de ETag por pagina hace barato el refresco
-(304 sin cuerpo). Los scores conservan la escala del CORE (Fase A: coseno
-en scores.similarity) — la equivalencia de escala NO la exige el contrato.
+It validates paginated Core results, preserves stable identities and applies the
+retained feedback/application overlay only while those separate gates require it.
 """
 
 import asyncio
@@ -502,10 +444,6 @@ class CoreMatching:
         return len(items)
 
     async def facets(self, user_id: uuid.UUID) -> dict:
-        if settings.CORE_FEEDBACK_ENABLED:
-            from .feedback import require_core_feedback_route
-
-            await require_core_feedback_route(self._db, user_id)
         core_profile_id = await resolve_core_profile_id(self._db, user_id)
         if core_profile_id is None:
             raise CoreUnavailableError(
@@ -540,10 +478,6 @@ class CoreMatching:
         offset: int = 0,
         category: str | None = None,
     ) -> tuple[list[dict], int]:
-        if settings.CORE_FEEDBACK_ENABLED:
-            from .feedback import require_core_feedback_route
-
-            await require_core_feedback_route(self._db, user_id)
         core_profile_id = await resolve_core_profile_id(self._db, user_id)
         if core_profile_id is None:
             # Enrutado a core sin enrolar el vinculo de identidad: error de
@@ -1103,7 +1037,9 @@ class CoreMatching:
         generation = (_cache_generation, _profile_generations.get(cache_key[0], 0))
         cached = _etag_cache.get(cache_key)
         headers = {"If-None-Match": cached[0]} if cached else {}
-        params: dict = {"limit": page_limit if category is not None else FEED_PAGE_LIMIT}
+        params: dict = {
+            "limit": page_limit if category is not None else FEED_PAGE_LIMIT
+        }
         if cursor is not None:
             params["cursor"] = cursor
         if category is not None:

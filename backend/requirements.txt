@@ -4,18 +4,13 @@
 # reconstrucción de la imagen era una lotería. En una sola tarde mordió dos veces:
 #   - ruff saltó de 0.15 a 0.16, el conjunto de reglas por defecto creció y
 #     aparecieron 917 «errores» sin que cambiara una línea de código;
-#   - pgvector/numpy empezaron a devolver `list` donde antes daban ndarray, y
-#     tres pruebas de fencing se pusieron rojas solas.
-# Ninguna de las dos era un defecto del proyecto, y las dos costaron diagnóstico.
+#   - una actualización transitiva cambió tipos devueltos por pgvector y rompió
+#     pruebas sin que cambiara una línea de código.
+# Ninguno era un defecto del proyecto, y ambos costaron diagnóstico.
 #
 # Subir una versión es ahora una decisión visible en el diff, no un efecto
 # secundario de reconstruir. `ruff` va a la MISMA versión que fija el CI.
 
-# torch CPU-only: sin esta línea, sentence-transformers arrastra el build CUDA de
-# PyTorch (~4.5 GB: nvidia-*, triton) desde PyPI. El contenedor corre en CPU en el
-# NAS, así que forzamos las wheels +cpu (sortean por delante de las de PyPI por el
-# sufijo de versión local, así que pip las elige sin más cambios).
---extra-index-url https://download.pytorch.org/whl/cpu
 
 # Web framework
 fastapi==0.141.1
@@ -46,9 +41,7 @@ email-validator==2.3.0
 apscheduler==3.11.3
 
 # AI / Matching
-numpy==2.5.3
 langdetect==1.0.9
-sentence-transformers==3.4.1
 groq==0.37.1
 
 # CV Parsing

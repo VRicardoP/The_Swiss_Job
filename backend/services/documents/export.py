@@ -7,16 +7,79 @@ freeze/drain protocol; this user-facing export is not its replacement.
 """
 
 import asyncio
+import base64
 import json
+import uuid
+from datetime import datetime
 
-from sqlalchemy import select
+from fastapi import HTTPException
+from sqlalchemy import select, tuple_
 
 from models.document_delivery import DocumentDelivery
-from schemas.documents import DocumentDeliveryExport
-from .core_client import CoreDocuments
-from .local import LocalDocuments
+from models.generated_document import GeneratedDocument
+from schemas.documents import (
+    DocumentDeliveryExport,
+    DocumentPageResponse,
+    GeneratedDocumentResponse,
+)
 from .port import CoreUnavailableError
 from .seam import resolve_documents
+
+
+class _LocalDocumentArchive:
+    """Read-only access to retained pre-cutover documents for GDPR export."""
+
+    def __init__(self, db):
+        self._db = db
+
+    async def page(self, user_id, cursor=None):
+        stmt = select(GeneratedDocument).where(GeneratedDocument.user_id == user_id)
+        if cursor:
+            try:
+                if len(cursor) > 512:
+                    raise ValueError
+                stamp, identity = json.loads(
+                    base64.b64decode(cursor, altchars=b"-_", validate=True)
+                )
+                stamp, identity = datetime.fromisoformat(stamp), uuid.UUID(identity)
+                if stamp.tzinfo is None:
+                    raise ValueError
+            except (ValueError, TypeError, UnicodeError):
+                raise HTTPException(400, "Invalid document cursor") from None
+            stmt = stmt.where(
+                tuple_(GeneratedDocument.created_at, GeneratedDocument.id)
+                < tuple_(stamp, identity)
+            )
+        docs = (
+            await self._db.scalars(
+                stmt.order_by(
+                    GeneratedDocument.created_at.desc(), GeneratedDocument.id.desc()
+                ).limit(21)
+            )
+        ).all()
+        next_cursor = None
+        if len(docs) > 20:
+            last = docs[19]
+            next_cursor = base64.urlsafe_b64encode(
+                json.dumps([last.created_at.isoformat(), str(last.id)]).encode()
+            ).decode()
+        return DocumentPageResponse(
+            data=[
+                GeneratedDocumentResponse(
+                    id=doc.id,
+                    job_hash=doc.job_hash,
+                    doc_type=doc.doc_type,
+                    content=doc.content,
+                    language=doc.language,
+                    created_at=doc.created_at,
+                    job_title=doc.job_title,
+                    job_company=doc.job_company,
+                )
+                for doc in docs[:20]
+            ],
+            next_cursor=next_cursor,
+        )
+
 
 MAX_EXPORT_ITEMS = 2000
 MAX_EXPORT_BYTES = 32 * 1024 * 1024
@@ -28,9 +91,7 @@ async def export_documents(db, user_id):
         "documents": [],
         "retained_local_documents": [],
         "document_deliveries": [],
-        "documents_authority": "core"
-        if isinstance(authority, CoreDocuments)
-        else "local",
+        "documents_authority": "core",
     }
     size = 0
 
@@ -62,12 +123,7 @@ async def export_documents(db, user_id):
             cursor = page.next_cursor
         raise CoreUnavailableError("Document export exceeds pagination limit")
 
-    target = (
-        result["retained_local_documents"]
-        if isinstance(authority, CoreDocuments)
-        else result["documents"]
-    )
-    await collect(LocalDocuments(db), target)
+    await collect(_LocalDocumentArchive(db), result["retained_local_documents"])
     rows = await db.scalars(
         select(DocumentDelivery)
         .where(DocumentDelivery.user_id == user_id)
@@ -80,12 +136,11 @@ async def export_documents(db, user_id):
             DocumentDeliveryExport.model_validate(row).model_dump(),
         )
     await db.commit()
-    if isinstance(authority, CoreDocuments):
-        try:
-            async with asyncio.timeout(60):
-                await collect(authority, result["documents"])
-        except TimeoutError:
-            raise CoreUnavailableError(
-                "Document export timed out; no partial export returned"
-            ) from None
+    try:
+        async with asyncio.timeout(60):
+            await collect(authority, result["documents"])
+    except TimeoutError:
+        raise CoreUnavailableError(
+            "Document export timed out; no partial export returned"
+        ) from None
     return result

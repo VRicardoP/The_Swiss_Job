@@ -1,11 +1,6 @@
-"""Capacidad CATALOGO detras de costura — A.SEAM (plan §15bis).
-
-API publica del paquete: el puerto, sus errores/parametros y el resolver
-que decide implementacion (local|core) via jobhunt_routing.
-"""
+"""Core catalogue authority."""
 
 from .core_client import CoreCatalog
-from .local import LocalCatalog
 from .port import (
     CatalogError,
     CatalogPort,
@@ -13,7 +8,7 @@ from .port import (
     CatalogUnsupportedError,
     CoreUnavailableError,
 )
-from .seam import FallbackCatalog, resolve_catalog
+from .seam import resolve_catalog
 
 __all__ = [
     "CatalogError",
@@ -22,7 +17,5 @@ __all__ = [
     "CatalogUnsupportedError",
     "CoreCatalog",
     "CoreUnavailableError",
-    "FallbackCatalog",
-    "LocalCatalog",
     "resolve_catalog",
 ]

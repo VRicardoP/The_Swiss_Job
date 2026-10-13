@@ -36,16 +36,6 @@ async def block_feedback_writes(request: Request):
         )
 
 
-async def require_core_feedback_route(db, user_id):
-    from services.routing import CAPABILITY_MATCHING, resolve_mode
-
-    mode = await resolve_mode(db, CAPABILITY_MATCHING, user_id)
-    if mode not in {"core_primary", "rollback_pending"}:
-        raise CoreUnavailableError(
-            "feedback core exige routing autoritativo, sin fallback local"
-        )
-
-
 def feedback_writer(db):
     if settings.CORE_FEEDBACK_ENABLED:
         return CoreFeedback(db)
@@ -91,8 +81,6 @@ class CoreFeedback:
         self._client_factory = client_factory or default_client_factory
 
     async def _profile(self, user_id):
-        if settings.CORE_FEEDBACK_ENABLED:
-            await require_core_feedback_route(self._db, user_id)
         pid = await resolve_core_profile_id(self._db, user_id)
         if pid is None:
             raise CoreUnavailableError("usuario sin vínculo core para feedback")

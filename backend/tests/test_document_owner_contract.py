@@ -1,4 +1,4 @@
-"""Document portability and owner deletion must respect the cutover freeze."""
+"""Document portability and owner deletion contracts."""
 
 import uuid
 
@@ -9,6 +9,8 @@ from models.document_delivery import DocumentDelivery
 from models.generated_document import GeneratedDocument
 from models.jobhunt_profile_map import JobhuntProfileMap
 from models.user import User
+from schemas.documents import DocumentPageResponse
+from services.documents.core_client import CoreDocuments
 from tests.test_profile import register_and_get_token
 
 
@@ -20,8 +22,8 @@ async def test_owner_delete_is_frozen_before_auth(client, monkeypatch):
     assert response.status_code == 503
 
 
-async def test_owner_export_includes_orphan_documents_and_prepared_output(
-    client, db_session
+async def test_owner_export_includes_archive_and_prepared_output(
+    client, db_session, monkeypatch
 ):
     token, email, _ = await register_and_get_token(client)
     uid = await db_session.scalar(select(User.id).where(User.email == email))
@@ -29,6 +31,17 @@ async def test_owner_export_includes_orphan_documents_and_prepared_output(
     other_uid = await db_session.scalar(
         select(User.id).where(User.email == other_email)
     )
+    db_session.add_all(
+        [
+            JobhuntProfileMap(user_id=uid, core_profile_id=uuid.uuid4()),
+            JobhuntProfileMap(user_id=other_uid, core_profile_id=uuid.uuid4()),
+        ]
+    )
+
+    async def empty_page(self, user_id, cursor=None):
+        return DocumentPageResponse(data=[])
+
+    monkeypatch.setattr(CoreDocuments, "page", empty_page)
     for owner, content in [
         (uid, "synthetic owned output"),
         (other_uid, "other owner output"),
@@ -55,13 +68,15 @@ async def test_owner_export_includes_orphan_documents_and_prepared_output(
         )
     )
     await db_session.commit()
+
     response = await client.get(
         "/api/v1/profile/export", headers={"Authorization": f"Bearer {token}"}
     )
     assert response.status_code == 200
     exported = response.json()
-    assert exported["documents"][0]["content"] == "synthetic owned output"
-    assert exported["documents"][0]["job_title"] == "Deleted vacancy"
+    archive = exported["retained_local_documents"]
+    assert archive[0]["content"] == "synthetic owned output"
+    assert archive[0]["job_title"] == "Deleted vacancy"
     assert exported["document_deliveries"][0]["operation_id"] == str(operation)
     assert (
         exported["document_deliveries"][0]["payload"]["content"]

@@ -8,11 +8,9 @@ asi que esos perfiles son de NUESTRO tenant. Pero el BFF NO puede leer el
 esquema del core (frontera estricta del plan §21: API /v1 + esquema propio)
 y el /v1 no expone lookup por external_ref.
 
-Por eso el vinculo se registra AQUI, en una tabla LOCAL al BFF (mismo
-principio que `jobhunt_routing`): dinamica, transaccional, auditable y
-disponible con el core caido. La puebla el operador al enrolar un perfil en
-el canary (el mismo momento en que hace set_routing a core_read); sin fila,
-el cliente core ni siquiera emite peticiones (CoreUnavailableError).
+Por eso el vínculo se registra aquí, en una tabla local al BFF: es
+transaccional, auditable y está disponible con Core caído. La entrega de
+snapshots lo crea idempotentemente; sin fila, los clientes Core no emiten red.
 """
 
 import uuid
@@ -51,8 +49,7 @@ class JobhuntProfileMap(Base):
     )
 
     __table_args__ = (
-        # PK NOMBRADA: mismo nombre que la migracion (leccion de la PK de
-        # jobhunt_routing; lo vigila tests/test_migration_smoke.py).
+        # PK nombrada para coincidir con la migración inmutable.
         PrimaryKeyConstraint("user_id", name="pk_jobhunt_profile_map"),
         # Dos usuarios apuntando al mismo perfil core = error de operacion.
         UniqueConstraint("core_profile_id", name="uq_jobhunt_profile_map_core"),

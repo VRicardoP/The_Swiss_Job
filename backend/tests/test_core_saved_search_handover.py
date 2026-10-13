@@ -1,8 +1,6 @@
 """The saved-search seam preserves the UI and switches BOTH executor entrypoints."""
 
-from contextlib import asynccontextmanager
 import uuid
-from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -10,10 +8,8 @@ from sqlalchemy import func, select
 
 from config import settings
 from models.jobhunt_profile_map import JobhuntProfileMap
-from models.jobhunt_routing import CONSUMER_SWISSJOB, PROFILE_WILDCARD, JobhuntRouting
 from models.saved_search import SavedSearch
 from services import saved_searches as adapter
-from tests.conftest import TestSessionLocal
 from tests.test_integration_inbox import owner
 
 
@@ -33,22 +29,6 @@ def item(pid, sid):
     }
 
 
-async def enable(db, uid, mode="core_primary"):
-    row = await db.get(JobhuntRouting, (CONSUMER_SWISSJOB, uid, adapter.CAPABILITY))
-    if row is None:
-        db.add(
-            JobhuntRouting(
-                consumer_id=CONSUMER_SWISSJOB,
-                profile_id=uid,
-                capability=adapter.CAPABILITY,
-                mode=mode,
-            )
-        )
-    else:
-        row.mode = mode
-    await db.commit()
-
-
 async def setup_owner(client, db, monkeypatch):
     token, _, pid = await owner(client, db)
     uid = await db.scalar(
@@ -57,7 +37,6 @@ async def setup_owner(client, db, monkeypatch):
         )
     )
     monkeypatch.setattr(settings, "CORE_CONSUMER_KEY", "synthetic-core-key")
-    await enable(db, uid)
     return {"Authorization": f"Bearer {token}"}, pid, uid
 
 
@@ -160,55 +139,3 @@ async def test_core_failure_never_returns_local_data(
     response = await client.get("/api/v1/searches", headers=headers)
     assert response.status_code == 503
     assert "local must not leak" not in response.text
-
-
-@pytest.mark.parametrize(
-    "mode,core",
-    [
-        ("local", False),
-        ("shadow", False),
-        ("core_read", False),
-        ("core_primary", True),
-        ("rollback_pending", True),
-    ],
-)
-async def test_routing_is_fresh_and_local_executor_obeys_it(
-    client, db_session, monkeypatch, mode, core
-):
-    import database
-    from tasks import search_tasks
-
-    _, pid, uid = await setup_owner(client, db_session, monkeypatch)
-    search = SavedSearch(user_id=uid, name="search")
-    db_session.add(search)
-    await db_session.commit()
-    sid = search.id
-    assert await adapter.core_owns_searches(db_session, uid)
-    await enable(db_session, uid, mode)
-    assert await adapter.core_owns_searches(db_session, uid) is core
-
-    @asynccontextmanager
-    async def session():
-        async with TestSessionLocal() as s:
-            yield s
-
-    monkeypatch.setattr(database, "task_session", session)
-    execute = AsyncMock(return_value=1)
-    monkeypatch.setattr(search_tasks, "_execute_single_search", execute)
-    result = await search_tasks._run_single_async(str(sid), str(uid))
-    assert result["status"] == ("disabled" if core else "success")
-    assert execute.await_count == (0 if core else 1)
-    execute.reset_mock()
-    await search_tasks._run_saved_searches_async()
-    assert execute.await_count == (0 if core else 1)
-
-
-async def test_explicit_override_beats_wildcard_without_cached_authority(
-    client, db_session, monkeypatch
-):
-    _, _, uid = await setup_owner(client, db_session, monkeypatch)
-    await enable(db_session, PROFILE_WILDCARD, "core_primary")
-    await enable(db_session, uid, "local")
-    assert not await adapter.core_owns_searches(db_session, uid)
-    await enable(db_session, uid, "core_primary")
-    assert await adapter.core_owns_searches(db_session, uid)

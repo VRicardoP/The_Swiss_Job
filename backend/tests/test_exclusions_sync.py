@@ -51,7 +51,6 @@ class _Core:
 @pytest.fixture
 def core(monkeypatch):
     c = _Core()
-    monkeypatch.setattr(sync, "resolve_mode", _corutina("core_primary"))
     monkeypatch.setattr(sync, "resolve_core_profile_id", _corutina(uuid.uuid4()))
     monkeypatch.setattr(sync, "default_client_factory", lambda: c)
     return c
@@ -68,9 +67,11 @@ async def _create(client, headers):
 
 
 @pytest.mark.asyncio
-async def test_no_proyecta_si_el_perfil_sigue_en_local(client, core, monkeypatch):
+async def test_no_proyecta_si_el_perfil_aun_no_esta_vinculado(
+    client, core, monkeypatch
+):
     headers, _ = await _auth(client)
-    monkeypatch.setattr(sync, "resolve_mode", _corutina("local"))
+    monkeypatch.setattr(sync, "resolve_core_profile_id", _corutina(None))
     await _create(client, headers)
     assert core.version == 0
     assert (await client.get("/api/v1/analytics/filters", headers=headers)).json()[

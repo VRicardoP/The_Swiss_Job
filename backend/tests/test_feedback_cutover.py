@@ -13,7 +13,6 @@ from services.matching import core_client
 from services.matching.feedback import CoreFeedback, feedback_writer
 from services.match_result_service import MatchResultService
 from services.matching.identity import set_profile_link
-from services.routing import set_routing
 from tests.test_matching_contract import _register, _match_dto
 
 
@@ -24,30 +23,12 @@ async def test_feedback_switch_default_keeps_local_writer(db_session, monkeypatc
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["local", "shadow", "core_read"])
-async def test_feedback_switch_rejects_non_authoritative_route(
-    client, db_session, monkeypatch, mode
-):
-    monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
-    uid, headers = await _register(client)
-    await set_routing(db_session, "matching", mode, profile_id=uid)
-    vid = str(uuid.uuid4())
-    response = await client.post(
-        f"/api/v1/match/{vid}/feedback", headers=headers, json={"feedback": "thumbs_up"}
-    )
-    assert response.status_code == 503
-    assert (await client.get("/api/v1/match/saved", headers=headers)).status_code == 503
-    assert await db_session.scalar(select(func.count()).select_from(MatchResult)) == 0
-
-
-@pytest.mark.asyncio
 async def test_feedback_switch_serves_native_without_job_and_ignores_local_overlay(
     client, db_session, monkeypatch
 ):
     monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
     uid, _ = await _register(client)
     await set_profile_link(db_session, uid, uuid.uuid4())
-    await set_routing(db_session, "matching", "core_primary", profile_id=uid)
     item = _match_dto("python_zurich", legacy=False)
     item["state"]["feedback"] = "thumbs_up"
     matcher = core_client.CoreMatching(db_session, client_factory=lambda: None)
@@ -72,7 +53,6 @@ async def test_feedback_router_never_falls_back_after_write_failure(
     monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
     uid, headers = await _register(client)
     await set_profile_link(db_session, uid, uuid.uuid4())
-    await set_routing(db_session, "matching", "core_primary", profile_id=uid)
 
     def factory():
         return httpx.AsyncClient(

@@ -6,6 +6,7 @@ import time
 from sqlalchemy import text
 
 from tests.conftest import TestSessionLocal
+from services.profile_sync import lock_profile_writer
 from tests.test_analytics_router import _auth
 
 
@@ -13,6 +14,7 @@ async def test_profile_writer_then_account_erasure_has_no_inverse_lock_order(cli
     _, uid = await _auth(client)
     async with TestSessionLocal() as writer, TestSessionLocal() as eraser:
         await writer.execute(text("SET LOCAL lock_timeout='2s'"))
+        await lock_profile_writer(writer, uid)
         await writer.execute(
             text("SELECT id FROM user_profiles WHERE user_id=:u FOR UPDATE"), {"u": uid}
         )

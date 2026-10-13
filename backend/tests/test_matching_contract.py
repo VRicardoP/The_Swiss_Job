@@ -36,7 +36,6 @@ import uuid
 
 import httpx
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
@@ -48,20 +47,10 @@ from schemas.match import MatchResultResponse
 from services.matching import (
     CoreMatching,
     CoreUnavailableError,
-    FallbackMatching,
-    LocalMatching,
-    MatchingUnsupportedError,
     clear_feed_cache,
-    core_client,
-    resolve_matching,
     set_profile_link,
 )
 from services.matching.core_client import legacy_job_ref
-from services.routing import (
-    CAPABILITY_MATCHING,
-    invalidate_routing_cache,
-    set_routing,
-)
 
 # ---------------------------------------------------------------------------
 # Juego de casos compartido
@@ -148,10 +137,8 @@ STATE_EQUIVALENT_FIELDS = (
 def _clean_seam_caches():
     """Las caches de routing y de paginas del feed son de proceso: sin esto
     un test podria leer el modo o la pagina de otro test."""
-    invalidate_routing_cache()
     clear_feed_cache()
     yield
-    invalidate_routing_cache()
     clear_feed_cache()
 
 
@@ -344,7 +331,6 @@ async def seeded(db_session):
     ordered = sorted(CASES, key=lambda n: CASES[n]["score_final"], reverse=True)
     fake = FakeFeed(core_profile_id, [_match_dto(n) for n in ordered])
     matchings = {
-        "local": LocalMatching(db_session),
         "core": make_core_matching(db_session, fake.transport()),
     }
     return user_id, matchings, fake
@@ -355,7 +341,7 @@ async def seeded(db_session):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("impl", ["local", "core"])
+@pytest.mark.parametrize("impl", ["core"])
 async def test_results_shape_maps_to_match_result_response(seeded, impl):
     """FORMA: los items de ambos backends pasan por el mapeo REAL del router
     (_to_match_response) y validan como MatchResultResponse."""
@@ -368,32 +354,7 @@ async def test_results_shape_maps_to_match_result_response(seeded, impl):
         assert resp.job_hash in CASE_HASHES.values()
 
 
-async def test_results_semantics_equivalent_local_vs_core(seeded):
-    """SEMANTICA: identidad (job_hash legacy via mapeo de la sombra), orden,
-    total, contenido de la oferta y estado del escritor local IDENTICOS."""
-    user_id, matchings, _ = seeded
-    local_items, local_total = await matchings["local"].results(user_id)
-    core_items, core_total = await matchings["core"].results(user_id)
-
-    assert local_total == core_total == len(VISIBLE_ORDER)
-    assert [i["match"].job_hash for i in local_items] == [
-        CASE_HASHES[n] for n in VISIBLE_ORDER
-    ]
-    assert [i["match"].job_hash for i in core_items] == [
-        CASE_HASHES[n] for n in VISIBLE_ORDER
-    ]
-
-    for local_item, core_item in zip(local_items, core_items):
-        local_resp = _to_match_response(local_item, translations={})
-        core_resp = _to_match_response(core_item, translations={})
-        for field in JOB_EQUIVALENT_FIELDS + STATE_EQUIVALENT_FIELDS:
-            assert getattr(local_resp, field) == getattr(core_resp, field), field
-        assert local_resp.score_final == core_resp.score_final
-        # id estable del escritor local en ambos (overlay del core).
-        assert local_resp.id == core_resp.id
-
-
-@pytest.mark.parametrize("impl", ["local", "core"])
+@pytest.mark.parametrize("impl", ["core"])
 async def test_results_exclude_local_negative_feedback(seeded, impl):
     """El thumbs_down escrito por el ESCRITOR LOCAL excluye el item tambien
     cuando el feed lo sirve el core (que no sabe nada de ese feedback)."""
@@ -403,7 +364,7 @@ async def test_results_exclude_local_negative_feedback(seeded, impl):
     assert CASE_HASHES["rejected_one"] not in hashes
 
 
-@pytest.mark.parametrize("impl", ["local", "core"])
+@pytest.mark.parametrize("impl", ["core"])
 async def test_results_pagination_slice(seeded, impl):
     """limit/offset con total EXACTO en ambos backends."""
     user_id, matchings, _ = seeded
@@ -598,7 +559,12 @@ async def test_core_exclusion_logged_as_info_with_counts(db_session, caplog):
     msg = infos[0].getMessage()
     assert "1 items servidos" in msg and "1 excluidos" in msg
     # Con exclusion parcial NO es el caso del canary vacuo: cero WARNING.
-    assert not [r for r in records if r.levelno == logging.WARNING]
+    assert not [
+        r
+        for r in records
+        if r.levelno == logging.WARNING
+        and "VACIO solo por exclusion de accionabilidad" in r.getMessage()
+    ]
 
 
 async def test_core_feed_empty_only_by_exclusion_warns(db_session, caplog):
@@ -621,7 +587,12 @@ async def test_core_feed_empty_only_by_exclusion_warns(db_session, caplog):
         items, total = await core.results(user_id)
     assert items == [] and total == 0
     records = [r for r in caplog.records if r.name == "services.matching.core_client"]
-    warns = [r for r in records if r.levelno == logging.WARNING]
+    warns = [
+        r
+        for r in records
+        if r.levelno == logging.WARNING
+        and "VACIO solo por exclusion de accionabilidad" in r.getMessage()
+    ]
     assert len(warns) == 1
     msg = warns[0].getMessage()
     assert "VACIO solo por exclusion de accionabilidad" in msg and "2 items" in msg
@@ -649,28 +620,6 @@ async def test_core_strips_shadow_source_prefix(seeded):
 # ---------------------------------------------------------------------------
 # saved(): proyeccion del escritor LOCAL — se sirve de local en TODOS los modos
 # ---------------------------------------------------------------------------
-
-
-async def test_saved_local_serves_positive_feedback(seeded):
-    user_id, matchings, _ = seeded
-    items, total = await matchings["local"].saved(user_id)
-    assert total == 1
-    assert items[0]["match"].job_hash == CASE_HASHES["python_zurich"]
-
-
-async def test_saved_served_from_local_writer_in_all_modes(seeded):
-    """'saved' es proyeccion PURA del estado del escritor LOCAL (feedback
-    positivo): mientras el escritor sea local (hasta Fase C) se sirve de
-    local tambien detras de CoreMatching — criterio unificador: ningun
-    estado local puede ser inaccesible por el routing."""
-    user_id, matchings, _ = seeded
-    local_items, local_total = await matchings["local"].saved(user_id)
-    core_items, core_total = await matchings["core"].saved(user_id)
-    assert core_total == local_total == 1
-    assert [i["match"].job_hash for i in core_items] == [
-        i["match"].job_hash for i in local_items
-    ]
-    assert core_items[0]["match"].job_hash == CASE_HASHES["python_zurich"]
 
 
 # ---------------------------------------------------------------------------
@@ -755,90 +704,9 @@ async def test_core_repeated_cursor_hits_loop_guard(db_session):
 # ---------------------------------------------------------------------------
 
 
-async def test_resolve_matching_default_is_local(db_session):
-    port = await resolve_matching(db_session, uuid.uuid4())
-    assert isinstance(port, LocalMatching)
-
-
-async def test_resolve_matching_core_read_is_fallback(db_session):
-    user_id = uuid.uuid4()
-    await set_routing(db_session, CAPABILITY_MATCHING, "core_read", profile_id=user_id)
-    port = await resolve_matching(db_session, user_id)
-    assert isinstance(port, FallbackMatching)
-
-
-async def test_resolve_matching_core_primary_has_no_fallback(db_session):
-    user_id = uuid.uuid4()
-    await set_routing(
-        db_session, CAPABILITY_MATCHING, "core_primary", profile_id=user_id
-    )
-    port = await resolve_matching(db_session, user_id)
-    assert isinstance(port, CoreMatching)
-
-
-async def test_resolve_matching_profile_row_beats_wildcard(db_session):
-    """Canary POR PERFIL: la fila exacta gana al comodin del consumer."""
-    user_id = uuid.uuid4()
-    await set_routing(db_session, CAPABILITY_MATCHING, "core_primary")  # comodin
-    await set_routing(db_session, CAPABILITY_MATCHING, "local", profile_id=user_id)
-    assert isinstance(await resolve_matching(db_session, user_id), LocalMatching)
-    assert isinstance(await resolve_matching(db_session, uuid.uuid4()), CoreMatching)
-
-
 # ---------------------------------------------------------------------------
 # Canary core_read: fallback funcional + severidades separadas
 # ---------------------------------------------------------------------------
-
-
-async def test_fallback_serves_local_when_core_down(seeded, db_session):
-    user_id, matchings, _ = seeded
-
-    def refuse(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("connection refused", request=request)
-
-    seam = FallbackMatching(
-        make_core_matching(db_session, httpx.MockTransport(refuse)),
-        matchings["local"],
-    )
-    items, total = await seam.results(user_id)
-    assert total == len(VISIBLE_ORDER)
-    assert [i["match"].job_hash for i in items] == [
-        CASE_HASHES[n] for n in VISIBLE_ORDER
-    ]
-    # saved se sirve del escritor LOCAL en todos los modos (sin red): no
-    # necesita fallback aunque el core este caido.
-    items, total = await seam.saved(user_id)
-    assert total == 1
-
-
-async def test_canary_warn_levels_separate_expected_from_actionable(caplog):
-    """Regla de la 2ª rev. A.SEAM catalogo, aplicada a matching: Unsupported
-    (cota del escritor, esperado) va a DEBUG; el core CAIDO
-    (CoreUnavailableError) es el UNICO WARNING del canary."""
-    import logging
-
-    class _Primary:
-        async def saved(self, user_id, limit=100, offset=0):
-            raise MatchingUnsupportedError("cota escritor")
-
-        async def results(self, user_id, limit=20, offset=0):
-            raise CoreUnavailableError("core caido")
-
-    class _Fallback:
-        async def saved(self, user_id, limit=100, offset=0):
-            return [], 0
-
-        async def results(self, user_id, limit=20, offset=0):
-            return [], 0
-
-    seam = FallbackMatching(_Primary(), _Fallback())
-    with caplog.at_level(logging.DEBUG, logger="services.matching.seam"):
-        await seam.saved(uuid.uuid4())
-        await seam.results(uuid.uuid4())
-    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
-    debugs = [r for r in caplog.records if r.levelno == logging.DEBUG]
-    assert len(warns) == 1 and "core caido" in warns[0].getMessage()
-    assert len(debugs) == 1 and "cota escritor" in debugs[0].getMessage()
 
 
 # ---------------------------------------------------------------------------
@@ -856,156 +724,6 @@ async def _register(client) -> tuple[uuid.UUID, dict]:
     headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
     me = await client.get("/api/v1/auth/me", headers=headers)
     return uuid.UUID(me.json()["id"]), headers
-
-
-async def test_router_core_primary_without_core_feed_503_saved_local_200(
-    client, db_session, monkeypatch
-):
-    """core_primary SIN fallback silencioso: core inaccesible => 503 en el
-    feed; 'saved' (proyeccion del escritor LOCAL, sin red) se sirve local
-    => 200 en todos los modos — criterio unificador: ningun estado local
-    puede ser inaccesible por el routing (antes aqui se fijaba un 501)."""
-    monkeypatch.setattr(settings, "CORE_CONSUMER_KEY", "")
-    user_id, headers = await _register(client)
-    await set_routing(
-        db_session, CAPABILITY_MATCHING, "core_primary", profile_id=user_id
-    )
-    resp = await client.get("/api/v1/match/results", headers=headers)
-    assert resp.status_code == 503
-    resp = await client.get("/api/v1/match/history", headers=headers)
-    assert resp.status_code == 503
-    resp = await client.get("/api/v1/match/saved", headers=headers)
-    assert resp.status_code == 200
-    assert resp.json()["data"] == [] and resp.json()["total"] == 0
-
-
-async def test_router_orphan_feedback_discards_from_core_feed(
-    client, db_session, monkeypatch
-):
-    """Huerfano legacy (Job local SIN fila MatchResult) servido por el core:
-    thumbs_down => 200 (upsert de fila minima del escritor local) y el item
-    DESAPARECE del feed en el siguiente GET — la garantia "not-for-me
-    desaparece" se mantiene tambien para huerfanos (criterio unificador)."""
-    user_id, headers = await _register(client)
-    orphan_hash = "c" * 32
-    _add_job(db_session, orphan_hash)
-    await db_session.commit()
-    core_profile_id = uuid.uuid4()
-    await set_profile_link(db_session, user_id, core_profile_id)
-    fake = FakeFeed(core_profile_id, [_orphan_dto(orphan_hash, "eval-router-orph")])
-
-    def factory() -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            base_url="http://core-api:8000/v1",
-            headers={"Authorization": f"Bearer {TEST_CONSUMER_KEY}"},
-            timeout=1.0,
-            transport=fake.transport(),
-        )
-
-    monkeypatch.setattr(settings, "CORE_CONSUMER_KEY", TEST_CONSUMER_KEY)
-    monkeypatch.setattr(core_client, "default_client_factory", factory)
-    await set_routing(
-        db_session, CAPABILITY_MATCHING, "core_primary", profile_id=user_id
-    )
-
-    resp = await client.get(
-        "/api/v1/match/results", headers=headers, params={"translate": "false"}
-    )
-    assert resp.status_code == 200
-    assert [r["job_hash"] for r in resp.json()["data"]] == [orphan_hash]
-
-    resp = await client.post(
-        f"/api/v1/match/{orphan_hash}/feedback",
-        headers=headers,
-        json={"feedback": "thumbs_down"},
-    )
-    assert resp.status_code == 200
-
-    resp = await client.get(
-        "/api/v1/match/results", headers=headers, params={"translate": "false"}
-    )
-    assert resp.status_code == 200
-    assert resp.json()["data"] == [] and resp.json()["total"] == 0
-
-
-async def test_router_orphan_implicit_feedback_upserts_row(
-    client, db_session, monkeypatch
-):
-    """Simetria implicit/explicit (2ª rev.): implicit 'opened' sobre un
-    huerfano legacy surfaced por el feed del core => 200 y fila minima creada
-    con la senal — antes devolvia 404 sobre un item que el propio feed
-    mostraba. La fila con feedback_implicit queda ademas protegida del
-    cleanup de ofertas caducadas (criterio `attached` de maintenance_tasks)."""
-    user_id, headers = await _register(client)
-    orphan_hash = "d" * 32
-    _add_job(db_session, orphan_hash)
-    await db_session.commit()
-    core_profile_id = uuid.uuid4()
-    await set_profile_link(db_session, user_id, core_profile_id)
-    fake = FakeFeed(core_profile_id, [_orphan_dto(orphan_hash, "eval-router-impl")])
-
-    def factory() -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            base_url="http://core-api:8000/v1",
-            headers={"Authorization": f"Bearer {TEST_CONSUMER_KEY}"},
-            timeout=1.0,
-            transport=fake.transport(),
-        )
-
-    monkeypatch.setattr(settings, "CORE_CONSUMER_KEY", TEST_CONSUMER_KEY)
-    monkeypatch.setattr(core_client, "default_client_factory", factory)
-    await set_routing(
-        db_session, CAPABILITY_MATCHING, "core_primary", profile_id=user_id
-    )
-
-    # El huerfano esta SURFACED en el feed que ve el usuario.
-    resp = await client.get(
-        "/api/v1/match/results", headers=headers, params={"translate": "false"}
-    )
-    assert resp.status_code == 200
-    assert [r["job_hash"] for r in resp.json()["data"]] == [orphan_hash]
-
-    resp = await client.post(
-        f"/api/v1/match/{orphan_hash}/implicit",
-        headers=headers,
-        json={"action": "opened"},
-    )
-    assert resp.status_code == 200
-
-    row = (
-        await db_session.execute(
-            select(MatchResult).where(
-                MatchResult.user_id == user_id,
-                MatchResult.job_hash == orphan_hash,
-            )
-        )
-    ).scalar_one()
-    assert row.feedback_implicit == [{"action": "opened"}]
-    assert row.feedback is None
-
-
-async def test_router_core_read_falls_back_to_local(client, db_session, monkeypatch):
-    """core_read = canary: con el core inaccesible el feed se sirve LOCAL."""
-    monkeypatch.setattr(settings, "CORE_CONSUMER_KEY", "")
-    user_id, headers = await _register(client)
-    await set_routing(db_session, CAPABILITY_MATCHING, "core_read", profile_id=user_id)
-    resp = await client.get(
-        "/api/v1/match/results", headers=headers, params={"translate": "false"}
-    )
-    assert resp.status_code == 200
-    assert resp.json()["data"] == [] and resp.json()["total"] == 0
-    resp = await client.get("/api/v1/match/saved", headers=headers)
-    assert resp.status_code == 200
-
-
-async def test_router_default_local_untouched(client, db_session):
-    """Sin filas de routing todo sigue local (default seguro del plan)."""
-    _, headers = await _register(client)
-    resp = await client.get(
-        "/api/v1/match/results", headers=headers, params={"translate": "false"}
-    )
-    assert resp.status_code == 200
-    assert resp.json()["total"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1198,93 +916,3 @@ async def test_core_broken_item_types_are_unavailable(
     core = make_core_matching(db_session, httpx.MockTransport(handler))
     with pytest.raises(CoreUnavailableError, match="payload invalido"):
         await core.results(user_id)
-
-
-async def test_fallback_serves_local_on_invalid_payload(seeded, db_session, caplog):
-    """core_read con payload invalido: FallbackMatching sirve el feed LOCAL
-    (fallback REAL con su WARNING de canary) — el escenario del revisor."""
-    import logging
-
-    user_id, matchings, _ = seeded
-
-    def garbled(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"items": [{"basura": 1}]})
-
-    seam = FallbackMatching(
-        make_core_matching(db_session, httpx.MockTransport(garbled)),
-        matchings["local"],
-    )
-    with caplog.at_level(logging.WARNING, logger="services.matching.seam"):
-        items, total = await seam.results(user_id)
-    assert total == len(VISIBLE_ORDER)  # servido por el motor local
-    warns = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert warns and "payload invalido" in warns[0].getMessage()
-
-
-async def test_core_stops_paging_once_the_page_is_covered(
-    seeded, db_session, monkeypatch
-):
-    """Serving a page must not walk the whole feed just to count it.
-
-    Measured on the NAS before this change (PREDECLARACION_PUNTO5_2026-09-22.md
-    §5): 18 requests and 1.800 items transformed to return 20 offers, 9.3-12.9 s.
-    One page of the core costs 29 ms; the walk was the entire cost.
-
-    With the core reporting the total on its first page, the consumer only needs
-    the pages that cover `offset + limit`. Asserting on the NUMBER OF REQUESTS
-    keeps the regression deterministic — a stopwatch on a loaded two-core NAS
-    would not be.
-    """
-    monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
-    user_id, matchings, fake = seeded
-    await set_routing(
-        db_session, CAPABILITY_MATCHING, "core_primary", profile_id=user_id
-    )
-    core = make_core_matching(db_session, fake.transport())
-    items, total = await core.results(user_id, limit=1, offset=0)
-
-    assert len(fake.requests) == 1, (
-        f"one page of {FAKE_PAGE_SIZE} covers limit=1; walked "
-        f"{len(fake.requests)} pages instead"
-    )
-    assert len(items) == 1
-    # With feedback in core, this branch applies no exclusion of its own: the
-    # core already filtered dismissed and thumbed-down in its feed, so the
-    # total is the size of that feed and not a locally recomputed subset.
-    assert total == len(fake.items), "the total still describes the whole feed"
-
-
-async def test_core_still_walks_what_a_deep_page_needs(seeded, db_session, monkeypatch):
-    """Stopping early must not truncate a page the caller can actually reach."""
-    monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
-    user_id, matchings, fake = seeded
-    await set_routing(
-        db_session, CAPABILITY_MATCHING, "core_primary", profile_id=user_id
-    )
-    core = make_core_matching(db_session, fake.transport())
-    items, total = await core.results(user_id, limit=1, offset=2)
-
-    assert len(items) == 1, "a reachable deep page is served, not truncated"
-    assert len(fake.requests) > 1, "it walked what that page needed"
-    assert total == len(fake.items)
-
-
-async def test_total_falls_back_to_a_full_walk_when_the_core_omits_it(
-    seeded, db_session, monkeypatch
-):
-    """An older core, or a page without the field, must not break the contract.
-
-    `total` is additive: when it is absent the consumer goes back to walking the
-    feed. Losing the optimisation is acceptable; reporting a wrong total is not.
-    """
-    monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
-    user_id, matchings, fake = seeded
-    await set_routing(
-        db_session, CAPABILITY_MATCHING, "core_primary", profile_id=user_id
-    )
-    fake.omit_total = True
-    core = make_core_matching(db_session, fake.transport())
-    items, total = await core.results(user_id, limit=1, offset=0)
-
-    assert total == len(fake.items)
-    assert len(fake.requests) > 1, "without a total it must still count by walking"

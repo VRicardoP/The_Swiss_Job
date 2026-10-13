@@ -1,11 +1,18 @@
 """Tests for Profile CRUD endpoints."""
 
 import io
-from unittest.mock import MagicMock, patch
 
 from httpx import AsyncClient
-
+import pytest
 from tests.conftest import random_email
+
+
+@pytest.fixture(autouse=True)
+def _school_preference(monkeypatch):
+    async def preference(db, user_id, local_value, *, enabled=None):
+        return local_value if enabled is None else enabled
+
+    monkeypatch.setattr("routers.profile.school_preference", preference)
 
 
 async def _register_and_get_token(client: AsyncClient) -> tuple[str, str]:
@@ -191,117 +198,6 @@ class TestUpdateProfile:
         )
         assert resp.status_code == 200
         assert set(resp.json()["locations"]) == {"Zurich", "Bern", "Basel"}
-
-
-class TestUploadCV:
-    @patch("tasks.profile_tasks.analyze_cv_and_autofill")
-    async def test_upload_pdf_success(self, mock_task, client):
-        mock_task.delay.return_value = MagicMock(id="task-123")
-        token, _ = await _register_and_get_token(client)
-
-        cv_text = (
-            "Senior Content Editor with 5 years of experience. Fluent in English "
-            "and French. Certified in Agile and Project Management."
-        )
-        pdf_bytes = _make_pdf(cv_text)
-
-        resp = await client.post(
-            "/api/v1/profile/cv",
-            headers=_auth(token),
-            files={"file": ("cv.pdf", pdf_bytes, "application/pdf")},
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert (
-            data["message"] == "CV uploaded — analyzing to auto-complete your profile"
-        )
-        assert data["cv_text_length"] > 0
-        assert "English" in data["skills_extracted"]
-
-    @patch("tasks.profile_tasks.analyze_cv_and_autofill")
-    async def test_upload_docx_success(self, mock_task, client):
-        mock_task.delay.return_value = MagicMock(id="task-456")
-        token, _ = await _register_and_get_token(client)
-
-        cv_text = (
-            "Experienced professional fluent in French and English. "
-            "Certified in Scrum and Agile methodologies."
-        )
-        docx_bytes = _make_docx(cv_text)
-
-        resp = await client.post(
-            "/api/v1/profile/cv",
-            headers=_auth(token),
-            files={
-                "file": (
-                    "cv.docx",
-                    docx_bytes,
-                    "application/vnd.openxmlformats-officedocument"
-                    ".wordprocessingml.document",
-                )
-            },
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["cv_text_length"] > 0
-        assert "French" in data["skills_extracted"]
-
-    async def test_upload_unsupported_type(self, client):
-        token, _ = await _register_and_get_token(client)
-        resp = await client.post(
-            "/api/v1/profile/cv",
-            headers=_auth(token),
-            files={"file": ("cv.txt", b"some text", "text/plain")},
-        )
-        assert resp.status_code == 415
-
-    async def test_upload_empty_file(self, client):
-        token, _ = await _register_and_get_token(client)
-        resp = await client.post(
-            "/api/v1/profile/cv",
-            headers=_auth(token),
-            files={"file": ("cv.pdf", b"", "application/pdf")},
-        )
-        assert resp.status_code == 400
-
-    async def test_upload_unauthenticated(self, client):
-        resp = await client.post(
-            "/api/v1/profile/cv",
-            files={"file": ("cv.pdf", b"data", "application/pdf")},
-        )
-        assert resp.status_code == 401
-
-    @patch("tasks.embedding_tasks.generate_profile_embedding")
-    async def test_upload_merges_skills(self, mock_task, client):
-        mock_task.delay.return_value = MagicMock(id="task-789")
-        token, _ = await _register_and_get_token(client)
-
-        # Set existing skills
-        await client.put(
-            "/api/v1/profile",
-            headers=_auth(token),
-            json={"skills": ["Go", "Rust"]},
-        )
-
-        # Upload CV with different skills (los que el parser sí reconoce, Fase 5)
-        cv_text = (
-            "Experienced in Agile and Customer Success, fluent in English. "
-            "Strong background in Project Management and Talent Acquisition."
-        )
-        pdf_bytes = _make_pdf(cv_text)
-        resp = await client.post(
-            "/api/v1/profile/cv",
-            headers=_auth(token),
-            files={"file": ("cv.pdf", pdf_bytes, "application/pdf")},
-        )
-        assert resp.status_code == 200
-
-        # Verify skills merged: los previos se conservan y se añaden los extraídos
-        profile_resp = await client.get("/api/v1/profile", headers=_auth(token))
-        all_skills = profile_resp.json()["skills"]
-        assert "Go" in all_skills
-        assert "Rust" in all_skills
-        assert "Agile" in all_skills
 
 
 class TestDeleteCV:

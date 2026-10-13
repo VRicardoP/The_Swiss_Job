@@ -14,7 +14,6 @@ from models.generated_document import GeneratedDocument
 from models.job import Job
 from models.jobhunt_profile_map import JobhuntProfileMap
 from models.user import User
-from services.routing import set_routing
 from tests.test_documents import (
     _auth,
     _gemini_on,
@@ -35,7 +34,6 @@ async def test_core_ack_loss_retries_without_job_cv_or_provider(
     pid, doc_id, operation = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     db_session.add(JobhuntProfileMap(user_id=uid, core_profile_id=pid))
     await db_session.commit()
-    await set_routing(db_session, "documents", "core_primary", profile_id=uid)
     monkeypatch.setattr(settings, "CORE_CONSUMER_KEY", "test.only")
     provider = _gemini_on("Prepared exact output")
     monkeypatch.setattr("routers.documents._get_gemini", lambda: provider)
@@ -125,31 +123,3 @@ async def test_core_ack_loss_retries_without_job_cv_or_provider(
             f"/api/v1/documents/operations/{operation}/retry", headers=_auth(token)
         )
     ).status_code == 503
-
-
-@pytest.mark.anyio
-async def test_owner_deleted_during_inference_cannot_publish_local(
-    client, db_session, monkeypatch
-):
-    token, email = await _register_and_get_token(client)
-    await _set_cv_text(db_session, email)
-    job_hash = await _insert_job(db_session)
-    uid = await db_session.scalar(select(User.id).where(User.email == email))
-    await db_session.commit()
-    monkeypatch.setattr("routers.documents._get_gemini", lambda: _gemini_on())
-
-    async def generate(*args, **kwargs):
-        await db_session.execute(delete(User).where(User.id == uid))
-        await db_session.commit()
-        return "must not survive account deletion"
-
-    monkeypatch.setattr(
-        "routers.documents.DocumentGeneratorService.generate_cv", generate
-    )
-    response = await client.post(
-        "/api/v1/documents/generate",
-        headers=_auth(token),
-        json={"job_hash": job_hash, "doc_type": "cv"},
-    )
-    assert response.status_code == 403
-    assert await db_session.scalar(select(GeneratedDocument.id)) is None

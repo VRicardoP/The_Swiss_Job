@@ -11,7 +11,6 @@ import pytest
 from config import settings
 from services.documents import core_client
 from services.documents.port import CoreUnavailableError
-from services.documents.seam import FallbackDocuments
 
 PID = uuid.UUID("dd477509-a10b-4f31-924b-f9395958bc32")
 JOB = "a" * 32
@@ -179,17 +178,6 @@ async def test_document_create_requires_explicit_operation(monkeypatch):
     )
     with pytest.raises(CoreUnavailableError):
         await core.create(uuid.uuid4(), JOB, "cv", "content", "en")
-
-
-async def test_canary_never_sends_writes_to_core():
-    primary, local = AsyncMock(), AsyncMock()
-    local.create.return_value = "local-result"
-    local.delete.return_value = True
-    seam = FallbackDocuments(primary, local)
-    assert await seam.create(uuid.uuid4(), JOB, "cv", "content", "en") == "local-result"
-    assert await seam.delete(uuid.uuid4(), uuid.uuid4()) is True
-    primary.create.assert_not_called()
-    primary.delete.assert_not_called()
 
 
 @pytest.mark.parametrize(

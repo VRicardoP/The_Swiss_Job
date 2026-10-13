@@ -81,13 +81,6 @@ def fetch_scrapers(self) -> dict[str, Any]:
     try:
         result = asyncio.run(_fetch_scrapers_async())
 
-        # Ver nota en fetch_tasks: con la cosecha diaria activa, la cadena
-        # daily_harvest ya cubre embeddings/dedup/matching.
-        if result.get("new", 0) > 0 and not settings.SCHEDULER_DAILY_HARVEST_ENABLED:
-            from tasks.embedding_tasks import generate_job_embeddings
-
-            generate_job_embeddings.delay(batch_size=100)
-
         return result
     except SoftTimeLimitExceeded:
         # G4/P2-2 — el pool prefork levanta `SoftTimeLimitExceeded` desde un

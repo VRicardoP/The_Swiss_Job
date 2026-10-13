@@ -19,6 +19,7 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from schemas.documents import DocumentPageResponse
 from tests.conftest import random_email
 
 
@@ -64,6 +65,22 @@ async def _poison(db: AsyncSession, table: str, column: str) -> None:
 async def _jsonb_typeof(db: AsyncSession, table: str, column: str) -> list[str]:
     rows = await db.execute(text(f"SELECT jsonb_typeof({column}) FROM {table}"))  # noqa: S608
     return [r[0] for r in rows.all()]
+
+
+@pytest.fixture(autouse=True)
+def _external_capabilities(monkeypatch):
+    async def preference(db, user_id, local_value, *, enabled=None):
+        return local_value if enabled is None else enabled
+
+    class EmptyDocuments:
+        async def page(self, user_id, cursor=None):
+            return DocumentPageResponse(data=[])
+
+    async def documents(*args, **kwargs):
+        return EmptyDocuments()
+
+    monkeypatch.setattr("routers.profile.school_preference", preference)
+    monkeypatch.setattr("services.documents.export.resolve_documents", documents)
 
 
 # ---------------------------------------------------------------------------
@@ -168,124 +185,3 @@ class TestProfileNullJsonb:
 
 
 # ---------------------------------------------------------------------------
-# G3/P2-7 — búsquedas guardadas
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.anyio
-class TestSavedSearchNullJsonb:
-    async def test_put_filters_null_no_tumba_el_listado_entero(
-        self, client: AsyncClient, db_session: AsyncSession
-    ):
-        headers = await _register(client)
-        sana = await client.post(
-            "/api/v1/searches",
-            headers=headers,
-            json={"name": "Sana", "filters": {"canton": "ZH"}},
-        )
-        assert sana.status_code == 201
-        victima = await client.post(
-            "/api/v1/searches", headers=headers, json={"name": "Victima"}
-        )
-        assert victima.status_code == 201
-
-        resp = await _call(
-            client.put(
-                f"/api/v1/searches/{victima.json()['id']}",
-                headers=headers,
-                json={"filters": None},
-            ),
-            "PUT /searches {filters: null}",
-        )
-        assert resp.status_code == 200
-        assert await _jsonb_typeof(db_session, "saved_searches", "filters") == [
-            "object",
-            "object",
-        ]
-
-        listado = await _call(
-            client.get("/api/v1/searches", headers=headers), "GET /searches"
-        )
-        assert listado.status_code == 200
-        body = listado.json()
-        assert body["total"] == 2
-        por_nombre = {s["name"]: s for s in body["data"]}
-        assert por_nombre["Sana"]["filters"] == {"canton": "ZH"}
-
-    async def test_fila_ya_corrupta_se_lee_como_vacia(
-        self, client: AsyncClient, db_session: AsyncSession
-    ):
-        headers = await _register(client)
-        assert (
-            await client.post(
-                "/api/v1/searches", headers=headers, json={"name": "Envenenada"}
-            )
-        ).status_code == 201
-        await _poison(db_session, "saved_searches", "filters")
-
-        listado = await _call(
-            client.get("/api/v1/searches", headers=headers), "GET /searches"
-        )
-        assert listado.status_code == 200
-        assert listado.json()["data"][0]["filters"] == {}
-
-
-# ---------------------------------------------------------------------------
-# G3/P2-8 — contrato explícito de `filters` (validación en la ENTRADA)
-# ---------------------------------------------------------------------------
-
-
-_FILTROS_INVALIDOS = [
-    pytest.param({"source": 123}, id="source-int"),
-    pytest.param({"canton": ["ZH", "BE"]}, id="canton-list"),
-    pytest.param({"language": {"$ne": None}}, id="language-dict"),
-    pytest.param({"source": {"a": 1}}, id="source-dict"),
-    pytest.param({"remote_only": "sí"}, id="remote_only-no-bool"),
-    pytest.param({"clave_desconocida": "x"}, id="clave-desconocida"),
-]
-
-
-@pytest.mark.anyio
-class TestSavedSearchFiltersValidation:
-    @pytest.mark.parametrize("filtros", _FILTROS_INVALIDOS)
-    async def test_create_rechaza_filtros_que_reventarian_la_tarea(
-        self, client: AsyncClient, filtros: dict
-    ):
-        headers = await _register(client)
-        resp = await client.post(
-            "/api/v1/searches",
-            headers=headers,
-            json={"name": "Rota", "filters": filtros},
-        )
-        assert resp.status_code == 422, resp.text
-
-    @pytest.mark.parametrize("filtros", _FILTROS_INVALIDOS)
-    async def test_update_rechaza_filtros_que_reventarian_la_tarea(
-        self, client: AsyncClient, filtros: dict
-    ):
-        headers = await _register(client)
-        creada = await client.post(
-            "/api/v1/searches", headers=headers, json={"name": "Sana"}
-        )
-        assert creada.status_code == 201
-        resp = await client.put(
-            f"/api/v1/searches/{creada.json()['id']}",
-            headers=headers,
-            json={"filters": filtros},
-        )
-        assert resp.status_code == 422, resp.text
-
-    async def test_filtros_validos_se_guardan_sin_inventar_claves(
-        self, client: AsyncClient
-    ):
-        """El contrato es el de `CatalogSearchParams`; la forma almacenada no
-        cambia (nada de rellenar con los valores por defecto del modelo)."""
-        headers = await _register(client)
-        filtros = {"q": "python", "source": "myscience", "canton": "ZH,BE"}
-        resp = await client.post(
-            "/api/v1/searches",
-            headers=headers,
-            json={"name": "Valida", "filters": filtros},
-        )
-        assert resp.status_code == 201
-        assert resp.json()["filters"] == filtros

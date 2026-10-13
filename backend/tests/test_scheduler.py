@@ -35,9 +35,11 @@ class TestScheduler:
             assert "fetch_providers" not in job_ids
             assert "fetch_scrapers" not in job_ids
             # Siempre activos, independientes de la cosecha
-            assert "dedup_semantic" in job_ids
             assert "check_job_urls" in job_ids
-            assert "run_saved_searches" in job_ids
+            assert "cleanup_stale_jobs" in job_ids
+            assert "resolve_pending_languages" in job_ids
+            assert "watchlist_health" in job_ids
+            assert "watchlist_digest" in job_ids
             assert "teacher_alert" in job_ids
 
             scheduler.remove_all_jobs()

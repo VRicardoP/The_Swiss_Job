@@ -377,9 +377,9 @@ class TestVentanaCosecha:
 
     @staticmethod
     def _dated_job(title: str, url: str, published_at) -> dict:
-        """Job de la fuente `ostjob` (política WINDOW real) con fecha dada."""
+        """Job de la fuente `jobicy` (política WINDOW real) con fecha dada."""
         job = _sample_job(title, "Acme", url)
-        job["source"] = "ostjob"
+        job["source"] = "jobicy"
         job["published_at"] = published_at
         return job
 
@@ -405,7 +405,7 @@ class TestVentanaCosecha:
             # Run 1 — lote mixto sobre fuente sin filas.
             mock_providers.return_value = [
                 _make_mock_provider(
-                    "ostjob",
+                    "jobicy",
                     [
                         self._dated_job(
                             "Editor A", "http://o.com/new", now - timedelta(days=1)
@@ -424,7 +424,7 @@ class TestVentanaCosecha:
             # listado entero (los providers no tienen cursor ni early-stop).
             mock_providers.return_value = [
                 _make_mock_provider(
-                    "ostjob",
+                    "jobicy",
                     [
                         self._dated_job(
                             "Editor A", "http://o.com/new", now - timedelta(days=1)
@@ -445,7 +445,7 @@ class TestVentanaCosecha:
         assert summary2["updated"] == 1
         assert summary2["window_skipped"] == 2
         urls = (
-            (await db_session.execute(select(Job.url).where(Job.source == "ostjob")))
+            (await db_session.execute(select(Job.url).where(Job.source == "jobicy")))
             .scalars()
             .all()
         )
@@ -478,7 +478,7 @@ class TestVentanaCosecha:
         ).scalar_one()
 
         # El portal la re-muestra, con su misma fecha fuera de ventana.
-        mock_providers.return_value = [_make_mock_provider("ostjob", [dict(vieja)])]
+        mock_providers.return_value = [_make_mock_provider("jobicy", [dict(vieja)])]
         with patch(
             "tasks.fetch_tasks.task_session",
             new=_mock_session_factory(db_session),
@@ -527,7 +527,7 @@ class TestVentanaCosecha:
             "Editor Out B", "http://o.com/out-b", now - timedelta(days=45)
         )
         mock_providers.return_value = [
-            _make_mock_provider("ostjob", [dentro_a, fuera_a, dentro_b, fuera_b])
+            _make_mock_provider("jobicy", [dentro_a, fuera_a, dentro_b, fuera_b])
         ]
 
         with patch(
@@ -570,7 +570,7 @@ class TestVentanaCosecha:
             for run in range(2):
                 mock_providers.return_value = [
                     _make_mock_provider(
-                        "ostjob",
+                        "jobicy",
                         [
                             self._dated_job(
                                 f"Editor {run}-{i}",
@@ -587,7 +587,7 @@ class TestVentanaCosecha:
         assert summary["unhealthy"] == []
         fila = (
             await db_session.execute(
-                select(SourceHealth).where(SourceHealth.source_key == "ostjob")
+                select(SourceHealth).where(SourceHealth.source_key == "jobicy")
             )
         ).scalar_one()
         assert fila.consecutive_unstored == 0
@@ -608,7 +608,7 @@ class TestVentanaCosecha:
             self._dated_job("Editor N1", "http://o.com/n1", None),
             self._dated_job("Editor N2", "http://o.com/n2", None),
         ]
-        mock_providers.return_value = [_make_mock_provider("ostjob", jobs)]
+        mock_providers.return_value = [_make_mock_provider("jobicy", jobs)]
 
         with (
             patch(
@@ -624,7 +624,7 @@ class TestVentanaCosecha:
         assert summary["new"] == 0
         errores = [r for r in caplog.records if r.levelno == logging.ERROR]
         assert any(
-            "ostjob" in r.getMessage() and "mal asignada" in r.getMessage()
+            "jobicy" in r.getMessage() and "mal asignada" in r.getMessage()
             for r in errores
         ), "faltó el ERROR del guardarraíl de política mal asignada"
 
@@ -654,7 +654,7 @@ class TestVentanaCosecha:
             self._dated_job("Editor ND2", "http://o.com/nd2", None),
             self._dated_job("Editor ND3", "http://o.com/nd3", None),
         ]
-        mock_providers.return_value = [_make_mock_provider("ostjob", jobs)]
+        mock_providers.return_value = [_make_mock_provider("jobicy", jobs)]
 
         with (
             patch(
@@ -670,7 +670,7 @@ class TestVentanaCosecha:
         assert summary["new"] == 0
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert any(
-            "ostjob" in r.getMessage() and "falta de fecha" in r.getMessage()
+            "jobicy" in r.getMessage() and "falta de fecha" in r.getMessage()
             for r in warnings
         ), "faltó el WARNING del fallo parcial de fechas (K2)"
         assert not [r for r in caplog.records if r.levelno == logging.ERROR]
@@ -681,7 +681,7 @@ class TestVentanaCosecha:
     ):
         """K1/L1, el caso que SIGUE gritando tras la ronda 2: corpus grande
         (comparable al lote), lote grande, nada reconocido por su mismo hash
-        y CON descartes por fecha (p. ej. ostjob cambió su esquema de URLs).
+        y CON descartes por fecha (p. ej. jobicy cambió su esquema de URLs).
         Ninguna re-vista se reconoce ⇒ las viejas se descartan como altas,
         dejan de refrescar last_seen_at y a los 60 días el cleanup las
         BORRARÍA. Tiene que gritar: ERROR + entrada en unhealthy."""
@@ -714,7 +714,7 @@ class TestVentanaCosecha:
             )
             for i in range(10)
         ]
-        mock_providers.return_value = [_make_mock_provider("ostjob", drifted)]
+        mock_providers.return_value = [_make_mock_provider("jobicy", drifted)]
 
         with (
             patch(
@@ -726,12 +726,12 @@ class TestVentanaCosecha:
             summary = await _fetch_providers_async()
 
         assert any(
-            entry.startswith("ostjob:") and "deriva de identidad" in entry
+            entry.startswith("jobicy:") and "deriva de identidad" in entry
             for entry in summary["unhealthy"]
         ), f"faltó la entrada de deriva en unhealthy: {summary['unhealthy']}"
         errores = [r for r in caplog.records if r.levelno == logging.ERROR]
         assert any(
-            "ostjob" in r.getMessage() and "deriva de identidad" in r.getMessage()
+            "jobicy" in r.getMessage() and "deriva de identidad" in r.getMessage()
             for r in errores
         ), "faltó el ERROR de deriva de identidad"
 
@@ -754,7 +754,7 @@ class TestVentanaCosecha:
         now = datetime.now(timezone.utc)
         repo = JobRepository(db_session)
 
-        # Corpus de ostjob comparable al lote (12 >= 12), esquema viejo.
+        # Corpus de jobicy comparable al lote (12 >= 12), esquema viejo.
         for i in range(12):
             await repo.upsert_job(
                 self._dated_job(
@@ -785,7 +785,7 @@ class TestVentanaCosecha:
                 "Drifted In", "http://o.com/new-scheme/in", now - timedelta(days=1)
             )
         )
-        mock_providers.return_value = [_make_mock_provider("ostjob", drifted)]
+        mock_providers.return_value = [_make_mock_provider("jobicy", drifted)]
 
         with (
             patch(
@@ -799,12 +799,12 @@ class TestVentanaCosecha:
         # El dupe cross-source ocurrió de verdad (si no, el test no prueba nada).
         assert summary["dupes"] == 1
         assert any(
-            entry.startswith("ostjob:") and "deriva de identidad" in entry
+            entry.startswith("jobicy:") and "deriva de identidad" in entry
             for entry in summary["unhealthy"]
         ), f"el dupe fuzzy silenció la deriva: {summary['unhealthy']}"
         errores = [r for r in caplog.records if r.levelno == logging.ERROR]
         assert any(
-            "ostjob" in r.getMessage() and "deriva de identidad" in r.getMessage()
+            "jobicy" in r.getMessage() and "deriva de identidad" in r.getMessage()
             for r in errores
         ), "faltó el ERROR de deriva con dupe fuzzy presente"
 
@@ -841,7 +841,7 @@ class TestVentanaCosecha:
             )
             for i in range(10)
         ]
-        mock_providers.return_value = [_make_mock_provider("ostjob", frescas)]
+        mock_providers.return_value = [_make_mock_provider("jobicy", frescas)]
 
         with (
             patch(
@@ -896,7 +896,7 @@ class TestVentanaCosecha:
             )
             for i in range(10)
         ]
-        mock_providers.return_value = [_make_mock_provider("ostjob", listado_viejo)]
+        mock_providers.return_value = [_make_mock_provider("jobicy", listado_viejo)]
 
         with (
             patch(
@@ -948,7 +948,7 @@ class TestVentanaCosecha:
                 # known_hashes, que revienta antes de que el bucle arranque.
                 mock_providers.return_value = [
                     _make_mock_provider(
-                        "ostjob",
+                        "jobicy",
                         [
                             self._dated_job(
                                 f"Editor T{run}-{i}",
@@ -962,13 +962,13 @@ class TestVentanaCosecha:
                 summary = await _fetch_providers_async()
 
         assert summary["errors"] >= 1
-        assert any(entry.startswith("ostjob:") for entry in summary["unhealthy"]), (
+        assert any(entry.startswith("jobicy:") for entry in summary["unhealthy"]), (
             f"la fuente no se degradó pese a perder el lote cada run: "
             f"{summary['unhealthy']}"
         )
         fila = (
             await db_session.execute(
-                select(SourceHealth).where(SourceHealth.source_key == "ostjob")
+                select(SourceHealth).where(SourceHealth.source_key == "jobicy")
             )
         ).scalar_one()
         assert fila.consecutive_unstored == 2, (
@@ -1010,7 +1010,7 @@ class TestVentanaCosecha:
             for i in range(2)
         ]
         mock_providers.return_value = [
-            _make_mock_provider("ostjob", [*viejas, *nuevas])
+            _make_mock_provider("jobicy", [*viejas, *nuevas])
         ]
 
         with (
@@ -1049,7 +1049,7 @@ class TestVentanaCosecha:
             )
             for i in range(12)
         ]
-        mock_providers.return_value = [_make_mock_provider("ostjob", lote)]
+        mock_providers.return_value = [_make_mock_provider("jobicy", lote)]
 
         with (
             patch(
@@ -1081,7 +1081,7 @@ class TestVentanaCosecha:
             self._dated_job("Editor Off", "http://o.com/off", now - timedelta(days=90)),
             self._dated_job("Editor OffND", "http://o.com/offnd", None),
         ]
-        mock_providers.return_value = [_make_mock_provider("ostjob", jobs)]
+        mock_providers.return_value = [_make_mock_provider("jobicy", jobs)]
 
         with patch(
             "tasks.fetch_tasks.task_session",

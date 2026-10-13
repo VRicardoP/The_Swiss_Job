@@ -87,12 +87,6 @@ class TestRegistroCompleto:
         )
         assert not sin_motivo, f"Políticas sin motivo registrado: {sin_motivo}"
 
-    def test_thehub_es_window(self):
-        """VD.9 (2026-08-15): la API v2 de thehub confirmó `createdAt` como
-        fecha de publicación (la página pública lo muestra como 'Posted') —
-        la fuente dejó de ser INCIERTO/FULL."""
-        assert harvest_window.policy_for("thehub").mode == WINDOW
-
     def test_gastrojob_es_window(self):
         """VD.4b (2026-08-15): el endpoint AJAX del listado imprime la primera
         activación de cada anuncio ('Erstmals aktiviert') y el detalle la
@@ -113,7 +107,7 @@ class TestRegistroCompleto:
 
 class TestPolicyFor:
     def test_fuente_registrada_devuelve_su_politica(self):
-        assert harvest_window.policy_for("ostjob").mode == WINDOW
+        assert harvest_window.policy_for("gastrojob").mode == WINDOW
         assert harvest_window.policy_for("swiss_schools_nae").mode == FULL
 
     def test_fuente_no_registrada_full_y_error_logueado(self, caplog):
@@ -133,26 +127,26 @@ class TestAcceptsMatriz:
 
     def test_window_fecha_dentro_entra(self):
         reciente = _NOW - timedelta(days=2)
-        assert harvest_window.accepts("ostjob", reciente, now=_NOW)
+        assert harvest_window.accepts("gastrojob", reciente, now=_NOW)
 
     def test_window_fecha_fuera_no_entra(self):
         """J1 — la ventana ya no es del bootstrap: una oferta vieja no entra,
         punto (que la fuente tenga o no corpus es asunto del pipeline)."""
         vieja = _NOW - timedelta(days=30)
-        assert not harvest_window.accepts("ostjob", vieja, now=_NOW)
+        assert not harvest_window.accepts("gastrojob", vieja, now=_NOW)
 
     def test_window_sin_fecha_no_entra(self):
         """Política WINDOW sin published_at = anomalía ⇒ no entra."""
-        assert not harvest_window.accepts("ostjob", None, now=_NOW)
+        assert not harvest_window.accepts("gastrojob", None, now=_NOW)
 
     def test_borde_exacto_justo_dentro_y_justo_fuera(self, monkeypatch):
         monkeypatch.setattr(settings, "HARVEST_WINDOW_DAYS", 7)
         borde = _NOW - timedelta(days=7)
         # El borde exacto (now - 7d) queda DENTRO (>= cutoff)...
-        assert harvest_window.accepts("ostjob", borde, now=_NOW)
+        assert harvest_window.accepts("gastrojob", borde, now=_NOW)
         # ...y un microsegundo más viejo, FUERA.
         justo_fuera = borde - timedelta(microseconds=1)
-        assert not harvest_window.accepts("ostjob", justo_fuera, now=_NOW)
+        assert not harvest_window.accepts("gastrojob", justo_fuera, now=_NOW)
 
     def test_full_entra_todo(self):
         """FULL (colegios / sin fecha): entra todo, incluso sin fecha."""
@@ -164,15 +158,15 @@ class TestAcceptsMatriz:
         """La ventana lee HARVEST_WINDOW_DAYS, no un 7 cableado."""
         monkeypatch.setattr(settings, "HARVEST_WINDOW_DAYS", 30)
         hace_20_dias = _NOW - timedelta(days=20)
-        assert harvest_window.accepts("ostjob", hace_20_dias, now=_NOW)
+        assert harvest_window.accepts("gastrojob", hace_20_dias, now=_NOW)
 
     def test_interruptor_apagado_acepta_todo(self, monkeypatch):
         """HARVEST_WINDOW_ENABLED=False ⇒ comportamiento de siempre: entra
         todo, también lo viejo y lo sin fecha de una fuente WINDOW."""
         monkeypatch.setattr(settings, "HARVEST_WINDOW_ENABLED", False)
         vieja = _NOW - timedelta(days=365)
-        assert harvest_window.accepts("ostjob", vieja, now=_NOW)
-        assert harvest_window.accepts("ostjob", None, now=_NOW)
+        assert harvest_window.accepts("gastrojob", vieja, now=_NOW)
+        assert harvest_window.accepts("gastrojob", None, now=_NOW)
 
     def test_fecha_naive_se_trata_como_sin_fecha(self):
         """K9 — una datetime SIN zona no puede compararse con el corte aware:
@@ -180,13 +174,13 @@ class TestAcceptsMatriz:
         lote entero de la fuente. Se trata como "sin fecha": no entra en una
         WINDOW (anomalía) y sí en una FULL."""
         naive = datetime(2026, 8, 13, 12, 0, 0)  # sin tzinfo, reciente
-        assert not harvest_window.accepts("ostjob", naive, now=_NOW)
+        assert not harvest_window.accepts("gastrojob", naive, now=_NOW)
         assert harvest_window.accepts("swiss_schools_nae", naive, now=_NOW)
 
     def test_valor_no_datetime_se_trata_como_sin_fecha(self):
         """K9 — cualquier valor que no sea datetime aware (p. ej. un string
         que se coló sin parsear) tampoco revienta la comparación."""
-        assert not harvest_window.accepts("ostjob", "2026-08-13", now=_NOW)
+        assert not harvest_window.accepts("gastrojob", "2026-08-13", now=_NOW)
 
 
 def _precheck(
@@ -224,13 +218,13 @@ class TestGuardarrailNoDate:
         # tamaño mínimo para no gritar por un hipo en un lote de 1-2.
         with caplog.at_level(logging.INFO, logger="services.harvest_window"):
             harvest_window.log_window_summary(
-                "ostjob",
+                "gastrojob",
                 _precheck(skipped_no_date=12, saw_published_at=False),
                 new_count=0,
             )
         errores = [r for r in caplog.records if r.levelno == logging.ERROR]
         assert errores, "faltó el ERROR de política mal asignada"
-        assert any("ostjob" in r.getMessage() for r in errores)
+        assert any("gastrojob" in r.getMessage() for r in errores)
 
     def test_revistas_sin_fecha_tambien_alertan(self, caplog):
         """J1 — fuera del bootstrap las ofertas sin fecha ya en el corpus se
@@ -239,7 +233,7 @@ class TestGuardarrailNoDate:
         aceptadas pero NINGUNA fecha en el lote sigue gritando."""
         with caplog.at_level(logging.INFO, logger="services.harvest_window"):
             harvest_window.log_window_summary(
-                "ostjob",
+                "gastrojob",
                 # 9 re-vistas sin fecha que pasaron por el upsert + 3 altas
                 # sin fecha rechazadas (lote >= HARVEST_ALERT_MIN_BATCH, L4).
                 _precheck(accepted=9, skipped_no_date=3, saw_published_at=False),
@@ -254,7 +248,7 @@ class TestGuardarrailNoDate:
         y sin el WARNING de K2."""
         with caplog.at_level(logging.INFO, logger="services.harvest_window"):
             harvest_window.log_window_summary(
-                "ostjob",
+                "gastrojob",
                 # Lote >= HARVEST_ALERT_MIN_BATCH (L4): el silencio se debe a
                 # las fechas y a las altas, no al tamaño del lote.
                 _precheck(
@@ -283,7 +277,7 @@ class TestGuardarrailNoDate:
         monkeypatch.setattr(settings, "HARVEST_WINDOW_ENABLED", False)
         with caplog.at_level(logging.INFO, logger="services.harvest_window"):
             harvest_window.log_window_summary(
-                "ostjob",
+                "gastrojob",
                 # Lote >= HARVEST_ALERT_MIN_BATCH: el silencio se debe SOLO
                 # al interruptor, no al tamaño del lote (L4).
                 _precheck(skipped_no_date=12, saw_published_at=False),
@@ -335,7 +329,7 @@ class TestGuardarrailParcialFechas:
         estacionario — silencio (solo la línea INFO)."""
         with caplog.at_level(logging.INFO, logger="services.harvest_window"):
             harvest_window.log_window_summary(
-                "ostjob",
+                "gastrojob",
                 _precheck(accepted=2, skipped_by_date=8, saw_published_at=True),
                 new_count=0,
             )
@@ -356,7 +350,7 @@ class TestUmbralMinimoDeLote:
         no el diagnóstico grave de inventario obsoleto."""
         with caplog.at_level(logging.INFO, logger="services.harvest_window"):
             harvest_window.log_window_summary(
-                "ostjob",
+                "gastrojob",
                 _precheck(skipped_no_date=2, saw_published_at=False),
                 new_count=0,
             )
@@ -378,12 +372,12 @@ class TestUmbralMinimoDeLote:
         antes: el umbral no acalla el caso real."""
         with caplog.at_level(logging.INFO, logger="services.harvest_window"):
             harvest_window.log_window_summary(
-                "ostjob",
+                "gastrojob",
                 _precheck(skipped_no_date=10, saw_published_at=False),
                 new_count=0,
             )
         errores = [r for r in caplog.records if r.levelno == logging.ERROR]
-        assert any("ostjob" in r.getMessage() for r in errores)
+        assert any("gastrojob" in r.getMessage() for r in errores)
 
     def test_lote_grande_fallo_parcial_sigue_gritando(self, caplog):
         """Con lote grande y >= 3 sin fecha el WARNING de K2 grita igual."""
@@ -475,7 +469,9 @@ class TestPrecheckBatch:
 
         repo = JobRepository(db_session)
         h_revista = "h_precheck_revista".ljust(32, "0")
-        await repo.upsert_job(_repo_job(h_revista, "ostjob", "http://pre.test/revista"))
+        await repo.upsert_job(
+            _repo_job(h_revista, "gastrojob", "http://pre.test/revista")
+        )
         await db_session.commit()
 
         calls: list[set[str]] = []
@@ -496,7 +492,9 @@ class TestPrecheckBatch:
             {"hash": h_revista, "published_at": _NOW - timedelta(days=30)},
             {"hash": "h_precheck_nodate".ljust(32, "0"), "published_at": None},
         ]
-        precheck = await harvest_window.precheck_batch("ostjob", jobs, repo, now=_NOW)
+        precheck = await harvest_window.precheck_batch(
+            "gastrojob", jobs, repo, now=_NOW
+        )
 
         assert precheck.verdicts == [ACCEPT, SKIP_STALE, ACCEPT, SKIP_NO_DATE]
         assert precheck.skipped_by_date == 1
@@ -539,7 +537,7 @@ class TestPrecheckBatch:
             },
         ]
         precheck = await harvest_window.precheck_batch(
-            "ostjob", window_jobs, _RepoVacio(), now=_NOW
+            "gastrojob", window_jobs, _RepoVacio(), now=_NOW
         )
         assert precheck.verdicts == [
             ACCEPT,
@@ -596,7 +594,7 @@ class TestPrecheckBatch:
 
         jobs = [{"hash": "h_off".ljust(32, "0"), "published_at": None}]
         precheck = await harvest_window.precheck_batch(
-            "ostjob", jobs, _RepoNuncaLlamado(), now=_NOW
+            "gastrojob", jobs, _RepoNuncaLlamado(), now=_NOW
         )
         assert precheck.verdicts == [ACCEPT]
         assert precheck.skipped_by_date == 0

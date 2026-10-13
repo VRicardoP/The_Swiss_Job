@@ -41,7 +41,7 @@ async def _send_daily_digest_async() -> dict[str, Any]:
     from models.user import User
     from services.daily_digest import build_digest_email
     from services.email_service import EmailService
-    from services.routing import CAPABILITY_MATCHING, legacy_owned_sql
+    from services.matching.identity import core_profile_unlinked_sql
     from tasks.watermarks import filter_unsent, save_watermark, unmark_sent
 
     if not settings.DAILY_DIGEST_ENABLED:
@@ -89,14 +89,14 @@ async def _send_daily_digest_async() -> dict[str, Any]:
                     MatchResult.feedback.is_(None),
                     MatchResult.feedback.notin_(list(NEGATIVE_FEEDBACK)),
                 ),
-                # Gate anti-doble-motor D.1 (§15bis), EN SQL: a un usuario cuyo
+                # Gate de autoridad de notificaciones, EN SQL: a un usuario cuyo
                 # matching ya es del core no se le materializa NI una fila —
                 # su digest saldria de match_results legacy viejos mientras el
                 # core le envia el suyo. Decision registrada: se usa la
                 # dimension 'matching' porque el digest deriva de sus
                 # resultados; la dimension NOTIFICATIONS propia del plan se
                 # aplaza a cuando el core emita digests.
-                legacy_owned_sql(MatchResult.user_id, CAPABILITY_MATCHING),
+                core_profile_unlinked_sql(MatchResult.user_id),
             )
             .order_by(MatchResult.user_id, MatchResult.score_final.desc())
         )

@@ -35,9 +35,7 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     task_soft_time_limit=300,
     task_time_limit=360,
-    # Recicla el hijo prefork cada 200 tareas (anti-fuga). worker-ai lo desactiva
-    # con CELERY_MAX_TASKS_PER_CHILD=0 (→ None) para NO recargar el modelo de
-    # embeddings; el worker general/scraping mantiene el default 200.
+    # Recicla el hijo prefork cada 200 tareas para acotar fugas.
     worker_max_tasks_per_child=int(os.getenv("CELERY_MAX_TASKS_PER_CHILD", "200"))
     or None,
 )
@@ -46,12 +44,9 @@ celery_app.conf.include = [
     "tasks.example_task",
     "tasks.fetch_tasks",
     "tasks.maintenance_tasks",
-    "tasks.embedding_tasks",
-    "tasks.search_tasks",
     "tasks.scraping_tasks",
     "tasks.watchlist_tasks",
     "tasks.alert_tasks",
-    "tasks.matching_tasks",
     "tasks.pipeline_tasks",
     "tasks.profile_tasks",
     "tasks.digest_tasks",

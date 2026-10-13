@@ -14,7 +14,6 @@ from schemas.documents import DocumentPageResponse, GeneratedDocumentResponse
 from services.documents.core_client import CoreDocuments
 from services.documents.export import export_documents
 from services.documents.port import CoreUnavailableError
-from services.routing import set_routing
 from tests.test_profile import register_and_get_token
 
 
@@ -23,7 +22,6 @@ async def _owner(client, db_session):
     uid = await db_session.scalar(select(User.id).where(User.email == email))
     db_session.add(JobhuntProfileMap(user_id=uid, core_profile_id=uuid.uuid4()))
     await db_session.commit()
-    await set_routing(db_session, "documents", "core_primary", profile_id=uid)
     return uid, token
 
 
@@ -123,6 +121,14 @@ async def test_freeze_keeps_export_alive_and_account_intact(
     client, db_session, monkeypatch
 ):
     token, email, password = await register_and_get_token(client)
+    uid = await db_session.scalar(select(User.id).where(User.email == email))
+    db_session.add(JobhuntProfileMap(user_id=uid, core_profile_id=uuid.uuid4()))
+    await db_session.commit()
+
+    async def empty_page(self, user_id, cursor=None):
+        return DocumentPageResponse(data=[])
+
+    monkeypatch.setattr(CoreDocuments, "page", empty_page)
     monkeypatch.setattr(settings, "DOCUMENT_WRITES_FROZEN", True)
     headers = {"Authorization": f"Bearer {token}"}
     assert (

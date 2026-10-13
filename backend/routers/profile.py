@@ -1,21 +1,7 @@
-"""Profile CRUD: preferences, CV upload, GDPR export/delete.
+"""Profile CRUD, CV handling and GDPR export/delete.
 
-A.SEAM (plan §15bis): la LECTURA del perfil (GET /api/v1/profile) consume la
-capacidad PERFILES a traves de la costura (services/profiles) — la
-implementacion (local|core) la decide `jobhunt_routing` POR PERFIL
-(users.id), con default 'local' (comportamiento byte-identico al previo:
-LocalProfile es la lectura del router movida verbatim).
-
-E.15: `watchlist_schools_enabled` pertenece a la autoridad de colegios; con
-schools=core_primary/rollback_pending se lee y escribe exclusivamente en core.
-Las DEMÁS ESCRITURAS (PUT preferencias/weights, CV upload/delete, autofill) quedan
-en local en esta etapa y su respuesta es el recibo del escritor
-local — cota registrada: la matriz de escritor del plan §15bis mantiene al
-legacy como escritor autoritativo de `user_profiles` hasta el cutover; el
-cambio de escritor llega en Fase C como escritura sincrona contra el
-escritor activo + idempotency key. GDPR export/delete-all operan SIEMPRE
-sobre el almacen local para cuenta/perfil. E.9 exporta documentos desde su autoridad y conserva
-el output local; el borrado remoto y de backups no se declara confirmado.
+SwissJob owns the editable profile. Core receives durable snapshots and owns
+the school preference and generated-document capabilities.
 """
 
 import logging
@@ -25,7 +11,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import delete, select
 from starlette.concurrency import run_in_threadpool
 
-from services.job_matcher import DEFAULT_WEIGHTS
+from services.profile_defaults import DEFAULT_WEIGHTS
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
@@ -38,6 +24,7 @@ from services.schools.preferences import preference as school_preference
 from services.schools.state import state_on_core
 from services.documents.freeze import assert_document_writes_enabled
 from services.matching.identity import resolve_core_profile_id
+from services.profile_sync import lock_profile_writer
 from schemas.profile import (
     CVDeleteResponse,
     CVUploadResponse,
@@ -129,6 +116,7 @@ async def update_profile(
     ESCRITURA del escritor LOCAL (A.SEAM: siempre local hasta Fase C); la
     respuesta es su recibo — no pasa por la costura de lectura.
     """
+    await lock_profile_writer(db, current_user.id)
     await db.refresh(current_user, ["profile"])
     profile = current_user.profile
     if profile is None:
@@ -237,6 +225,7 @@ async def upload_cv(
     skills = CVParser.extract_skills(cleaned_text)
 
     # Update profile
+    await lock_profile_writer(db, current_user.id)
     await db.refresh(current_user, ["profile"])
     profile = current_user.profile
     if profile is None:
@@ -254,15 +243,8 @@ async def upload_cv(
 
     await db.commit()
 
-    # Dispara el análisis del CV + autocompletado del perfil (LLM) + embedding.
-    # Emite progreso por SSE (`cv_analysis_progress`) para la barra del frontend.
-    # Esta tarea regenera el embedding al final, así que reemplaza al dispatch
-    # directo de generate_profile_embedding.
-    # SIN gate de routing D.2 (decisión registrada): esta tarea NO ejecuta el
-    # motor de matching — escribe el PERFIL (capacidad `profiles`, escritor
-    # local hasta Fase C) y su embedding legacy. Es precisamente la señal
-    # "cambió el CV" con la que el core re-evalúa por su lado; se gatea lo que
-    # el core puede duplicar (el matching), no la edición del perfil.
+    # Dispara el análisis y autocompletado. El commit alimenta el outbox de
+    # perfil; Core calcula su propio embedding y matching.
     task_id = None
     try:
         from tasks.profile_tasks import analyze_cv_and_autofill
@@ -288,6 +270,7 @@ async def delete_cv(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete CV text and embedding from the user's profile."""
+    await lock_profile_writer(db, current_user.id)
     await db.refresh(current_user, ["profile"])
     profile = current_user.profile
     if profile is None:

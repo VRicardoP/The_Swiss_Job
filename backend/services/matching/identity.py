@@ -11,13 +11,22 @@ core, y el enrolamiento es una operacion de operador.
 import logging
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.jobhunt_profile_map import JobhuntProfileMap
 
 logger = logging.getLogger(__name__)
+
+
+def core_profile_unlinked_sql(user_id_col):
+    """SQL predicate for retained local notifications awaiting Core enrollment."""
+    return ~exists(
+        select(JobhuntProfileMap.user_id).where(
+            JobhuntProfileMap.user_id == user_id_col
+        )
+    )
 
 
 async def resolve_core_profile_id(
@@ -40,8 +49,7 @@ async def set_profile_link(
     core_profile_id: uuid.UUID,
     updated_by: str | None = None,
 ) -> None:
-    """Upsert del vinculo + commit (operacion de enrolamiento del canary,
-    simetrica a services.routing.set_routing)."""
+    """Upsert the durable local-to-Core profile identity link."""
     stmt = (
         pg_insert(JobhuntProfileMap)
         .values(

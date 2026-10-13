@@ -1,45 +1,7 @@
-"""Puerto de la capacidad CANDIDATURAS — A.SEAM (plan §15bis).
+"""Port for applications and retained MatchResult application state.
 
-Subinterfaz POR CAPACIDAD (no fachada unica `JobHunting`). Las operaciones
-son exactamente las que hoy consumen los routers de candidatura:
-`routers/applications.py` (CRUD + stats de `job_applications`) y
-`routers/watchlist.py` (state machine de candidatura sobre `match_results`:
-status, borrador de carta y su lectura para calendario).
-
-CONTRATO /v1 (C-4, DISENO_C4_ESCRITURAS_V2_1): el core SI expone el CRUD de
-candidaturas — GET/POST /v1/applications, PATCH/DELETE /v1/applications/{id}
-(jobhunt_core/api/v1_applications.py) — y `CoreApplications` (core_client.py)
-es su cliente HTTP real (identidad de perfil POR USUARIO via
-jobhunt_profile_map). El state machine sobre match_results (4 ultimas
-operaciones del puerto) NO tiene superficie C-4: en el cliente core es
-ApplicationsUnsupportedError y la costura lo sirve SIEMPRE de local.
-
-CRITERIO UNIFICADOR (heredado de A.SEAM matching): ningun estado local puede
-ser inaccesible por el routing. Con C-4, el modo decide el ESCRITOR del CRUD
-de `job_applications` (core_primary/rollback_pending => core sin fallback
-silencioso; resto => local, con core_read declarado equivalente a local —
-seam.py); el estado de `match_results` conserva escritor LOCAL unico y se
-sirve de local en TODOS los modos.
-
-INVENTARIO DE ESCRITORES (1ª rev. A.SEAM final — exacto, para el flip de
-Fase C): (a) los routers via esta costura (status/draft/CRUD); (b) la fila
-match_results que SOSTIENE application_status/draft_letter es CO-PROPIEDAD
-de la capacidad MATCHING: match_service._save_results crea/actualiza/poda
-su ciclo de vida (preservando estos campos), y maintenance_tasks decide
-archivar-vs-borrar la oferta GATEANDO sobre application_status<>'detected'
-OR draft_letter IS NOT NULL. COTA DE FLIP Fase C: mover el escritor de
-estos campos EXIGE que _save_results y el prune de maintenance lean el
-estado del escritor ACTIVO (no la copia local congelada) — si no, una fila
-con engagement real en el core pareceria 'limpia' en local y se BORRARIA
-(split-brain con perdida de candidatura).
-
-Dos implementaciones detras del mismo puerto:
-- `LocalApplications` (services/applications/local.py): logica actual de los
-  routers, movida verbatim.
-- `CoreApplications` (services/applications/core_client.py): cliente HTTP
-  real de los endpoints C-4 (con las cotas documentadas en su docstring).
-La eleccion la decide `jobhunt_routing` (services/applications/seam.py), que
-en modo escritor-core compone ambas (CoreWriterApplications).
+SwissJob is the fixed authority for application CRUD, status, drafts and
+calendar data. The interface keeps router validation separate from storage.
 """
 
 import uuid

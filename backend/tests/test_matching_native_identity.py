@@ -8,7 +8,6 @@ import pytest
 from config import settings
 from services.matching.core_client import CoreMatching
 from services.matching.identity import set_profile_link
-from services.routing import set_routing
 from tests.test_matching_contract import _register, _match_dto
 
 
@@ -30,7 +29,6 @@ async def test_native_feed_uses_canonical_id_except_school_commands(
     monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
     uid, _ = await _register(client)
     await set_profile_link(db_session, uid, uuid.uuid4())
-    await set_routing(db_session, "matching", "core_primary", profile_id=uid)
     item = _match_dto("python_zurich", legacy=True)
     item["vacancy"]["primary_listing"]["source"] = source
     original = item["vacancy"]["primary_listing"]["external_id"]

@@ -1,65 +1,8 @@
-"""Implementacion CORE de la capacidad catalogo — A.SEAM (plan §15bis).
+"""HTTP adapter for the catalog owned by Core.
 
-Cliente HTTP del /v1 del core. Contrato REAL: jobhunt_core/api/v1.py +
-jobhunt_core/api/schemas.py (A-09; C-API-R + cierre de cota de filtros,
-commit core 5e8e849):
-
-- GET /v1/vacancies?limit&cursor&q&source&remote&country&city ->
-  VacanciesPageDTO {items: [VacancyDTO], next_cursor}. Feed/busqueda del
-  corpus GLOBAL (solo vacantes ACTIVAS), orden created_at DESC + keyset
-  opaco; ETag de pagina (If-None-Match -> 304). Semantica de los filtros:
-  `q` substring ci sobre title/company; `source` CSV ci contra la fuente del
-  PRIMARY listing; `remote` igualdad del booleano canonico (NULL no casa);
-  country/city substring ci sobre location.
-- GET /v1/vacancies/{uuid} -> VacancyDTO {id, title, company, description,
-  salary, tags, location, remote, primary_listing{source, external_id, url,
-  apply_url, first_seen_at, last_seen_at}, listings[], translations[]}.
-  404 con ErrorDTO si no existe.
-- Auth por credencial de consumer: `Authorization: Bearer <key_id>.<secret>`
-  (ADR-09), scope `vacancies:read`. 401/403 con ErrorDTO.
-- El core NO expone estadisticas ni fuentes agregadas del catalogo: `stats`
-  y `sources` levantan CatalogUnsupportedError (cota del contrato vigente,
-  fijada por los contract tests).
-
-BUSQUEDA (decisiones; las fija test_catalog_contract.py):
-
-FILTROS EXPRESABLES. Al core solo viaja lo que su contrato modela: q (el
-router legacy ya lo capa a 200, mismo limite del /v1), source (CSV ci; ver
-EXPANSION) y remote_only=True -> remote=true (False significa "no filtrar",
-nunca remote=false). canton/language/seniority/contract_type/salary_min/
-salary_max y cualquier `sort` distinto de "newest" NO tienen equivalente en
-el /v1 (cota fijada en el core: filtrar numeros contra salario en texto
-libre seria inventarse el resultado) => CatalogUnsupportedError SIN emitir
-peticiones — fallback a local en core_read, 501 en core_primary.
-
-EXPANSION DE FUENTES. El proyector sombra B-02 registra las fuentes legacy
-como `legacy:<source>` y el filtro `source` del /v1 compara contra esa
-fuente del primary listing: cada fuente pedida se envia en AMBAS formas
-("adzuna" -> "adzuna,legacy:adzuna") para casar vacantes core-nativas y
-proyectadas. En la PRESENTACION el prefijo interno se retira (misma regla
-que el cliente de matching: se muestra la fuente original, no la sombra).
-
-PAGINACION/TOTAL. El contrato legacy exige total exacto y offset. Una sola
-petición /v1/vacancies con offset explícito devuelve ambos desde el core;
-se hidrata solo la página solicitada, no todo el corpus. El cache por ETag
-incluye filtros, limit y offset. Desplegar core compatible antes del BFF:
-sin total válido se falla cerrado, nunca se inventa un recuento parcial.
-
-IDENTIDAD. Los items del feed se presentan con la identidad de ESTA
-capacidad: el UUID canonico de la vacante — la misma que sirve `get`, con
-la que el detalle hace round-trip por la propia costura (el detalle por MD5
-legacy lo sigue cubriendo el fallback local del canary). La resolucion a
-hash MD5 via listings sombra es del feed de MATCHING, donde el estado del
-escritor local se superpone por job_hash; el catalogo no superpone estado.
-
-Traduccion de identidad en `get`: el legacy identifica por hash MD5 (32
-hex); el core por UUID de vacante. OJO: un MD5 de 32 hex tambien PARSEA
-como UUID sin guiones, asi que parsear no basta — `get()` solo trata como
-identidad del core la forma canonica con guiones (round-trip
-`str(UUID(ref)) == ref.lower()`). Los MD5 se resuelven por el respaldo local
-antes del corte. Con CORE_FEEDBACK_ENABLED se resuelven exclusivamente por
-/listing-references: 404 si ausentes, error cerrado si ambiguos; nunca se
-consulta el corpus local. El resto de referencias devuelve None sin HTTP.
+It validates the Core payload, preserves stable vacancy identities and maps the
+filters supported by the public contract. Unsupported filters fail explicitly.
+Legacy 32-character links resolve through Core listing references.
 """
 
 import logging
@@ -69,11 +12,9 @@ from typing import Callable
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
-from models.job import Job
 from schemas.job import JobBrief, JobResponse, JobSearchResponse
 
 from .port import (
@@ -330,55 +271,31 @@ class CoreCatalog:
         detalle de un item del feed (que ahora viaja con MD5 accionable)
         moriria en 404. Sin sesion local se conserva el comportamiento
         previo (None)."""
-        if settings.CORE_FEEDBACK_ENABLED:
-            # Final cutover: old bookmarks resolve through persisted core
-            # listing identities, never through the retired local catalogue.
-            if len(job_ref) != 32 or any(
-                c not in "0123456789abcdefABCDEF" for c in job_ref
-            ):
-                return None
-            self._guard_credential()
-            try:
-                async with self._client_factory() as client:
-                    response = await client.get(
-                        "/listing-references", params={"external_id": job_ref}
-                    )
-            except httpx.HTTPError as exc:
-                raise CoreUnavailableError("core reference lookup unavailable") from exc
-            if response.status_code == 404:
-                return None
-            if response.status_code != 200:
-                raise CoreUnavailableError("core reference lookup failed or ambiguous")
-            try:
-                vacancy_id = str(uuid.UUID(response.json()["vacancy_id"]))
-            except _PAYLOAD_ERRORS as exc:
-                raise CoreUnavailableError("invalid core reference response") from exc
-            return await self.get(vacancy_id)
-        if self._db is None:
+        if len(job_ref) != 32 or any(
+            c not in "0123456789abcdefABCDEF" for c in job_ref
+        ):
             return None
-        from .local import LocalCatalog
-
-        return await LocalCatalog(self._db).get(job_ref)
+        self._guard_credential()
+        try:
+            async with self._client_factory() as client:
+                response = await client.get(
+                    "/listing-references", params={"external_id": job_ref}
+                )
+        except httpx.HTTPError as exc:
+            raise CoreUnavailableError("core reference lookup unavailable") from exc
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            raise CoreUnavailableError("core reference lookup failed or ambiguous")
+        try:
+            vacancy_id = str(uuid.UUID(response.json()["vacancy_id"]))
+        except _PAYLOAD_ERRORS as exc:
+            raise CoreUnavailableError("invalid core reference response") from exc
+        return await self.get(vacancy_id)
 
     async def _resolve_legacy_hashes(self, urls: list[str]) -> dict[str, str]:
-        """url → hash MD5 del Job local de respaldo (lote). {} sin sesion.
-
-        G3/P3-5: solo Jobs ACTIVOS. Sin el filtro se presentaba el hash
-        «accionable» del fix G1/P2-17 para ofertas ya archivadas y el detalle
-        respondia 404 (`LocalCatalog.get` SI filtra por is_active), dejando el
-        item del feed inabrible. Mismo criterio que `local.py`.
-        """
-        clean = [u for u in urls if u]
-        if settings.CORE_FEEDBACK_ENABLED or self._db is None or not clean:
-            return {}
-        rows = (
-            await self._db.execute(
-                select(Job.url, Job.hash).where(
-                    Job.url.in_(clean), Job.is_active.is_(True)
-                )
-            )
-        ).all()
-        return {url: job_hash for url, job_hash in rows}
+        """Legacy hashes are resolved by Core listing references after cutover."""
+        return {}
 
     def _guard_credential(self) -> None:
         """Sin credencial no se hace ni una peticion (mismo trato que caida)."""

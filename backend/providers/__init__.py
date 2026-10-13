@@ -1,31 +1,15 @@
-"""Provider registry: discover and instantiate all job providers."""
+"""Provider registry for sources still owned by SwissJob."""
 
 import logging
 
 from config import settings
-from services.job_service import BaseJobProvider
-from services.legacy_sources import disabled_sources
 from providers.adzuna import AdzunaProvider
-from providers.arbeitnow import ArbeitnowProvider
 from providers.careerjet import CareerjetProvider
-from providers.euremotejobs import EURemoteJobsProvider
 from providers.jobicy import JobicyProvider
-from providers.jobspresso import JobspressoProvider
 from providers.jooble import JoobleProvider
 from providers.jsearch import JSearchProvider
-from providers.ostjob import OstjobProvider
 from providers.proz import ProzProvider
-from providers.publicjobs import PublicJobsProvider
 from providers.remoteco import RemoteCoProvider
-from providers.remotive import RemotiveProvider
-from providers.weworkremotely import WeWorkRemotelyProvider
-from providers.workingnomads import WorkingNomadsProvider
-from providers.zebis import ZebisProvider
-from providers.zentraljob import ZentraljobProvider
-from providers.globaljobs import GlobalJobsProvider
-from providers.thehub import TheHubProvider
-from providers.jobgether import JobgetherProvider
-from providers.nav_arbeidsplassen import NavArbeidsplassenProvider
 from providers.restricted import (
     GlassdoorPartnerProvider,
     IndeedPartnerProvider,
@@ -33,78 +17,30 @@ from providers.restricted import (
     LinkedInAuthorizedProvider,
     XingPartnerProvider,
 )
+from services.job_service import BaseJobProvider
 
 logger = logging.getLogger(__name__)
 
-# Registry: source_name → provider class
 _PROVIDER_CLASSES: dict[str, type[BaseJobProvider]] = {
-    # Agregadores generales
     "adzuna": AdzunaProvider,
-    "arbeitnow": ArbeitnowProvider,
     "careerjet": CareerjetProvider,
     "jooble": JoobleProvider,
     "jsearch": JSearchProvider,
-    # Portales remote generalistas
-    "remotive": RemotiveProvider,
-    "weworkremotely": WeWorkRemotelyProvider,
-    "workingnomads": WorkingNomadsProvider,
-    "euremotejobs": EURemoteJobsProvider,
     "remoteco": RemoteCoProvider,
-    "jobspresso": JobspressoProvider,
-    # Feeds RETIRADOS por el portal (VD.6, re-sondeados 2026-08-14): los sitios
-    # viven pero sus feeds ya no existen. Nunca aportaron una oferta y son
-    # tableros remotos genéricos, lejos del perfil objetivo. Ficheros
-    # conservados por si el portal vuelve a publicar un feed.
-    # "dailyremote": DailyRemoteProvider,  # /rss eliminado (404, también /feed)
-    # "authenticjobs": AuthenticJobsProvider,  # rss/custom.php 404; /feed/ es el BLOG editorial (contaminaría el corpus)
-    # Remoto europeo/nórdico (estudio portales UE-norte, API pública sin key)
-    "thehub": TheHubProvider,  # startups nórdicas, flag isRemote estructural
-    "jobgether": JobgetherProvider,  # remoto paneuropeo (requiere UA de navegador)
-    "nav_arbeidsplassen": NavArbeidsplassenProvider,  # servicio público noruego
-    # Localización y contenido lingüístico
     "proz": ProzProvider,
-    # "translatorscafe": TranslatorsCafeProvider,  # Feed retirado (VD.6, 2026-08-14): rss.aspx?type=joboffers eliminado (404)
-    # Organismos internacionales y ONGs
-    # "reliefweb": ReliefWebProvider,     # API v2 requiere appname registrado en apidoc.reliefweb.int
-    # "impactpool": ImpactPoolProvider,   # Feed RSS eliminado (404)
-    # Portales suizos
-    "ostjob": OstjobProvider,
-    "zentraljob": ZentraljobProvider,
-    "publicjobs": PublicJobsProvider,
-    "zebis": ZebisProvider,
-    # Organismos internacionales adicionales
-    "globaljobs": GlobalJobsProvider,
-    # "untalent": UNTalentProvider,       # Requiere token de autenticación (no es pública)
-    # "undpjobs": UNDPJobsProvider,       # Feed RSS devuelve HTML, no XML
-    # "ilojobs": ILOJobsProvider,         # Feed WordPress devuelve HTML con entidades inválidas
-    # Fuentes RESTRINGIDAS (restricted_ready): arrancan deshabilitadas vía
-    # _KEY_REQUIREMENTS — get_all_providers() no las instancia sin credencial de
-    # partner. NO scraping público. Ver providers/restricted.py y a.txt §6-7.
     "jobcloud_partner": JobCloudPartnerProvider,
     "linkedin_authorized": LinkedInAuthorizedProvider,
     "indeed_partner": IndeedPartnerProvider,
     "glassdoor_partner": GlassdoorPartnerProvider,
     "xing_partner": XingPartnerProvider,
-    # jobicy REACTIVADO 2026-09-02: ya no es tech-only (sonda: 13/50 del
-    # nicho de los perfiles reales) y su API respondió 200 con los campos del
-    # parser. himalayas sigue fuera (Cloudflare 403 «Just a moment» — solo
-    # viable con browser CDP de pago) y remoteok también (su feed actual es
-    # spam presencial: JANITOR/Carpenter con tags aleatorios).
     "jobicy": JobicyProvider,
-    # "himalayas": HimalayasProvider,
-    # "remoteok": RemoteOKProvider,
-    # "ictjobs": ICTJobsProvider,
-    # "swisstechjobs": SwissTechJobsProvider,
 }
 
-# Providers that require API keys — skip instantiation if key is empty
 _KEY_REQUIREMENTS: dict[str, str] = {
     "adzuna": "ADZUNA_APP_ID",
     "careerjet": "CAREERJET_AFFID",
     "jooble": "JOOBLE_API_KEY",
     "jsearch": "JSEARCH_RAPIDAPI_KEY",
-    # Fuentes restringidas: sin credencial de partner NO se instancian (arrancan
-    # deshabilitadas). Activar solo por vía autorizada. Ver a.txt §6-7.
     "jobcloud_partner": "JOBCLOUD_PARTNER_API_KEY",
     "linkedin_authorized": "LINKEDIN_PARTNER_TOKEN",
     "indeed_partner": "INDEED_PARTNER_KEY",
@@ -114,71 +50,43 @@ _KEY_REQUIREMENTS: dict[str, str] = {
 
 
 def _has_required_key(name: str) -> bool:
-    """Check if the provider's required API key is configured."""
     attr = _KEY_REQUIREMENTS.get(name)
-    if attr is None:
-        return True  # No key required
-    return bool(getattr(settings, attr, ""))
+    return attr is None or bool(getattr(settings, attr, ""))
 
 
 def get_provider(name: str) -> BaseJobProvider | None:
-    """Get a single provider instance by source name.
-
-    Returns None if unknown, handed to core, or missing its API key.
-    """
-    disabled = disabled_sources(settings.LEGACY_DISABLED_PROVIDERS, _PROVIDER_CLASSES)
-    if name in disabled:
-        return None
+    """Get a provider when it is registered and has its required key."""
     cls = _PROVIDER_CLASSES.get(name)
-    if cls is None:
-        return None
-    if not _has_required_key(name):
+    if cls is None or not _has_required_key(name):
         return None
     return cls()
 
 
 def get_all_providers() -> list[BaseJobProvider]:
-    """Construct only enabled sources, including the per-source handover guard."""
-    disabled = disabled_sources(settings.LEGACY_DISABLED_PROVIDERS, _PROVIDER_CLASSES)
-    return [
-        cls()
-        for name, cls in _PROVIDER_CLASSES.items()
-        if name not in disabled and _has_required_key(name)
-    ]
+    """Construct every registered provider whose required key is present."""
+    return [cls() for name, cls in _PROVIDER_CLASSES.items() if _has_required_key(name)]
 
 
 def get_provider_names() -> list[str]:
-    """Return all registered provider names (regardless of key availability)."""
-    return list(_PROVIDER_CLASSES.keys())
+    """Return all registered provider names regardless of key availability."""
+    return list(_PROVIDER_CLASSES)
 
 
 def log_provider_status() -> dict[str, str]:
-    """Log which providers are enabled/disabled and why. Returns status dict."""
+    """Log availability of the sources SwissJob still owns."""
     status: dict[str, str] = {}
-    disabled_sources_set = disabled_sources(
-        settings.LEGACY_DISABLED_PROVIDERS, _PROVIDER_CLASSES
-    )
     for name in _PROVIDER_CLASSES:
         key_attr = _KEY_REQUIREMENTS.get(name)
-        if name in disabled_sources_set:
-            status[name] = "disabled (core handover)"
-        elif key_attr is None:
+        if key_attr is None:
             status[name] = "enabled"
         elif bool(getattr(settings, key_attr, "")):
             status[name] = "enabled"
         else:
             status[name] = f"disabled (missing {key_attr})"
 
-    enabled = [n for n, s in status.items() if s == "enabled"]
-    disabled = {n: s for n, s in status.items() if s != "enabled"}
-
-    logger.info(
-        "Provider status: %d/%d enabled %s",
-        len(enabled),
-        len(status),
-        enabled,
-    )
+    enabled = [name for name, state in status.items() if state == "enabled"]
+    disabled = {name: state for name, state in status.items() if state != "enabled"}
+    logger.info("Provider status: %d/%d enabled %s", len(enabled), len(status), enabled)
     for name, reason in disabled.items():
         logger.warning("Provider '%s': %s", name, reason)
-
     return status

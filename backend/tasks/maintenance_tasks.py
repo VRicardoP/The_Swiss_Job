@@ -1,4 +1,4 @@
-"""Celery tasks: maintenance operations (dedup, URL health, cleanup)."""
+"""Celery tasks: URL health and stale-job cleanup."""
 
 import asyncio
 import logging
@@ -8,78 +8,6 @@ from urllib.parse import urlparse
 from celery_app import celery_app
 
 logger = logging.getLogger(__name__)
-
-
-@celery_app.task(name="tasks.dedup_semantic_batch", bind=True, max_retries=1)
-def dedup_semantic_batch(self, batch_size: int = 200) -> dict[str, Any]:
-    """Semantic deduplication via embedding cosine similarity.
-
-    Processes active jobs with embeddings, finds duplicates with cosine > 0.95.
-
-    G1/P3-22: era el único eslabón de la cadena diaria que convertía el fallo
-    en un retorno normal ({"status":"error"}) — el matching corría sobre un
-    corpus sin dedupear y el run contaba OK. Ahora reintenta y, si persiste,
-    LANZA (mismo criterio que embed_all_pending): la cadena se detiene y el
-    link_error de daily_harvest deja rastro.
-    """
-    try:
-        return asyncio.run(_dedup_semantic_batch_async(batch_size))
-    except Exception as exc:
-        logger.error("dedup_semantic_batch failed: %s", exc)
-        raise self.retry(exc=exc, countdown=120)
-
-
-async def _dedup_semantic_batch_async(batch_size: int) -> dict[str, Any]:
-    """Async implementation: find and mark semantic duplicates."""
-    from sqlalchemy import select
-
-    from config import settings
-    from database import task_session
-    from models.job import Job
-    from services.deduplicator import Deduplicator
-    from services.job_repository import JobRepository
-
-    async with task_session() as db:
-        # Get active jobs with embeddings that are not already duplicates
-        stmt = (
-            select(Job)
-            .where(
-                Job.is_active.is_(True),
-                Job.duplicate_of.is_(None),
-                Job.embedding.is_not(None),
-            )
-            .order_by(Job.first_seen_at.desc())
-            .limit(batch_size)
-        )
-        result = await db.execute(stmt)
-        jobs = result.scalars().all()
-
-        if not jobs:
-            return {"status": "success", "processed": 0, "duplicates_found": 0}
-
-        repo = JobRepository(db)
-        dupes_found = 0
-
-        for job in jobs:
-            canonical_hashes = await Deduplicator.find_semantic_duplicates(
-                db, job, threshold=settings.SEMANTIC_DEDUP_THRESHOLD
-            )
-            if canonical_hashes:
-                await repo.mark_duplicate(job.hash, canonical_hashes[0])
-                dupes_found += 1
-
-        await db.commit()
-
-        logger.info(
-            "Semantic dedup: processed %d jobs, found %d duplicates",
-            len(jobs),
-            dupes_found,
-        )
-        return {
-            "status": "success",
-            "processed": len(jobs),
-            "duplicates_found": dupes_found,
-        }
 
 
 # UA de navegador para el health-check: algunos portales devuelven 403 a clientes
@@ -128,7 +56,7 @@ def check_job_urls(self, limit: int | None = None) -> dict[str, Any]:
 
     A20-10: un fallo ya no se devuelve como `{"status": "error"}` — Celery lo
     contaba como ÉXITO, no reintentaba y no quedaba rastro fuera del log.
-    Mismo criterio que dedup_semantic_batch: reintento y, si persiste, LANZA.
+    Mismo criterio de error visible: reintento y, si persiste, LANZA.
     """
     from config import settings
 

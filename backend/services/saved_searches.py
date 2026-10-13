@@ -12,13 +12,10 @@ from typing import Literal
 import httpx
 from fastapi import HTTPException, Request
 from pydantic import AwareDatetime, BaseModel, Field
-from sqlalchemy import select
 
 from config import settings
-from models.jobhunt_routing import CONSUMER_SWISSJOB, PROFILE_WILDCARD, JobhuntRouting
 from schemas.saved_searches import SavedSearchListResponse, SavedSearchResponse
 from services.matching.identity import resolve_core_profile_id
-from services.routing import MODE_CORE_PRIMARY, MODE_ROLLBACK_PENDING
 
 CAPABILITY = "saved_searches"
 
@@ -55,22 +52,6 @@ class _Search(BaseModel):
 class _Page(BaseModel):
     items: list[_Search]
     next_cursor: str | None = None
-
-
-async def core_owns_searches(db, user_id):
-    # Fresh routing for this durable authority; no TTL window at cutover.
-    rows = (
-        await db.execute(
-            select(JobhuntRouting.profile_id, JobhuntRouting.mode).where(
-                JobhuntRouting.consumer_id == CONSUMER_SWISSJOB,
-                JobhuntRouting.capability == CAPABILITY,
-                JobhuntRouting.profile_id.in_([user_id, PROFILE_WILDCARD]),
-            )
-        )
-    ).all()
-    modes = dict(rows)
-    mode = modes.get(user_id, modes.get(PROFILE_WILDCARD, "local"))
-    return mode in {MODE_CORE_PRIMARY, MODE_ROLLBACK_PENDING}
 
 
 def default_client_factory():

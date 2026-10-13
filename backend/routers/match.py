@@ -1,19 +1,8 @@
-"""AI Match endpoints — analyze, results, history, feedback, implicit.
+"""Core matching feed, facets, saved items and feedback endpoints.
 
-A.SEAM (plan §15bis): las LECTURAS DEL FEED (/results, /history, /saved)
-consumen la capacidad MATCHING a traves de la costura (services/matching) —
-la implementacion (local|core) la decide `jobhunt_routing` POR PERFIL
-(users.id), con default 'local' (comportamiento byte-identico al previo:
-LocalMatching delega verbatim en MatchResultService).
-
-El DISPARO DEL PIPELINE (/analyze) respeta el routing desde Fase D (gate
-anti-doble-motor D.2, complemento interactivo del D.1 de los schedulers):
-con el matching del perfil gobernado por el core
-(core_read/core_primary/rollback_pending) responde 409 SIN instanciar
-servicios LLM ni tocar el motor local. Antes del corte F, feedback y guardados
-siguen en local. CORE_FEEDBACK_ENABLED cambia ambos al core, con escritura
-síncrona e idempotencia, sin fallback local. No habilitarlo hasta reconciliar
-la migración bajo FEEDBACK_WRITES_FROZEN y comprobar el routing autoritativo.
+Core owns matching computation, so the interactive analyze endpoint is closed.
+The retained feedback switch and local application overlay preserve the state
+whose separate migration gates are still active.
 """
 
 import logging
@@ -40,20 +29,17 @@ from schemas.match import (
 )
 from scrapers.swiss_schools_config import get_school
 from services.schools.presentation import overlay_school_results
-from services.gemini_service import GeminiService
 from services.groq_service import GroqService
-from services.job_matcher import DEFAULT_WEIGHTS
+from services.profile_defaults import DEFAULT_WEIGHTS
 from services import language_store
 from services.matching.core_client import CoreMatching
 from services.matching.feedback import feedback_writer
-from services.match_service import MatchService
 from services.matching import (
     CoreUnavailableError,
     MatchingError,
     MatchingUnsupportedError,
     resolve_matching,
 )
-from services.routing import CAPABILITY_MATCHING, legacy_owns, resolve_mode
 from services.translation_service import TranslationService
 
 logger = logging.getLogger(__name__)
@@ -96,53 +82,13 @@ async def analyze_matches(
     Stage 2: Multi-factor scoring (embedding + salary + location + recency)
     Stage 3: LLM re-ranking via Groq (if API key configured) — top-K only
     """
-    # Gate anti-doble-motor D.2 (plan §15bis): descartar el perfil migrado
-    # ANTES de instanciar servicios LLM o tocar el motor, con UNA consulta de
-    # routing (resolve_mode, con cache en proceso) — cero coste para el
-    # migrado.
-    mode = await resolve_mode(db, CAPABILITY_MATCHING, current_user.id)
-    if not legacy_owns(mode):
-        # 409 y no 501: 501 (via _matching_http_error) significa "el backend
-        # activo no sabe servir esta operacion" (cota de contrato del /v1).
-        # Aqui la operacion es valida, pero ejecutarla chocaria con el estado
-        # del recurso: el ESCRITOR autoritativo del matching de este perfil
-        # es el core (matriz de escritor §15bis) y un recalculo local seria
-        # el doble motor que D.1 cerro en los schedulers. Ese conflicto con
-        # el estado actual del recurso es la semantica de 409 Conflict; y no
-        # es una carencia permanente (tras un rollback completo el perfil
-        # vuelve a ser analizable en local).
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Matching for this profile is governed by the core engine; "
-                "results recompute automatically when your CV or the job "
-                "corpus changes. Local analysis is disabled."
-            ),
-        )
-
-    groq = _get_groq(request)
-    service = MatchService(db, groq=groq, gemini=GeminiService())
-    result = await service.run_matching(
-        user_id=current_user.id,
-        min_score=body.min_score,
-    )
-
-    if result.get("status") == "no_embedding":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Profile has no CV embedding. Upload a CV first.",
-        )
-
-    if result.get("status") == "error":
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=result.get("reason", "Unknown error"),
-        )
-
-    return MatchAnalyzeResponse(
-        status=result["status"],
-        total_candidates=result.get("total_candidates", 0),
-        results_count=result.get("results_count", 0),
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            "Matching for this profile is governed by the core engine; "
+            "results recompute automatically when your CV or the job "
+            "corpus changes. Local analysis is disabled."
+        ),
     )
 
 

@@ -1,9 +1,13 @@
 """Tests for GDPR profile endpoints: export and delete-all."""
 
+import uuid
 from httpx import AsyncClient
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.jobhunt_profile_map import JobhuntProfileMap
+from schemas.documents import DocumentPageResponse
+from services.documents.core_client import CoreDocuments
 from models.user import User
 from tests.conftest import random_email
 
@@ -23,8 +27,18 @@ async def register_and_get_token(client: AsyncClient) -> tuple[str, str, str]:
 
 
 class TestProfileExport:
-    async def test_export_returns_user_data(self, client: AsyncClient):
+    async def test_export_returns_user_data(
+        self, client: AsyncClient, db_session: AsyncSession, monkeypatch
+    ):
         token, email, _pw = await register_and_get_token(client)
+        uid = await db_session.scalar(select(User.id).where(User.email == email))
+        db_session.add(JobhuntProfileMap(user_id=uid, core_profile_id=uuid.uuid4()))
+        await db_session.commit()
+
+        async def empty_page(self, user_id, cursor=None):
+            return DocumentPageResponse(data=[])
+
+        monkeypatch.setattr(CoreDocuments, "page", empty_page)
         resp = await client.get(
             "/api/v1/profile/export",
             headers={"Authorization": f"Bearer {token}"},
@@ -34,7 +48,6 @@ class TestProfileExport:
         assert data["email"] == email
         assert data["gdpr_consent"] is True
         assert "exported_at" in data
-        assert "profile" in data
         assert data["profile"] is not None
         assert data["profile"]["skills"] == []
 

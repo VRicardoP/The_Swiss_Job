@@ -40,7 +40,7 @@ async def test_feedback_all_writes_without_local_match(seeded, db_session, legac
         assert f"/profiles/{fake.profile_id}/vacancies/{vid}/" in request.url.path
         data = json.loads(request.content)
         return httpx.Response(
-            200, json={"profile_id": fake.profile_id, "vacancy_id": vid, **data}
+            200, json={"profile_id": str(fake.profile_id), "vacancy_id": vid, **data}
         )
 
     core = writer(db_session, handler)

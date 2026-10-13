@@ -1,8 +1,7 @@
-"""MatchResultService — lectura y CRUD de resultados de matching por usuario.
+"""Read and update retained per-user MatchResult state.
 
-Extraído de MatchService (SRP): MatchService orquesta el pipeline de matching;
-este servicio sirve/edita los MatchResult persistidos (results, history, saved,
-feedback explícito e implícito). Solo depende de la sesión de BD.
+This service preserves feedback and application overlays still consumed by
+CoreMatching and watchlist flows. It does not compute matches.
 """
 
 import uuid

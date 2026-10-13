@@ -44,8 +44,6 @@ services:
       PYTHON_VERSION: 3.12.14
       PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
       PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
-      HF_HOME: /home/app/.cache/huggingface
-      SENTENCE_TRANSFORMERS_HOME: /home/app/.cache/huggingface/sentence-transformers
       PYTHONUNBUFFERED: '1'
       PYTHONDONTWRITEBYTECODE: '1'
       SCHOOL_WRITES_FROZEN: 'false'
@@ -53,8 +51,6 @@ services:
       CORE_FEEDBACK_ENABLED: 'true'
       CORE_MATCH_FACETS_ENABLED: 'true'
       FEEDBACK_WRITES_FROZEN: 'false'
-      LEGACY_DISABLED_PROVIDERS: '["arbeitnow", "euremotejobs", "globaljobs", "jobgether", "jobspresso", "nav_arbeidsplassen", "ostjob", "publicjobs", "remotive", "thehub", "weworkremotely", "workingnomads", "zebis", "zentraljob"]'
-      LEGACY_DISABLED_SCRAPERS: '["financejobs", "irishjobs"]'
     restart: unless-stopped
     entrypoint:
     - ./scripts/entrypoint.sh
@@ -138,16 +134,12 @@ services:
       PYTHON_VERSION: 3.12.14
       PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
       PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
-      HF_HOME: /home/app/.cache/huggingface
-      SENTENCE_TRANSFORMERS_HOME: /home/app/.cache/huggingface/sentence-transformers
       PYTHONUNBUFFERED: '1'
       PYTHONDONTWRITEBYTECODE: '1'
       CORE_CONSUMER_KEY: ${CORE_CONSUMER_KEY}
       CORE_API_BASE_URL: ${CORE_API_BASE_URL}
       CORE_HTTP_TIMEOUT_SECONDS: '120'
       SCHOOL_WRITES_FROZEN: 'false'
-      LEGACY_DISABLED_PROVIDERS: '["arbeitnow", "euremotejobs", "globaljobs", "jobgether", "jobspresso", "nav_arbeidsplassen", "ostjob", "publicjobs", "remotive", "thehub", "weworkremotely", "workingnomads", "zebis", "zentraljob"]'
-      LEGACY_DISABLED_SCRAPERS: '["financejobs", "irishjobs"]'
     restart: unless-stopped
     entrypoint: []
     command:

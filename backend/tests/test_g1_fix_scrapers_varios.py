@@ -14,41 +14,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from scrapers.irishjobs import IrishJobsScraper
 from scrapers.schuljobs import SchulJobsScraper
 from scrapers.swiss_schools_nae import SwissSchoolsNAEScraper
-
-
-class TestP37IdentidadIrishjobs:
-    def test_identidad_por_id_de_plataforma(self):
-        """El mismo anuncio en ambos hosts comparte identidad de cursor."""
-        stub_irishjobs = {"id": 123456, "url": "https://www.irishjobs.ie/job/x-123456"}
-        stub_jobsie = {"id": 123456, "url": "https://www.jobs.ie/job/x-123456"}
-        assert IrishJobsScraper.job_identity(
-            stub_irishjobs
-        ) == IrishJobsScraper.job_identity(stub_jobsie)
-
-    def test_normalizado_conserva_la_misma_identidad(self):
-        """El job persistido (normalize_job) produce la MISMA identidad que el
-        stub — el cursor y el early-stop hablan el mismo idioma."""
-        scraper = IrishJobsScraper()
-        raw = {
-            "id": 987,
-            "title": "Primary Teacher",
-            "company": "School",
-            "url": "https://www.jobs.ie/job/primary-987",
-            "description": "d",
-            "location": "Dublin",
-        }
-        normalized = scraper.normalize_job(raw)
-        assert IrishJobsScraper.job_identity(
-            normalized
-        ) == IrishJobsScraper.job_identity(raw)
-        assert IrishJobsScraper.job_identity(raw) == "irishjobs:987"
-
-    def test_sin_id_cae_a_url(self):
-        stub = {"url": "https://www.irishjobs.ie/job/y"}
-        assert IrishJobsScraper.job_identity(stub) == stub["url"]
 
 
 class TestP38SchuljobsBlindaje:

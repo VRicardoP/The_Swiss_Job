@@ -7,8 +7,7 @@ import pytest
 from sqlalchemy import func, select
 
 from models.document_delivery import DocumentDelivery
-from services.documents.delivery import deliver, enqueue
-from services.routing import set_routing
+from services.documents.delivery import enqueue
 from tests.conftest import TestSessionLocal
 from tests.test_document_delivery import prepared  # noqa: F401 -- shared real-DB fixture
 
@@ -43,22 +42,6 @@ async def test_concurrent_same_operation_has_one_committed_body(prepared):  # no
         )
         row = await db.get(DocumentDelivery, operation)
         assert row.payload["content"] in {"first contender", "second contender"}
-
-
-@pytest.mark.anyio
-async def test_prepared_delivery_does_not_cross_a_routing_flip(prepared, db_session):  # noqa: F811  (la fixture, no una redefinición)
-    await set_routing(db_session, "documents", "local", profile_id=prepared["user_id"])
-    result = await deliver(
-        TestSessionLocal,
-        prepared["operation_id"],
-        prepared["user_id"],
-        sender_factory=lambda *args: pytest.fail(
-            "must not send after authority changed"
-        ),
-    )
-    assert result["status"] == "pending" and result["error"] == "authority_changed"
-    row = await db_session.get(DocumentDelivery, prepared["operation_id"])
-    assert row.payload["content"] == prepared["content"]
 
 
 @pytest.mark.anyio

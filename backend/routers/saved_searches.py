@@ -1,15 +1,12 @@
-"""Saved search endpoints — CRUD + manual run."""
+"""Saved-search endpoints backed by the authoritative Core service."""
 
-import logging
 import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.security import get_current_user
 from database import get_db
-from models.saved_search import SavedSearch
 from models.user import User
 from schemas.saved_searches import (
     SavedSearchCreate,
@@ -21,7 +18,6 @@ from services.saved_searches import (
     CoreSavedSearches,
     SearchCoreError,
     block_search_writes,
-    core_owns_searches,
 )
 
 
@@ -32,13 +28,15 @@ async def _core_call(operation):
         raise HTTPException(exc.status, str(exc)) from None
 
 
-logger = logging.getLogger(__name__)
-
 router = APIRouter(
     prefix="/api/v1/searches",
     tags=["saved_searches"],
     dependencies=[Depends(block_search_writes)],
 )
+
+
+def _store(db, user):
+    return CoreSavedSearches(db, user.id)
 
 
 @router.get("", response_model=SavedSearchListResponse)
@@ -48,32 +46,7 @@ async def list_saved_searches(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    """List user's saved searches."""
-    if await core_owns_searches(db, current_user.id):
-        return await _core_call(
-            CoreSavedSearches(db, current_user.id).list(limit, offset)
-        )
-    conditions = [SavedSearch.user_id == current_user.id]
-
-    total = (
-        await db.execute(
-            select(func.count()).select_from(SavedSearch).where(*conditions)
-        )
-    ).scalar_one()
-
-    stmt = (
-        select(SavedSearch)
-        .where(*conditions)
-        .order_by(SavedSearch.created_at.desc())
-        .limit(limit)
-        .offset(offset)
-    )
-    rows = (await db.execute(stmt)).scalars().all()
-
-    return SavedSearchListResponse(
-        data=[SavedSearchResponse.model_validate(s) for s in rows],
-        total=total,
-    )
+    return await _core_call(_store(db, current_user).list(limit, offset))
 
 
 @router.post(
@@ -85,32 +58,11 @@ async def create_saved_search(
     db: AsyncSession = Depends(get_db),
     idempotency_key: uuid.UUID | None = Header(default=None, alias="Idempotency-Key"),
 ):
-    """Create a new saved search with notification preferences."""
-    if await core_owns_searches(db, current_user.id):
-        values = body.model_dump(mode="json")
-        values["filters"] = body.filters.model_dump(exclude_unset=True)
-        return await _core_call(
-            CoreSavedSearches(db, current_user.id).create(
-                values,
-                idempotency_key or uuid.uuid4(),
-            )
-        )
-    search = SavedSearch(
-        user_id=current_user.id,
-        name=body.name,
-        # G3/P2-8: `filters` ya es un modelo validado; se persiste solo lo que
-        # el usuario envio (`exclude_unset`) para no inventar claves por
-        # defecto en la fila ni cambiar la forma que devuelve la API.
-        filters=body.filters.model_dump(exclude_unset=True),
-        min_score=body.min_score,
-        notify_frequency=body.notify_frequency,
-        notify_push=body.notify_push,
+    values = body.model_dump(mode="json")
+    values["filters"] = body.filters.model_dump(exclude_unset=True)
+    return await _core_call(
+        _store(db, current_user).create(values, idempotency_key or uuid.uuid4())
     )
-    db.add(search)
-    await db.commit()
-    await db.refresh(search)
-
-    return SavedSearchResponse.model_validate(search)
 
 
 @router.put("/{search_id}", response_model=SavedSearchResponse)
@@ -120,40 +72,12 @@ async def update_saved_search(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update a saved search."""
-    if await core_owns_searches(db, current_user.id):
-        return await _core_call(
-            CoreSavedSearches(db, current_user.id).update(
-                search_id,
-                body.model_dump(mode="json", exclude_unset=True, exclude_none=True),
-            )
+    return await _core_call(
+        _store(db, current_user).update(
+            search_id,
+            body.model_dump(mode="json", exclude_unset=True, exclude_none=True),
         )
-    search = (
-        await db.execute(
-            select(SavedSearch).where(
-                SavedSearch.id == search_id,
-                SavedSearch.user_id == current_user.id,
-            )
-        )
-    ).scalar_one_or_none()
-    if search is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Saved search not found",
-        )
-
-    # G3/P2-7: `exclude_none` ademas de `exclude_unset` — ningun campo de
-    # SavedSearchUpdate es anulable en BD, y un `{"filters": null}` escribia
-    # `'null'::jsonb` (valor JSON valido: el NOT NULL no salta) que tumbaba
-    # GET /api/v1/searches ENTERO, filas sanas incluidas.
-    update_data = body.model_dump(exclude_unset=True, exclude_none=True)
-    for field, value in update_data.items():
-        setattr(search, field, value)
-
-    await db.commit()
-    await db.refresh(search)
-
-    return SavedSearchResponse.model_validate(search)
+    )
 
 
 @router.delete("/{search_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -162,26 +86,7 @@ async def delete_saved_search(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a saved search."""
-    if await core_owns_searches(db, current_user.id):
-        await _core_call(CoreSavedSearches(db, current_user.id).delete(search_id))
-        return
-    search = (
-        await db.execute(
-            select(SavedSearch).where(
-                SavedSearch.id == search_id,
-                SavedSearch.user_id == current_user.id,
-            )
-        )
-    ).scalar_one_or_none()
-    if search is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Saved search not found",
-        )
-
-    await db.delete(search)
-    await db.commit()
+    await _core_call(_store(db, current_user).delete(search_id))
 
 
 @router.post("/{search_id}/run", response_model=dict)
@@ -190,29 +95,4 @@ async def run_saved_search(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Manually trigger a saved search (bypass scheduler)."""
-    if await core_owns_searches(db, current_user.id):
-        return await _core_call(CoreSavedSearches(db, current_user.id).run(search_id))
-    search = (
-        await db.execute(
-            select(SavedSearch).where(
-                SavedSearch.id == search_id,
-                SavedSearch.user_id == current_user.id,
-            )
-        )
-    ).scalar_one_or_none()
-    if search is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Saved search not found",
-        )
-
-    # Dispatch Celery task
-    from celery_app import celery_app
-
-    celery_app.send_task(
-        "tasks.search_tasks.run_single_saved_search",
-        kwargs={"search_id": str(search_id), "user_id": str(current_user.id)},
-    )
-
-    return {"status": "dispatched", "search_id": str(search_id)}
+    return await _core_call(_store(db, current_user).run(search_id))

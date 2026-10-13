@@ -34,7 +34,7 @@ class SchoolProducer:
         self.observations = None
 
     async def prepare(self, scraper):
-        if not getattr(scraper, "WATCHLIST_SOURCE", False):
+        if getattr(scraper, "WATCHLIST_SOURCE", False) is not True:
             return True
         if settings.SCHOOL_WRITES_FROZEN:
             return False
@@ -84,7 +84,10 @@ class SchoolProducer:
         return True
 
     async def reconcile(self, scraper, *, live_hashes=frozenset()):
-        if not getattr(scraper, "WATCHLIST_SOURCE", False) or self.monitors is None:
+        if (
+            getattr(scraper, "WATCHLIST_SOURCE", False) is not True
+            or self.monitors is None
+        ):
             return
         if settings.SCHOOL_WRITES_FROZEN or not await state_on_core(
             self.db, write=True

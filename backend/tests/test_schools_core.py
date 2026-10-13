@@ -14,12 +14,22 @@ from config import settings
 from models.job import Job
 from models.match_result import MatchResult
 from services.matching.identity import set_profile_link
-from services.routing import set_routing
 from services.schools import CoreSchools, CoreUnavailableError, resolve_schools
 from services.schools.http_client import SchoolClient
 from services.schools.presentation import overlay_school_results
 from tests.test_applications_contract import seed_job, seed_match, JOB_HASH
-from tests.test_schools_contract import _register
+
+
+async def _register(client):
+    email = f"schools-{uuid.uuid4().hex[:8]}@example.com"
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": "TestPass123!", "gdpr_consent": True},
+    )
+    assert response.status_code == 201
+    headers = {"Authorization": f"Bearer {response.json()['access_token']}"}
+    me = await client.get("/api/v1/auth/me", headers=headers)
+    return uuid.UUID(me.json()["id"]), headers
 
 
 async def test_school_producer_configuration_freeze_and_retry_after_cdc(monkeypatch):
@@ -166,7 +176,6 @@ async def test_native_school_vacancy_keeps_actionable_identity(
     await db_session.commit()
     pid = uuid.uuid4()
     await set_profile_link(db_session, uid, pid)
-    await set_routing(db_session, "schools", "core_primary", profile_id=uid)
     item = _match_dto("python_zurich", legacy=False)
     item["vacancy"]["primary_listing"]["source"] = "school-observation"
     rows = [
@@ -277,7 +286,6 @@ async def test_core_school_modes_are_real_and_never_fallback(
     client, db_session, monkeypatch, mode
 ):
     uid, headers = await _register(client)
-    await set_routing(db_session, "schools", mode, profile_id=uid)
     assert isinstance(await resolve_schools(db_session, uid), CoreSchools)
     monkeypatch.setattr(settings, "CORE_CONSUMER_KEY", "")
     assert (
@@ -305,7 +313,6 @@ async def test_watchlist_writes_only_core_and_uses_core_calendar_metadata(
     await db_session.commit()
     pid = uuid.uuid4()
     await set_profile_link(db_session, uid, pid)
-    await set_routing(db_session, "schools", "core_primary", profile_id=uid)
     api = SchoolApi(pid)
     api.install(monkeypatch)
     base = f"/api/v1/watchlist/match/{JOB_HASH}"
@@ -382,7 +389,6 @@ async def test_feed_overlay_does_not_dirty_local_match(client, db_session, monke
     await db_session.commit()
     pid = uuid.uuid4()
     await set_profile_link(db_session, uid, pid)
-    await set_routing(db_session, "schools", "core_primary", profile_id=uid)
     SchoolApi(pid).install(monkeypatch)
     job = await db_session.scalar(select(Job).where(Job.hash == JOB_HASH))
     match = await db_session.scalar(

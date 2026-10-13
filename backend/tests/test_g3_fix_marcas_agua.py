@@ -13,21 +13,17 @@ de todos), P3-2 (la corrida de estreno notificaba el corpus entero) y P3-3 (el
 evento SSE viajaba con `notification_id: "None"`).
 """
 
-import json
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import select, text, update
+from sqlalchemy import text, update
 
 from config import settings
 from core.security import hash_password
-from models.enums import NotifyFrequency
 from models.job import Job
-from models.notification import Notification
-from models.saved_search import SavedSearch
 from models.user import User
 
 
@@ -262,100 +258,3 @@ class TestP29DigestWatchlist:
 
         assert result["status"] == "ok"
         assert fake.store.get(_DIGEST_WATERMARK_KEY) is not None
-
-
-@pytest.mark.asyncio
-class TestSavedSearches:
-    async def _make_search(self, db, uid, *, filters, last_run_at=None, push=False):
-        search = SavedSearch(
-            user_id=uid,
-            name=f"g3-{uuid.uuid4().hex[:6]}",
-            filters=filters,
-            min_score=50,
-            notify_frequency=NotifyFrequency.daily,
-            notify_push=push,
-            is_active=True,
-            last_run_at=last_run_at,
-            total_matches=0,
-        )
-        db.add(search)
-        await db.commit()
-        return search
-
-    async def test_p32_la_corrida_de_estreno_no_cuenta_el_corpus_viejo(
-        self, db_session
-    ):
-        from tasks.search_tasks import _execute_single_search
-
-        uid = await _make_user(db_session)
-        await _make_job(
-            db_session,
-            "g3wm-old-1",
-            title="Oferta antigua",
-            first_seen_at=datetime.now(timezone.utc) - timedelta(days=300),
-        )
-        search = await self._make_search(db_session, uid, filters={}, last_run_at=None)
-
-        count = await _execute_single_search(db_session, search, settings)
-        assert count == 0, "la corrida de estreno notificó el corpus activo entero"
-
-    async def test_p11_la_ventana_solapa_con_la_cosecha_lenta(self, db_session):
-        from tasks.search_tasks import _execute_single_search
-
-        uid = await _make_user(db_session)
-        search = await self._make_search(db_session, uid, filters={})
-        # Estreno: fija last_run_at = ahora.
-        await _execute_single_search(db_session, search, settings)
-        marca = search.last_run_at
-
-        # La cosecha commitea una oferta fechada al inicio de su transacción,
-        # dos minutos ANTES de esa marca.
-        await _make_job(
-            db_session,
-            "g3wm-lenta-1",
-            title="Oferta de cosecha lenta",
-            first_seen_at=marca - timedelta(minutes=2),
-        )
-        count = await _execute_single_search(db_session, search, settings)
-        assert count == 1, "la oferta cayó en el hueco de la marca de agua"
-
-    async def test_p33_el_evento_sse_lleva_el_uuid_real(self, db_session):
-        from tasks.search_tasks import _execute_single_search
-
-        uid = await _make_user(db_session)
-        search = await self._make_search(db_session, uid, filters={}, push=True)
-        await _execute_single_search(db_session, search, settings)
-        await _make_job(db_session, "g3wm-sse-1", title="Oferta nueva")
-
-        fake = _FakeRedis()
-        with patch("redis.from_url", lambda *a, **k: fake):
-            await _execute_single_search(db_session, search, settings)
-
-        assert fake.published, "no se publicó el evento SSE"
-        payload = json.loads(fake.published[-1][1])
-        nid = payload["data"]["notification_id"]
-        assert nid != "None", "el evento viajó sin id de notificación"
-        uuid.UUID(nid)
-        stored = (
-            await db_session.execute(
-                select(Notification).where(Notification.id == uuid.UUID(nid))
-            )
-        ).scalar_one_or_none()
-        assert stored is not None, "el evento se publicó antes del commit"
-
-    async def test_p28_una_busqueda_rota_no_secuestra_el_barrido(self, db_session):
-        from tasks.search_tasks import _run_saved_searches_async
-
-        uid = await _make_user(db_session)
-        # `filters` hostil: la tarea lo consume como texto (`.split`).
-        await self._make_search(db_session, uid, filters={"source": 123})
-        await self._make_search(db_session, uid, filters={"source": "schuljobs"})
-
-        with patch("database.task_session", new=lambda: _session_of(db_session)):
-            result = await _run_saved_searches_async()
-
-        assert result["status"] == "success"
-        assert result["failed"] == 1
-        assert result["searches_processed"] == 1, (
-            "la búsqueda rota abortó el barrido de las demás"
-        )

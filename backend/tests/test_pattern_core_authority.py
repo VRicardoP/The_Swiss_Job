@@ -11,7 +11,6 @@ from models.job_filter import PatternSuggestion
 from services.matching import feedback
 from services.matching.identity import set_profile_link
 from services.pattern_analysis_service import PatternAnalysisService
-from services.routing import set_routing
 from tests.test_analytics_router import _auth
 
 
@@ -19,7 +18,6 @@ async def prepare(client, db, monkeypatch, response):
     headers, uid = await _auth(client)
     pid = uuid.uuid4()
     await set_profile_link(db, uid, pid)
-    await set_routing(db, "matching", "core_primary", profile_id=uid)
     monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
     monkeypatch.setattr(settings, "CORE_CONSUMER_KEY", "test-key")
     calls = []

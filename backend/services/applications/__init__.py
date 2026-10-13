@@ -1,10 +1,5 @@
-"""Capacidad CANDIDATURAS detras de costura — A.SEAM (plan §15bis).
+"""Locally owned application state."""
 
-API publica del paquete: el puerto, sus errores y el resolver que decide
-implementacion (local|core) via jobhunt_routing.
-"""
-
-from .core_client import CoreApplications
 from .local import LocalApplications
 from .port import (
     ApplicationJobNotFoundError,
@@ -14,16 +9,14 @@ from .port import (
     CoreUnavailableError,
     DuplicateApplicationError,
 )
-from .seam import CoreWriterApplications, resolve_applications
+from .seam import resolve_applications
 
 __all__ = [
     "ApplicationJobNotFoundError",
     "ApplicationsError",
     "ApplicationsPort",
     "ApplicationsUnsupportedError",
-    "CoreApplications",
     "CoreUnavailableError",
-    "CoreWriterApplications",
     "DuplicateApplicationError",
     "LocalApplications",
     "resolve_applications",

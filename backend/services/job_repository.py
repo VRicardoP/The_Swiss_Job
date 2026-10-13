@@ -5,13 +5,12 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, case, func, literal_column, null, or_, select, update
+from sqlalchemy import and_, case, func, literal_column, null, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.job import Job
-from services.job_matcher import EMBEDDING_TAGS_VISIBLE_MAX_CHARS
 
 logger = logging.getLogger(__name__)
 
@@ -446,50 +445,8 @@ class JobRepository:
         # fila efectiva — tras una re-vista degradada (campos conservados por
         # los COALESCE/CASE de arriba) el hash guardado NO coincide con el
         # contenido real de la fila y oscila un run hasta el siguiente fetch
-        # sano. Hoy es cosmético: el único lector (tasks/embedding_tasks.py)
-        # lo usa como CAS auto-consistente (snapshot vs. relectura de la misma
-        # columna) y ni dedup, ni last_seen_at, ni caducidad, ni el core lo
-        # consumen. Un consumidor futuro NO debe diffear content_hash entre
-        # runs sin tener esta oscilación en cuenta.
+        # sano. Es metadata histórica local; Core versiona su propio payload.
         set_["content_hash"] = stmt.excluded.content_hash
-        # El embedding se construye de title+company+description+tags
-        # (JobMatcher.build_job_text). En un conflicto, title/company están fijados
-        # por el hash, así que solo pueden cambiar description/tags: invalidamos el
-        # embedding (NULL → re-embed + re-match) SOLO si esos cambian. Es
-        # independiente de content_hash (que versiona MÁS campos): así ni un cambio
-        # de logo/salario re-embebe texto idéntico (eficiencia), ni una fila anterior
-        # a la columna (content_hash NULL) conserva un embedding obsoleto (correctitud).
-        # Se compara contra la description y las tags EFECTIVAS (las que de
-        # verdad quedan en la fila tras los COALESCE/CASE de arriba): un
-        # entrante degradado que se conserva NO debe invalidar el embedding
-        # (texto final idéntico) — comparar contra excluded.tags re-embebía en
-        # cada transición degradada↔sana (V2-1/C9, VD.9).
-        # G3/P3-8: las tags van al FINAL de build_job_text y el encoder trunca a
-        # 128 tokens, así que en una oferta con descripción larga no llegan al
-        # vector (medido: con 1700 chars de descripción, tags=[...] y tags=[]
-        # producen el MISMO vector). Invalidar por ellas dejaba la oferta con
-        # embedding NULL —fuera de _stage1_vector_search y de
-        # find_semantic_duplicates— hasta el siguiente embed_all_pending, a
-        # cambio de re-calcular un vector idéntico. Un cambio de tags solo
-        # invalida si la descripción efectiva es lo bastante corta como para
-        # dejarles sitio en la ventana (EMBEDDING_TAGS_VISIBLE_MAX_CHARS).
-        tags_reach_encoder = (
-            func.char_length(func.coalesce(effective_description, ""))
-            <= EMBEDDING_TAGS_VISIBLE_MAX_CHARS
-        )
-        set_["embedding"] = case(
-            (
-                or_(
-                    Job.description.is_distinct_from(effective_description),
-                    and_(
-                        Job.tags.is_distinct_from(effective_tags),
-                        tags_reach_encoder,
-                    ),
-                ),
-                null(),
-            ),
-            else_=Job.embedding,
-        )
 
         try:
             # A20-11: `xmax = 0` en la fila devuelta ⇔ la fila se INSERTÓ (en
