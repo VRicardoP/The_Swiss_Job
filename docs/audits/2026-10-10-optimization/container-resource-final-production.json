@@ -1,0 +1,241 @@
+{
+  "aggregate_medians": {
+    "container_count": 8,
+    "cpu_percent_sum": 6.07,
+    "memory_mib_sum": 2381.29,
+    "pids_sum": 55
+  },
+  "comparison_to_idle_baseline": {
+    "after_mib": 2381.29,
+    "before_mib": 2648.1,
+    "containers": {
+      "portfolio_backend": {
+        "after_mib": 84.0,
+        "before_mib": 164.6,
+        "delta_mib": -80.6,
+        "delta_percent": -48.97
+      },
+      "portfolio_worker": {
+        "after_mib": 351.3,
+        "before_mib": 147.7,
+        "delta_mib": 203.6,
+        "delta_percent": 137.85
+      },
+      "swissjob-backend": {
+        "after_mib": 364.2,
+        "before_mib": 860.5,
+        "delta_mib": -496.3,
+        "delta_percent": -57.68
+      },
+      "swissjob-core-api-r5": {
+        "after_mib": 149.7,
+        "before_mib": 112.8,
+        "delta_mib": 36.9,
+        "delta_percent": 32.71
+      },
+      "swissjob-core-harvest-worker-r5": {
+        "after_mib": 433.5,
+        "before_mib": 350.2,
+        "delta_mib": 83.3,
+        "delta_percent": 23.79
+      },
+      "swissjob-core-ops-worker-r5": {
+        "after_mib": 83.79,
+        "before_mib": 139.0,
+        "delta_mib": -55.21,
+        "delta_percent": -39.72
+      },
+      "swissjob-core-worker-r5": {
+        "after_mib": 747.1,
+        "before_mib": 610.3,
+        "delta_mib": 136.8,
+        "delta_percent": 22.42
+      },
+      "swissjob-worker": {
+        "after_mib": 167.7,
+        "before_mib": 263.0,
+        "delta_mib": -95.3,
+        "delta_percent": -36.24
+      }
+    },
+    "delta_mib": -266.81,
+    "delta_percent": -10.08,
+    "interpretation": "Three point-in-time medians; per-container workload shifts are not treated as causal. The controlled encoder probe remains the causal model-memory result.",
+    "rule": "same eight retained containers; baseline capture memory excluded before comparison"
+  },
+  "containers": {
+    "portfolio_backend": {
+      "cpu_percent": [
+        0.22,
+        0.24,
+        0.18
+      ],
+      "median_cpu_percent": 0.22,
+      "median_memory_mib": 84.0,
+      "median_pids": 7,
+      "memory_mib": [
+        84.0,
+        84.0,
+        84.0
+      ],
+      "pids": [
+        7,
+        7,
+        7
+      ]
+    },
+    "portfolio_worker": {
+      "cpu_percent": [
+        0.2,
+        0.17,
+        0.18
+      ],
+      "median_cpu_percent": 0.18,
+      "median_memory_mib": 351.3,
+      "median_pids": 16,
+      "memory_mib": [
+        351.3,
+        351.3,
+        351.3
+      ],
+      "pids": [
+        16,
+        16,
+        16
+      ]
+    },
+    "swissjob-backend": {
+      "cpu_percent": [
+        6.39,
+        1.96,
+        4.33
+      ],
+      "median_cpu_percent": 4.33,
+      "median_memory_mib": 364.2,
+      "median_pids": 13,
+      "memory_mib": [
+        364.2,
+        364.2,
+        366.3
+      ],
+      "pids": [
+        13,
+        13,
+        19
+      ]
+    },
+    "swissjob-core-api-r5": {
+      "cpu_percent": [
+        2.38,
+        0.28,
+        0.24
+      ],
+      "median_cpu_percent": 0.28,
+      "median_memory_mib": 149.7,
+      "median_pids": 2,
+      "memory_mib": [
+        149.7,
+        149.7,
+        149.7
+      ],
+      "pids": [
+        2,
+        2,
+        2
+      ]
+    },
+    "swissjob-core-harvest-worker-r5": {
+      "cpu_percent": [
+        0.07,
+        0.61,
+        0.07
+      ],
+      "median_cpu_percent": 0.07,
+      "median_memory_mib": 433.5,
+      "median_pids": 2,
+      "memory_mib": [
+        433.5,
+        433.5,
+        433.5
+      ],
+      "pids": [
+        2,
+        2,
+        2
+      ]
+    },
+    "swissjob-core-ops-worker-r5": {
+      "cpu_percent": [
+        0.11,
+        0.59,
+        0.07
+      ],
+      "median_cpu_percent": 0.11,
+      "median_memory_mib": 83.79,
+      "median_pids": 3,
+      "memory_mib": [
+        83.79,
+        83.79,
+        83.79
+      ],
+      "pids": [
+        3,
+        3,
+        3
+      ]
+    },
+    "swissjob-core-worker-r5": {
+      "cpu_percent": [
+        0.53,
+        0.63,
+        0.0
+      ],
+      "median_cpu_percent": 0.53,
+      "median_memory_mib": 747.1,
+      "median_pids": 9,
+      "memory_mib": [
+        747.1,
+        747.1,
+        747.1
+      ],
+      "pids": [
+        9,
+        9,
+        9
+      ]
+    },
+    "swissjob-worker": {
+      "cpu_percent": [
+        0.35,
+        0.37,
+        0.08
+      ],
+      "median_cpu_percent": 0.35,
+      "median_memory_mib": 167.7,
+      "median_pids": 3,
+      "memory_mib": [
+        167.7,
+        167.7,
+        167.7
+      ],
+      "pids": [
+        3,
+        3,
+        3
+      ]
+    }
+  },
+  "protocol": {
+    "command": "python3 scripts/measure_nas_resources.py --samples 3 --interval 8 --output <final.json>",
+    "script": "scripts/measure_nas_resources.py",
+    "script_sha256": "681af125845a5499a5096bf0c09c51035bb5292fd754c74bcd402e06ca6647b6",
+    "topology": "current script fixes the post-capture eight-container set; the historical --capture-retired switch was removed with the capture runtime"
+  },
+  "sample_window": {
+    "ended_at": "2026-10-13T11:59:21.892395Z",
+    "interval_seconds": 8.0,
+    "method": "docker stats --no-stream over SSH",
+    "samples": 3,
+    "started_at": "2026-10-13T11:58:56.998042Z"
+  }
+}

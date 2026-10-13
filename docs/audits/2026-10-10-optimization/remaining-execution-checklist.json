@@ -172,7 +172,10 @@
       "status": "in_progress",
       "action": "repeat production resource sampling, Portfolio scheduled-window measurement, 12-window browser checks and identical frontend performance protocol; report attributable before/after deltas",
       "candidate_measurement": "12/12 content, 0 JS errors, load 559 ms; drag mean 26.11 ms and p95 33.4 ms versus baseline 43.25/100.1 ms; repeat after deploy",
-      "checkpoint": "all local gates complete; final production measurement waits only for publication of immutable frontend 49ca7ba"
+      "checkpoint": "all local gates complete; final production measurement waits only for publication of immutable frontend 49ca7ba",
+      "resource_checkpoint": "final idle protocol complete: same eight retained containers 2648.10 -> 2381.29 MiB median sum (-266.81 MiB, -10.08%); SwissJob BFF 860.5 -> 364.2 MiB (-57.68%); SwissJob worker 263.0 -> 167.7 MiB (-36.24%)",
+      "resource_record": "container-resource-final-production.json",
+      "next_action": "publish exact 49ca7ba after destination-specific approval; verify Cloudflare; run 12-window/drag protocol and a no-email scheduled-workload measurement, then report final deltas"
     }
   ],
   "permission_state": {
