@@ -56,6 +56,8 @@ done
 RAIZ="$(git rev-parse --show-toplevel)"
 cd "$RAIZ"
 
+python3 scripts/check_source_ownership.py
+
 case "$SERVICIO" in
   core) ARBOL=jobhunt_core ;;
   bff|worker) ARBOL=backend ;;

@@ -1,0 +1,518 @@
+{
+  "schema_version": 1,
+  "objective": "Core is the sole external job-offer publisher; SwissJob and ReactPortfolio are consumers.",
+  "verified_at": "2026-10-14",
+  "ratchet": {
+    "min_core_owned_sources": 16,
+    "max_local_pending_sources": 26,
+    "max_active_local_publishers": 27
+  },
+  "sources": [
+    {
+      "name": "adzuna",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["reactportfolio"],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "reactportfolio_source_name": "adzuna",
+      "evidence": "Portfolio production cache healthy; SwissJob registration disabled because credentials are absent."
+    },
+    {
+      "name": "arbeitnow",
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": ["core"],
+      "core_adapter": true,
+      "reactportfolio_source_name": "arbeitnow",
+      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry."
+    },
+    {
+      "name": "authenticjobs",
+      "state": "retired",
+      "target_owner": null,
+      "active_publishers": [],
+      "swissjob_module": true,
+      "evidence": "Not registered; production health records 17 errors and no successful run."
+    },
+    {
+      "name": "careerjet",
+      "state": "retired",
+      "target_owner": null,
+      "active_publishers": [],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "Production registration disabled because CAREERJET_AFFID is absent."
+    },
+    {
+      "name": "dailyremote",
+      "state": "retired",
+      "target_owner": null,
+      "active_publishers": [],
+      "swissjob_module": true,
+      "evidence": "Not registered; production health records 17 errors and no successful run."
+    },
+    {
+      "name": "dynamitejobs",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["reactportfolio"],
+      "reactportfolio_source_name": "dynamitejobs",
+      "evidence": "Portfolio production cache healthy with 300 current entries."
+    },
+    {
+      "name": "euremotejobs",
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": ["core"],
+      "core_adapter": true,
+      "evidence": "Enabled and healthy Core scope."
+    },
+    {
+      "name": "financejobs",
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": ["core"],
+      "core_adapter": true,
+      "evidence": "Enabled and healthy Core scope; historical local producer disabled."
+    },
+    {
+      "name": "gastrojob",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["swissjob"],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "SwissJob production run succeeded with persisted offers on 2026-10-11."
+    },
+    {
+      "name": "glassdoor_partner",
+      "state": "retired",
+      "target_owner": null,
+      "active_publishers": [],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "Missing partner credential and production compliance explicitly disallows harvesting."
+    },
+    {
+      "name": "globaljobs",
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": ["core"],
+      "core_adapter": true,
+      "evidence": "Enabled and healthy Core scope."
+    },
+    {
+      "name": "himalayas",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["reactportfolio"],
+      "swissjob_module": true,
+      "reactportfolio_source_name": "himalayas",
+      "evidence": "Portfolio production cache healthy with 60 current entries; SwissJob module is dormant."
+    },
+    {
+      "name": "ictjobs",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["reactportfolio"],
+      "swissjob_module": true,
+      "reactportfolio_source_name": "ictjobs",
+      "evidence": "Portfolio production cache healthy with 100 current entries; SwissJob module is dormant."
+    },
+    {
+      "name": "ilojobs",
+      "state": "retired",
+      "target_owner": null,
+      "active_publishers": [],
+      "swissjob_module": true,
+      "evidence": "Module exists but is absent from the production registry."
+    },
+    {
+      "name": "impactpool",
+      "state": "retired",
+      "target_owner": null,
+      "active_publishers": [],
+      "swissjob_module": true,
+      "evidence": "Module exists but is absent from the production registry."
+    },
+    {
+      "name": "indeed_partner",
+      "state": "retired",
+      "target_owner": null,
+      "active_publishers": [],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "Missing partner credential and production compliance explicitly disallows harvesting."
+    },
+    {
+      "name": "irishjobs",
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": ["core"],
+      "core_adapter": true,
+      "reactportfolio_source_name": "irishjobs",
+      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry."
+    },
+    {
+      "name": "jobcloud_partner",
+      "state": "retired",
+      "target_owner": null,
+      "active_publishers": [],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "Missing partner credential and production compliance explicitly disallows harvesting."
+    },
+    {
+      "name": "jobgether",
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": ["core"],
+      "core_adapter": true,
+      "reactportfolio_source_name": "jobgether",
+      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry."
+    },
+    {
+      "name": "jobicy",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["reactportfolio", "swissjob"],
+      "core_adapter": true,
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "reactportfolio_source_name": "jobicy",
+      "evidence": "Both local schedulers are active; Core adapter exists but production has no Jobicy scope."
+    },
+    {
+      "name": "jobroom",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["reactportfolio"],
+      "reactportfolio_source_name": "jobroom",
+      "evidence": "Portfolio production cache healthy with 300 current entries."
+    },
+    {
+      "name": "jobscout24",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["reactportfolio"],
+      "reactportfolio_source_name": "jobscout24",
+      "evidence": "Portfolio production cache healthy with 187 current entries."
+    },
+    {
+      "name": "jobspresso",
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": ["core"],
+      "core_adapter": true,
+      "evidence": "Enabled and healthy Core scope."
+    },
+    {
+      "name": "jooble",
+      "state": "retired",
+      "target_owner": null,
+      "active_publishers": [],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "Production registration disabled because JOOBLE_API_KEY is absent."
+    },
+    {
+      "name": "jsearch",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["reactportfolio"],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "reactportfolio_source_name": "jsearch",
+      "evidence": "Portfolio production API is configured and cache healthy; SwissJob credential is absent."
+    },
+    {
+      "name": "linkedin_authorized",
+      "state": "retired",
+      "target_owner": null,
+      "active_publishers": [],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "Missing partner credential and production compliance explicitly disallows harvesting."
+    },
+    {
+      "name": "medjobs",
+      "state": "retired",
+      "target_owner": null,
+      "active_publishers": [],
+      "swissjob_module": true,
+      "evidence": "Explicitly absent from the registry because its Cloudflare challenge is not supported."
+    },
+    {
+      "name": "myscience",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["swissjob"],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "SwissJob production run succeeded with persisted offers on 2026-10-11."
+    },
+    {
+      "name": "nav_arbeidsplassen",
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": ["core"],
+      "core_adapter": true,
+      "reactportfolio_source_name": "nav",
+      "evidence": "Two enabled healthy Core scopes; Portfolio producer removed from its active registry."
+    },
+    {
+      "name": "ostjob",
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": ["core"],
+      "core_adapter": true,
+      "reactportfolio_source_name": "ostjob",
+      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry."
+    },
+    {
+      "name": "proz",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["swissjob"],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "SwissJob schedules it, but production records 46 errors and no successful run; validate for migration or retirement."
+    },
+    {
+      "name": "publicjobs",
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": ["core"],
+      "core_adapter": true,
+      "evidence": "Enabled and healthy Core scope."
+    },
+    {
+      "name": "reliefweb",
+      "state": "retired",
+      "target_owner": null,
+      "active_publishers": [],
+      "swissjob_module": true,
+      "evidence": "Module exists but is absent from the production registry."
+    },
+    {
+      "name": "remoteco",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["swissjob"],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "SwissJob schedules it, but production records 54 errors and no successful run; validate for migration or retirement."
+    },
+    {
+      "name": "remoteok",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["reactportfolio"],
+      "swissjob_module": true,
+      "reactportfolio_source_name": "remoteok",
+      "evidence": "Portfolio production cache healthy with 97 current entries; SwissJob module is dormant."
+    },
+    {
+      "name": "remotive",
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": ["core"],
+      "core_adapter": true,
+      "reactportfolio_source_name": "remotive",
+      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry."
+    },
+    {
+      "name": "schuljobs",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["swissjob"],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "SwissJob scheduler is active; latest production attempt remains unfinished and needs parity investigation."
+    },
+    {
+      "name": "stelle_admin",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["swissjob"],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "SwissJob production run succeeded with persisted offers on 2026-10-11."
+    },
+    {
+      "name": "swiss_schools_ecolint",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["swissjob"],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "SwissJob production run succeeded with one offer on 2026-10-13."
+    },
+    {
+      "name": "swiss_schools_hautlac",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["swissjob"],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "SwissJob production run succeeded with one offer on 2026-10-13."
+    },
+    {
+      "name": "swiss_schools_inspired",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["swissjob"],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "SwissJob production verified a legitimate empty board on 2026-10-13."
+    },
+    {
+      "name": "swiss_schools_isb",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["swissjob"],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "SwissJob production verified a legitimate empty board on 2026-10-13."
+    },
+    {
+      "name": "swiss_schools_iscs",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["swissjob"],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "SwissJob production run succeeded with two offers on 2026-10-13."
+    },
+    {
+      "name": "swiss_schools_isp",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["swissjob"],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "SwissJob production run succeeded with three offers on 2026-10-13."
+    },
+    {
+      "name": "swiss_schools_nae",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["swissjob"],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "SwissJob production run succeeded with thirteen offers on 2026-10-13."
+    },
+    {
+      "name": "swiss_schools_zis",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["swissjob"],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "SwissJob production verified a legitimate empty board on 2026-10-13."
+    },
+    {
+      "name": "swissdevjobs",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["reactportfolio"],
+      "reactportfolio_source_name": "swissdevjobs",
+      "evidence": "Portfolio production cache healthy with 155 current entries."
+    },
+    {
+      "name": "swisstechjobs",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["reactportfolio"],
+      "swissjob_module": true,
+      "reactportfolio_source_name": "swisstechjobs",
+      "evidence": "Portfolio production cache healthy with 11 current entries; SwissJob module is dormant."
+    },
+    {
+      "name": "tes",
+      "state": "local_pending",
+      "target_owner": "core",
+      "active_publishers": ["swissjob"],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "SwissJob production most recently returned empty after a successful run on 2026-10-11."
+    },
+    {
+      "name": "thehub",
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": ["core"],
+      "core_adapter": true,
+      "reactportfolio_source_name": "thehub",
+      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry."
+    },
+    {
+      "name": "translatorscafe",
+      "state": "retired",
+      "target_owner": null,
+      "active_publishers": [],
+      "swissjob_module": true,
+      "evidence": "Not registered; production health records 13 errors and no successful run."
+    },
+    {
+      "name": "undpjobs",
+      "state": "retired",
+      "target_owner": null,
+      "active_publishers": [],
+      "swissjob_module": true,
+      "evidence": "Module exists but is absent from the production registry."
+    },
+    {
+      "name": "untalent",
+      "state": "retired",
+      "target_owner": null,
+      "active_publishers": [],
+      "swissjob_module": true,
+      "evidence": "Module exists but is absent from the production registry."
+    },
+    {
+      "name": "weworkremotely",
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": ["core"],
+      "core_adapter": true,
+      "reactportfolio_source_name": "weworkremotely",
+      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry."
+    },
+    {
+      "name": "workingnomads",
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": ["core"],
+      "core_adapter": true,
+      "evidence": "Enabled and healthy Core scope."
+    },
+    {
+      "name": "xing_partner",
+      "state": "retired",
+      "target_owner": null,
+      "active_publishers": [],
+      "swissjob_module": true,
+      "swissjob_registry": true,
+      "evidence": "Missing partner credential and production compliance explicitly disallows harvesting."
+    },
+    {
+      "name": "zebis",
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": ["core"],
+      "core_adapter": true,
+      "evidence": "Enabled and healthy Core scope."
+    },
+    {
+      "name": "zentraljob",
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": ["core"],
+      "core_adapter": true,
+      "reactportfolio_source_name": "zentraljob",
+      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry."
+    }
+  ]
+}

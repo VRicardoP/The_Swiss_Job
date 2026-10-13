@@ -1,0 +1,12 @@
+# DT-144: changes to the centralization contract and ownership boundaries need
+# an explicit review from the repository owner.
+/docs/unificacion/CONTRATO_CENTRALIZACION_TOTAL.md @VRicardoP
+/docs/unificacion/source_ownership.json @VRicardoP
+/scripts/check_source_ownership.py @VRicardoP
+/.github/workflows/ci.yml @VRicardoP
+/.github/CODEOWNERS @VRicardoP
+/scripts/deploy_nas.sh @VRicardoP
+/jobhunt_core/harvest/providers/ @VRicardoP
+/backend/providers/ @VRicardoP
+/backend/scrapers/ @VRicardoP
+/backend/services/scheduler.py @VRicardoP

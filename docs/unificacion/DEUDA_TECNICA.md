@@ -16,6 +16,71 @@
 > canónicas por un campo que hoy consume una sola búsqueda semanal); lo nuevo sí
 > lo lleva.
 
+## DT-144 · Centralización total de cosechadores en Core
+
+**Estado: ABIERTO — objetivo ratificado el 2026-10-13.**
+
+La arquitectura objetivo no está terminada mientras ReactPortfolio o SwissJob
+mantengan productores de ofertas propios. La fotografía vigente confirma once
+fuentes propias en ReactPortfolio, registros de 12 providers y 13 scrapers en
+SwissJob —ocho escolares— y Jobicy cosechado por ambos mientras su adaptador de
+Core carece de scope productivo. Los 17 scopes saludables de Core y los cierres
+anteriores acreditan el alcance que comprobaron, pero no la propiedad exclusiva
+de todas las fuentes.
+
+El objetivo, las invariantes, las fases -1 a 10, el procedimiento por fuente,
+los controles de cambio y la definición no reinterpretables de terminado están
+en el
+[Contrato de centralización total](CONTRATO_CENTRALIZACION_TOTAL.md). Ese
+contrato es la única fuente de verdad del plan; esta sección funciona como
+ledger de ejecución para que cada agente deje evidencia y el siguiente pueda
+continuar sin rediseñarlo.
+
+### Punto de reanudación
+
+1. Ejecutar la Fase -1: inventario legible por máquinas, checks de ratchet y
+   protecciones de revisión/despliegue.
+2. Completar la Fase 0 contra código y producción de los tres componentes.
+3. Usar Jobicy como primer corte de extremo a extremo.
+4. Añadir aquí un checkpoint después de cada fuente u oleada con estados,
+   pruebas, SHA, evidencia viva, rollback y siguiente paso exacto.
+
+### Checkpoint 2026-10-14 · Fase -1 parcialmente completada
+
+- Inventario reconciliado: 58 fuentes, 16 `local_removed`, 26
+  `local_pending`, 16 `retired` y 27 productores locales activos porque
+  Jobicy sigue publicándose desde los dos productos.
+- Control machine-readable: `source_ownership.json` y
+  `scripts/check_source_ownership.py` contrastan adaptadores Core, módulos y
+  registros SwissJob, el literal de fuentes Portfolio y los tres ratchets.
+- Bloqueo automático: CI ejecuta el control; `deploy_nas.sh` lo ejecuta antes
+  de cualquier despliegue; un alta local, un productor duplicado adicional o
+  un descenso de fuentes Core hace fallar el proceso.
+- ReactPortfolio incorpora su control equivalente en
+  `scripts/check_local_harvest_ownership.py`: la lista activa comprobada es de
+  11 fuentes y cualquier adición local no acompañada de una decisión explícita
+  falla en CI.
+- Revisión: ambos repositorios incorporan `CODEOWNERS` para contrato, controles,
+  registros y puntos de despliegue. No se declara aún revisión obligatoria
+  efectiva: la API de GitHub devolvió 401, no hay `GITHUB_TOKEN`/`GH_TOKEN` ni
+  cliente autenticado en el host y la clave SSH de Git no administra reglas.
+- Pruebas: validación cruzada devuelve
+  `{"core_owned":16,"local_pending":26,"sources":58}`; Ruff pasa en ambos
+  verificadores; `bash -n scripts/deploy_nas.sh` y su modo seco Core pasan sin
+  tocar el NAS.
+- Estado de puerta: **NO SUPERADA** hasta conectar GitHub y verificar protección
+  de `main` con CI y revisión de propietario obligatorias. Por el contrato no
+  se provisiona ni corta Jobicy antes de resolver esta puerta.
+- Siguiente paso exacto: conectar GitHub, activar/verificar las reglas en ambos
+  repositorios, ejecutar CI sobre los commits de esta fase y sólo entonces
+  iniciar la sombra de Jobicy.
+
+**Prohibición de cierre parcial:** DT-144 no se cierra porque exista un adaptador,
+un scope o una ruta denominada `core_primary`. Solo se cierra cuando no queden
+productores, credenciales, conexiones ni persistencia de ofertas locales y las
+sondas productivas satisfagan íntegramente la definición de terminado del
+contrato.
+
 ## Foto histórica — 2026-09-21: punto 4, pendientes y evidencia
 
 Consolidación documental de las actas hasta 21-09 16:53 UTC; **no es una nueva

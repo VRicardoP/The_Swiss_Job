@@ -18,7 +18,9 @@ sus interfaces, autenticación y responsabilidades propias de BFF.
   costuras de catálogo, matching y colegios tienen autoridad fija; ya no existe
   routing runtime ni fallback silencioso de escritura.
 - Portfolio conserva once fuentes propias y tiene nueve fuentes transferidas
-  desactivadas. Seis capacidades resuelven exactamente a core_primary.
+  desactivadas. Seis capacidades resuelven exactamente a core_primary. Esta
+  convivencia es transitoria y queda reabierta como DT-144; no constituye la
+  arquitectura final.
 - Un solo proceso Core de concurrencia 1 carga el bi-encoder. Cosecha,
   operaciones/beat y matching usan workers separados.
 - core-capture, su slot de replicación, staging, productores duplicados, el
@@ -70,6 +72,11 @@ y su directorio de evidencias.
 
 ## Cierre de deuda y exclusiones
 
+- **DT-144:** abierta. La cosecha todavía no pertenece exclusivamente a Core.
+  El [contrato de centralización total](CONTRATO_CENTRALIZACION_TOTAL.md) fija
+  el objetivo vinculante, las fases, los controles contra desviaciones y la
+  única definición válida de terminado.
+
 - **A19-31:** cerrado. BFF y worker comparten la cuenta SMTP autorizada, están
   saludables y completaron dos envíos reales; rollback fechado conservado.
 - **DT-54:** cerrado. Backend y frontend cookie-only publicados; lint, build,
@@ -88,6 +95,6 @@ sobre producción. Las comparaciones mantienen protocolo y número de muestras,
 separan frío/caliente y no atribuyen causalidad sin aislar la variable. Cada
 punto se documenta con causa, cambio, pruebas, release, límites y reanudación.
 
-No queda punto de reanudación dentro del alcance autorizado. Cualquier trabajo
-futuro debe partir de una solicitud nueva; no debe incorporar automáticamente
-DT-47, A19-19 ni A19-20.
+El alcance anterior permanece cerrado, pero DT-144 abre una nueva ejecución con
+punto de reanudación en su Fase -1. No deben incorporarse automáticamente DT-47,
+A19-19 ni A19-20, que continúan excluidos por decisión expresa del propietario.
