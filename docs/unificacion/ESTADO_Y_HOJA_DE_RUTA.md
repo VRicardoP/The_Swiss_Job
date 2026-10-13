@@ -3229,11 +3229,11 @@ detalle 200.
 
 Releases vivas: Core 254e826/core0054; BFF y worker SwissJob 4017081; frontend
 SwissJob 254e826; Portfolio API/worker 444f072/uu44v3375x21. DT-72, DT-102 y
-DT-115 están cerrados. DT-54 está desplegado en backend y validado en frontend
-5045a28, pendiente de publicación/verificación Cloudflare.
+DT-115 están cerrados. DT-54 también está cerrado: frontend 5045a28 publicado
+y recorrido autenticado real de 12 ventanas en verde. A19-31 quedó cerrado con
+SMTP coincidente en BFF/worker y dos envíos reales correctos.
 
-Trabajo restante autorizado: A19-31 necesita la credencial SMTP válida o permiso
-literal entre cuentas; publicar DT-54; recorrer el frontend autenticado final y
-publicar los commits locales en los remotos exactos. DT-47, A19-19 y A19-20
-quedan excluidos por instrucción del propietario. Método y punto exacto de
-reanudación están en DEUDA_TECNICA.md y MEMORIA_PROYECTO.md.
+El alcance autorizado está completo. Los commits quedaron publicados en los
+remotos exactos; DT-47, A19-19 y A19-20 permanecen excluidos por instrucción del
+propietario. Método y evidencia final están en DEUDA_TECNICA.md y
+MEMORIA_PROYECTO.md.

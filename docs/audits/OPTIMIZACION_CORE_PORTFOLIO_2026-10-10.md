@@ -116,14 +116,12 @@ Las copias saneadas de compose no contienen secretos. La recuperación restaura
 el .before correspondiente y recrea únicamente el servicio afectado con el
 proyecto compose indicado por los scripts de despliegue.
 
-## Deuda fuera del cierre de optimización
+## Cierres posteriores y exclusiones
 
-- A19-31: la cuenta SMTP SwissJob necesita una contraseña de aplicación válida
-  o permiso literal para reutilizar la cuenta Portfolio.
-- DT-54: backend cookie-only desplegado; frontend 5045a28 validado y pendiente
-  de publicar/verificar.
+- A19-31 cerrado: configuración SMTP autorizada aplicada con rollback y envíos
+  reales correctos desde BFF y worker.
+- DT-54 cerrado: frontend 5045a28 publicado y recorrido autenticado real con las
+  12 ventanas, cookies seguras y cero fallos de consola/red.
 - DT-47, A19-19 y A19-20 están excluidos por instrucción del propietario.
 
-Punto exacto de reanudación: completar esos dos efectos externos autorizados,
-recorrer el frontend autenticado final y publicar los commits locales en los
-destinos expresamente aprobados.
+No queda punto de reanudación dentro del alcance de esta acta.

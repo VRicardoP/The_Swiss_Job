@@ -35,7 +35,7 @@ Sondas de solo lectura ejecutadas el 2026-10-13:
 | SwissJob BFF/worker | point5-4017081 | healthy/Celery pong; autoridades fijas, dos perfiles entregados, cero errores pendientes |
 | SwissJob frontend | point5-254e826 | healthy; categorías canónicas y tarjetas con contenido |
 | Portfolio API/worker | portfolio-backend:board-444f072 | healthy; Alembic uu44v3375x21; 1 GiB y 1 CPU por proceso |
-| Portfolio frontend público | remoto 82ade98 | spinner CSS publicado; DT-54 preparado localmente en 5045a28 y aún no publicado |
+| Portfolio frontend público | remoto 5045a28 | cookie-only publicado; login real y 12 ventanas con contenido verificadas por Playwright |
 
 Core registra 25.382 entregas, cero dead/pending/inflight, staging cero y slot de
 captura ausente. SwissJob conserva 12 providers, 13 scrapers —ocho escolares— y
@@ -68,13 +68,12 @@ Los límites causales, protocolos y artefactos están en
 [OPTIMIZACION_CORE_PORTFOLIO_2026-10-10.md](../audits/OPTIMIZACION_CORE_PORTFOLIO_2026-10-10.md)
 y su directorio de evidencias.
 
-## Deuda vigente y exclusiones
+## Cierre de deuda y exclusiones
 
-- **A19-31:** falta una contraseña de aplicación válida para la cuenta SMTP de
-  SwissJob o autorización literal para reutilizar la cuenta Portfolio. Portfolio
-  sí envía correo real y el supervisor usa sendmail de QTS.
-- **DT-54:** backend desplegado; frontend 5045a28 validado con lint, build,
-  413 pruebas y 18 E2E. Falta publicarlo y verificar el activo Cloudflare.
+- **A19-31:** cerrado. BFF y worker comparten la cuenta SMTP autorizada, están
+  saludables y completaron dos envíos reales; rollback fechado conservado.
+- **DT-54:** cerrado. Backend y frontend cookie-only publicados; lint, build,
+  413 pruebas, 18 E2E y recorrido Playwright real de 12 ventanas en verde.
 - **DT-47, A19-19 y A19-20** quedan fuera por instrucción expresa del propietario.
 
 DT-72, DT-102, DT-115, A18-05, A19-13, A19-15 y A19-25 están cerrados con
@@ -89,6 +88,6 @@ sobre producción. Las comparaciones mantienen protocolo y número de muestras,
 separan frío/caliente y no atribuyen causalidad sin aislar la variable. Cada
 punto se documenta con causa, cambio, pruebas, release, límites y reanudación.
 
-Punto exacto de reanudación: completar A19-31 con la credencial autorizada,
-publicar/verificar DT-54, ejecutar el recorrido autenticado final de ventanas y
-publicar los commits locales en los destinos expresamente autorizados.
+No queda punto de reanudación dentro del alcance autorizado. Cualquier trabajo
+futuro debe partir de una solicitud nueva; no debe incorporar automáticamente
+DT-47, A19-19 ni A19-20.

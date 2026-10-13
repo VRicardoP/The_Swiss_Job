@@ -313,7 +313,7 @@ se repiten.
 | A19-28 | **Alto · seguridad** | **Dos credenciales PERPETUAS abandonadas en producción.** El consumer `portfolio` del core tiene 3 credenciales vivas y sin caducidad; sólo `48c26fe326c924f4` la usa `portfolio_backend`. Las otras dos (`a02cbff1481dee59` sólo lectura, `de7924a343980d97` **con `profiles:write`, `applications:write` y `saved_searches:write`**) no las usa ningún contenedor. Descubierto el 2026-09-25 con `scripts/rotate_credential.py listar`, que se escribió para T9 | **Revocadas con autorización el 2026-09-25**: queda viva una sola credencial, `48c26fe326c924f4`, que es exactamente la que declara `portfolio_backend`. Verificado después de revocar que el Portfolio sigue leyendo el core. Revocar pone fecha, no borra la fila: la vuelta atrás es un UPDATE | **CERRADO 2026-09-25** |
 | A19-29 | Bajo · documentación | **`CLAUDE.md` documentaba `pytest --timeout=30` y `pytest-timeout` no está instalado NI LO ESTUVO NUNCA** (`git log -S` sobre `requirements.txt` no devuelve nada): el comando canónico de tests fallaba al arrancar, no al probar. Descubierto al intentar usarlo. Misma clase que la regla de oro del proyecto | Corregido el comando en `CLAUDE.md` y añadido el aviso de que la imagen puede traer un `ruff` distinto al que fija `requirements.txt` (la local tenía 0.16.8 frente al 0.15.14 del CI: 48 rojos que el CI no ve) | **CERRADO 2026-09-25** |
 | A19-30 | Medio · tests | **Una prueba de migración usaba el modelo ORM de HOY contra una base clavada en una revisión de AYER** (`test_profile_snapshot_migration`): cada columna nueva en `users` la rompía con un `UndefinedColumnError` ajeno a lo que medía. Saltó al añadir `users.token_version` (T9) | INSERT explícito con las columnas de esa revisión; la prueba queda inmune a las columnas futuras y además es honesta sobre qué esquema mide | **CERRADO 2026-09-25** |
-| A19-31 | **Crítico · operación** | SMTP SwissJob autentica con una clave antigua de 14 caracteres; sus cuatro correos no se entregan. Portfolio sí completó un envío SMTP real y el supervisor usa sendmail de QTS, independiente de Gmail | Instalar una contraseña de aplicación válida para la cuenta SwissJob o autorizar literalmente reutilizar la cuenta SMTP de Portfolio; probar envío real desde BFF y worker sin revelar secretos | **ABIERTO — único dato externo pendiente.** La revisión automática rechazó copiar la credencial de otra cuenta con la autorización genérica; exige permiso exacto entre cuentas. |
+| A19-31 | **Crítico · operación** | SMTP SwissJob autenticaba con una clave antigua de 14 caracteres; sus cuatro correos no se entregaban. Portfolio sí completaba envíos reales y el supervisor usa sendmail de QTS, independiente de Gmail | Con autorización literal, reutilizar la cuenta SMTP de Portfolio en BFF/worker, promover un Compose validado con rollback y probar ambos emisores sin revelar secretos | **CERRADO 2026-10-13.** Configuración idéntica comprobada en ambos contenedores, BFF saludable, Celery pong, cero reinicios y dos envíos SMTP reales correctos. Rollback `swissjob.configured.yml.before-smtp-20261013T184830Z`. |
 
 ## 0.C · Análisis profundo de código — 2026-09-28
 
@@ -2429,12 +2429,12 @@ Este documento se actualiza **al cerrar cada fase**, junto con el backlog. Regla
 - Rollback backend:
   `portfolio.configured.yml.before-a63df1f`; la base permanece en
   `uu44v3375x21 (head)`. Los README preexistentes quedaron fuera de los commits.
-- Estado y reanudación exacta: el backend está cerrado; falta publicar
-  `5045a28` en los remotos frontend y esperar/verificar el activo Cloudflare
-  para cerrar DT-54 de extremo a extremo. La revisión automática bloqueó el
-  push por exigir autorización literal de cada destino, por lo que no se ha
-  intentado una vía indirecta. Mientras se obtiene esa autorización se continúa
-  con todos los puntos independientes.
+- Cierre extremo a extremo: `5045a28` se publicó en GitHub y GitLab;
+  Cloudflare sirve el activo nuevo. Playwright autenticó contra producción y
+  comprobó las 12 ventanas con contenido en 6,455 s, cero indicadores de carga,
+  glifos de sustitución, excepciones, fallos de red o respuestas >=400. Las
+  cookies `access_token` y `refresh_token` son HttpOnly/Secure/SameSite=None y
+  `sessionStorage` no contiene access, refresh ni tokenType. DT-54 queda cerrado.
 
 #### Checkpoint DT-72 — cerrado (2026-10-13)
 
@@ -2640,14 +2640,35 @@ Este documento se actualiza **al cerrar cada fase**, junto con el backlog. Regla
   `AUTH_REFRESH_TOKEN_IN_BODY=false`; rechaza `true` y cualquier literal en
   otras claves sensibles. Sus tres pruebas pasan y los tres manifiestos dan
   cero hallazgos.
-- Estado: aproximadamente **94 % del alcance de deuda autorizado**. La deuda de
-  código, rendimiento, arquitectura y documentación está cerrada. Quedan dos
-  efectos externos: A19-31 necesita la credencial/permiso SMTP exacto; DT-54
-  necesita publicar el frontend `5045a28`, esperar el activo Cloudflare y
-  ejecutar el recorrido autenticado final. Después se publican los commits
-  locales en los destinos autorizados y se registra el cierre total.
-- Reanudación exacta: no repetir diagnósticos ni benchmarks. Obtener primero el
-  dato SMTP permitido y la autorización literal de cada remoto; probar envío
-  real desde BFF y worker sin imprimir secretos; publicar `frontend@5045a28`;
-  verificar autenticación y las 12 ventanas en el activo público; comprobar
-  refs remotas; actualizar este checkpoint a 100 % con los SHA publicados.
+- Estado final: **100 % del alcance de deuda autorizado**. A19-31 y DT-54
+  quedaron cerrados con efectos reales comprobados; código, rendimiento,
+  arquitectura, operación y documentación están conciliados. Los commits se
+  publicaron en los destinos autorizados.
+- Reanudación exacta: no queda trabajo dentro del alcance. DT-47, A19-19 y
+  A19-20 permanecen excluidos por decisión expresa del propietario y no deben
+  abordarse como continuación automática de esta sesión.
+
+
+#### Checkpoint final de publicación y operación — cerrado al 100 % (2026-10-13)
+
+- Método aplicado: autorización literal por destino y entre cuentas; push de un
+  SHA ya validado; comprobación del activo público; candidato Compose obtenido
+  del vivo sin imprimir secretos, validación previa, respaldo, promoción y
+  recreación sólo de BFF/worker; sondas de salud y efecto externo real.
+- Publicación: Portfolio backend `c5a2806` está en GitHub `main`; frontend
+  `5045a28` está en GitHub y GitLab `main`; SwissJob `8a3a345` quedó publicado
+  en `feat/fase-a-core` antes de este acta final. El repo raíz ReactPortfolio no
+  tiene remoto configurado; su deuda quedó en el commit local `3f00695`.
+- A19-31: la cuenta SMTP de Portfolio se aplicó a SwissJob con autorización
+  literal. El candidato pasó `compose config --quiet`; BFF y worker quedaron
+  `running`, `RestartCount=0`, con configuración coincidente sin exponerla. BFF
+  respondió salud, Celery respondió pong y ambos enviaron correo real. Rollback:
+  `swissjob.configured.yml.before-smtp-20261013T184830Z`.
+- DT-54: Cloudflare sirve `frontend@5045a28`. La sonda Playwright real tardó
+  6,455 s desde navegación hasta las 12 ventanas; todas tenían título, contenido,
+  dimensiones y visibilidad correctas, sin ErrorBoundary. Cero indicadores de
+  carga, glifos de sustitución, errores de consola/página, fallos de petición o
+  respuestas >=400 posteriores al login. Cookies HttpOnly/Secure/SameSite=None;
+  tokens de sesión heredados ausentes.
+- Cierre: **100 % del alcance solicitado**. No queda un punto de reanudación. Se
+  conservan únicamente las exclusiones explícitas DT-47, A19-19 y A19-20.
