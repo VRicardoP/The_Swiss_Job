@@ -2673,7 +2673,7 @@ Este documento se actualiza **al cerrar cada fase**, junto con el backlog. Regla
 - Cierre: **100 % del alcance solicitado**. No queda un punto de reanudación. Se
   conservan únicamente las exclusiones explícitas DT-47, A19-19 y A19-20.
 
-#### Checkpoint DT-143 — implementacion local completa (2026-10-13)
+#### Cierre DT-143 — pictogramas estables en produccion (2026-10-13)
 
 - Metodologia aplicada: inventario desde datos/traducciones/JSX/CSS hasta el DOM,
   separacion de texto linguistico frente a iconografia decorativa, correccion
@@ -2690,11 +2690,16 @@ Este documento se actualiza **al cerrar cada fase**, junto con el backlog. Regla
 - Evidencia: ESLint, build, 414/414 pruebas y 21/21 E2E verdes. La regresion
   inspecciona texto y pseudo-elementos en 11 ventanas publicas, 9 secciones
   moviles, 12 ventanas del dashboard, sus 5 tabs moviles y login.
-- Estado: implementacion versionada en ReactPortfolio/frontend@be8e981. La
-  revision automatica rechazo el push a GitHub porque exige autorizacion literal
-  del SHA, los dos remotos y la rama; no se intento GitLab para no eludirla.
-- Reanudacion exacta: preservar README.md, que sigue como cambio preexistente.
-  Tras autorizacion explicita, publicar be8e981 en main de los remotos GitHub
-  VRicardoP/ReactPortfolio y GitLab lotharsan/reactportfolio-front, esperar
-  Cloudflare, verificar el dominio real y sustituir este estado parcial por la
-  evidencia publica.
+- Publicacion: `be8e9816d96d72689392a8ead52cc8925b05cf2e` esta en `main`
+  de GitHub y GitLab. Cloudflare sirve `index-Cv4VbT4v.js` y
+  `index-DCi5ZRT6.css`, junto con los 39 paquetes diferidos comprobados.
+- Evidencia real: la sonda autenticada cubrio 11/11 ventanas publicas, 9/9
+  secciones moviles, login, 12/12 ventanas del dashboard y 5/5 tabs moviles.
+  Cero pictogramas dependientes de fuente/U+FFFD, loaders, ErrorBoundary,
+  errores de consola/pagina, peticiones fallidas o HTTP >=400 despues del login.
+  El unico aborto fue el SSE desmontado de forma esperada al cambiar de layout;
+  las cookies siguen HttpOnly/Secure/SameSite=None y `sessionStorage` no contiene
+  tokens.
+- Estado: [x] corregido, probado, publicado y verificado en produccion.
+- Reanudacion exacta: ninguna para DT-143. `frontend/README.md` sigue intacto
+  como cambio preexistente; permanecen excluidos DT-47, A19-19 y A19-20.
