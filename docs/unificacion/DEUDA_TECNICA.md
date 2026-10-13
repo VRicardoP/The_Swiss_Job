@@ -1852,6 +1852,24 @@ el orden de corte y disponer de la publicación frontend autorizada.
   runtime real, comprobación de reinicios/logs/política efectiva y checkpoint
   estrecho. El punto 8 queda listo para publicar el frontend exacto `1bed6c2`.
 
+### Checkpoint operativo — 2026-10-13 06:41 UTC
+
+- Precondición del punto 8 revalidada: frontend `HEAD=1bed6c2`, ambos `main`
+  remotos en `a711c26`, avance lineal y `README.md` del propietario excluido.
+- La revisión automática rechazó ambos pushes antes de ejecutarlos. GitHub y
+  GitLab no cambiaron. Aunque la autorización general y la autorización de
+  publicación del 11 de octubre están documentadas, el revisor exige una nueva
+  autorización explícita que nombre el push directo del SHA inmutable a `main`
+  en ambos destinos y reconozca que modifica ramas por defecto y puede publicar
+  código.
+- Reanudación exacta: tras esa autorización, ejecutar los dos comandos ya
+  registrados, volver a leer ambos refs, observar checks y esperar el cambio del
+  asset público antes de repetir la sonda de 12 ventanas. No adelantar el punto
+  9 porque el orden requiere cerrar primero publicación y navegador.
+- Metodología vigente: precondición remota read-only, mutación fast-forward del
+  SHA exacto, verificación independiente del ref y del sitio público, medición
+  con el protocolo congelado, evidencia inmediata y commit estrecho.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con

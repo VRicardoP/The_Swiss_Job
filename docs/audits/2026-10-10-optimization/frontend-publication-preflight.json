@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-11T09:24:32Z",
+  "observed_at": "2026-10-13T06:41:54Z",
   "local": {
     "head": "1bed6c2",
     "runtime_head": "07ac81b",
@@ -12,7 +12,7 @@
     "github_main_observed": "a711c26c2f9ddc490069f988e1673b9389352b34",
     "gitlab_main_observed": "a711c26c2f9ddc490069f988e1673b9389352b34",
     "local_commits_ahead": 7,
-    "rechecked_at": "2026-10-11T09:24:32Z",
+    "rechecked_at": "2026-10-13T06:40:00Z",
     "both_heads_unchanged": true
   },
   "repository_automation": {
@@ -64,5 +64,13 @@
       "github": "passed; reports a711c26..1bed6c2 fast-forward without writing",
       "gitlab": "passed; reports a711c26..1bed6c2 fast-forward without writing"
     }
+  },
+  "publication_attempt": {
+    "observed_at": "2026-10-13T06:41:00Z",
+    "executed": false,
+    "remote_changes": false,
+    "status": "automatic_review_rejected",
+    "reason": "direct pushes to the default main branches of GitHub and GitLab were treated as protected-branch mutation and possible public code disclosure; exact post-notice authorization naming both destinations and method is required",
+    "resume": "after exact user authorization, rerun the two recorded fast-forward pushes of immutable SHA 1bed6c2, verify both refs, then poll the public Cloudflare asset"
   }
 }
