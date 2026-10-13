@@ -82,11 +82,12 @@ async def test_con_el_limitador_apagado_no_estorba(limitador_activo):
 
 
 @pytest.mark.asyncio
-async def test_el_middleware_de_slowapi_NO_habria_servido():
-    """Control de la decisión: documenta por qué hay middleware propio.
+async def test_slowapi_ya_resuelve_el_router_incluido():
+    """Centinela de compatibilidad tras el cambio de FastAPI/SlowAPI.
 
-    Si un día FastAPI vuelve a aplanar los routers y esto empieza a encontrar
-    el handler, la prueba falla y avisa de que se puede simplificar.
+    El middleware propio se conserva porque ya fija el contrato global por URL,
+    la forma del 429 y Retry-After. Esta prueba registra que la limitación deja
+    de depender de la antigua carencia del enrutador.
     """
     from slowapi.middleware import _find_route_handler, _should_exempt
 
@@ -99,5 +100,5 @@ async def test_el_middleware_de_slowapi_NO_habria_servido():
         "root_path": "",
     }
     handler = _find_route_handler(app.routes, scope)
-    assert handler is None, "FastAPI ya aplana los routers: revisar si sobra el propio"
-    assert _should_exempt(limiter, handler) is True
+    assert handler is not None
+    assert _should_exempt(limiter, handler) is False
