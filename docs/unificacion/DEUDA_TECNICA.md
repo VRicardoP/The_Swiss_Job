@@ -2672,3 +2672,29 @@ Este documento se actualiza **al cerrar cada fase**, junto con el backlog. Regla
   tokens de sesión heredados ausentes.
 - Cierre: **100 % del alcance solicitado**. No queda un punto de reanudación. Se
   conservan únicamente las exclusiones explícitas DT-47, A19-19 y A19-20.
+
+#### Checkpoint DT-143 — implementacion local completa (2026-10-13)
+
+- Metodologia aplicada: inventario desde datos/traducciones/JSX/CSS hasta el DOM,
+  separacion de texto linguistico frente a iconografia decorativa, correccion
+  minima en la frontera de renderizado, compatibilidad con datos ya sembrados,
+  accesibilidad conservada y validacion de escritorio/movil antes de publicar.
+- Causa: 140 reglas locales reducian la pila a Courier New, monospace y los
+  iconos de habilidades tambien llegaban de la base de datos. Instalar una
+  fuente o cambiar solo body no garantizaba cobertura ni corregia los valores
+  antiguos.
+- Realizado: los pictogramas propios de Portfolio publico, login y dashboard se
+  sustituyeron por insignias ASCII o formas CSS; los seis JSON usan codigos
+  estables y SoftSkillsWindow normaliza los emoji heredados y los desconocidos.
+  No se anadieron dependencias, fuentes ni peticiones de red.
+- Evidencia: ESLint, build, 414/414 pruebas y 21/21 E2E verdes. La regresion
+  inspecciona texto y pseudo-elementos en 11 ventanas publicas, 9 secciones
+  moviles, 12 ventanas del dashboard, sus 5 tabs moviles y login.
+- Estado: implementacion versionada en ReactPortfolio/frontend@be8e981. La
+  revision automatica rechazo el push a GitHub porque exige autorizacion literal
+  del SHA, los dos remotos y la rama; no se intento GitLab para no eludirla.
+- Reanudacion exacta: preservar README.md, que sigue como cambio preexistente.
+  Tras autorizacion explicita, publicar be8e981 en main de los remotos GitHub
+  VRicardoP/ReactPortfolio y GitLab lotharsan/reactportfolio-front, esperar
+  Cloudflare, verificar el dominio real y sustituir este estado parcial por la
+  evidencia publica.
