@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-13T06:28:48Z",
+  "observed_at": "2026-10-13T06:39:34Z",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -64,13 +64,16 @@
     },
     {
       "id": 7,
-      "status": "ready_to_execute",
+      "status": "complete",
       "action": "apply SwissJob worker config-only preserving point5-84853cf, then deploy BFF f29fd44 and verify profile delivery plus 14 providers and 2 scrapers disabled",
-      "prepared": "BFF archive 638 MiB sha256 4110915f...0803; NAS-only idempotent transformer and worker/BFF scripts syntax-valid; not transferred or executed"
+      "prepared": "BFF archive 638 MiB sha256 4110915f...0803 and NAS-only transformer/scripts were validated before deployment",
+      "evidence": "worker kept point5-84853cf, running, restart 0 and ping pong with exact 14 providers plus financejobs/irishjobs disabled; BFF f29fd44 archive hash matched, image healthy/restart 0; immutable probe failures=[] with 2/2 active profiles linked, no pending/error snapshots, matching and four wildcard domains core_primary, eight exclusive school scrapers retained",
+      "deployment_record": "swissjob-f29-deployment-production.json",
+      "next_action": "item 8: publish exact Portfolio frontend 1bed6c2 to both configured main remotes, wait for public asset, then repeat the 12-window browser/performance probe"
     },
     {
       "id": 8,
-      "status": "authorized_pending_order",
+      "status": "ready_to_execute",
       "action": "publish Portfolio frontend 1bed6c2 to configured remotes/Cloudflare and verify the public asset plus 12-window probe",
       "predeployment_validation": "lint; 422/422 tests; build 3.20 s; 18/18 E2E; both remotes still a711c26 and target 1bed6c2 is a linear advance"
     },

@@ -1831,6 +1831,27 @@ el orden de corte y disponer de la publicación frontend autorizada.
   fallos descartados, actualizar evidencia/checklist/deuda y crear un commit
   estrecho antes de avanzar al siguiente punto.
 
+### Checkpoint operativo — 2026-10-13 06:39 UTC
+
+- Punto 7 cerrado. El worker conserva la imagen `point5-84853cf`, está en
+  ejecución con cero reinicios y responde al ping; su configuración efectiva
+  desactiva exactamente 14 proveedores transferidos y los scrapers
+  `financejobs`/`irishjobs`.
+- El BFF inmutable `f29fd44` se transfirió con SHA-256 coincidente, se desplegó
+  sólo sobre `backend` y quedó `healthy`, con cero reinicios. La sonda final dio
+  `failures=[]`: 2/2 perfiles activos enlazados, cero snapshots pendientes o con
+  error, matching y cuatro dominios wildcard en `core_primary`, y ocho scrapers
+  escolares exclusivos retenidos.
+- El primer transformado de la copia candidata falló antes de promoverla por
+  permisos restrictivos. Se corrigió haciendo root únicamente al contenedor
+  efímero que edita/valida el manifiesto; las copias conservaron sus permisos y
+  los servicios desplegados mantuvieron sus usuarios. Los logs posteriores no
+  muestran errores ni ejecución de productores transferidos.
+- Metodología vigente: artefacto por commit y hash, copia candidata y respaldo,
+  validación antes de promoción, recreación de un solo servicio, prueba desde el
+  runtime real, comprobación de reinicios/logs/política efectiva y checkpoint
+  estrecho. El punto 8 queda listo para publicar el frontend exacto `1bed6c2`.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con

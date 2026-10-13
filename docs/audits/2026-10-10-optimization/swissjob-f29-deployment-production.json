@@ -1,0 +1,83 @@
+{
+  "observed_at": "2026-10-13T06:39:34Z",
+  "worker_config": {
+    "image": "swissjob-worker:point5-84853cf",
+    "running": true,
+    "restart_count": 0,
+    "disabled_providers": [
+      "arbeitnow",
+      "euremotejobs",
+      "globaljobs",
+      "jobgether",
+      "jobspresso",
+      "nav_arbeidsplassen",
+      "ostjob",
+      "publicjobs",
+      "remotive",
+      "thehub",
+      "weworkremotely",
+      "workingnomads",
+      "zebis",
+      "zentraljob"
+    ],
+    "disabled_scrapers": [
+      "financejobs",
+      "irishjobs"
+    ],
+    "ping": "pong",
+    "compose_backup": "/share/CACHEDEV1_DATA/Public/unification-e15-20260914/swissjob.configured.yml.before-worker-config-20261013T063019Z"
+  },
+  "bff": {
+    "commit": "f29fd441396e1c80633ca3127ccc8395c6405443",
+    "image": "swissjob-backend:point5-f29fd44",
+    "archive_sha256": "4110915fd639d852a94c173fcca30faec1d8581206a478f1d9f6fb687ebb0803",
+    "remote_hash_matches": true,
+    "running": true,
+    "health": "healthy",
+    "restart_count": 0,
+    "compose_backup": "/share/CACHEDEV1_DATA/Public/unification-e15-20260914/swissjob.configured.yml.before-bff-f29fd44-20261013T063713Z"
+  },
+  "final_probe": {
+    "failures": [],
+    "profile_sync_enabled": true,
+    "active_users": 2,
+    "linked_active_users": 2,
+    "pending_snapshots": 0,
+    "active_snapshot_errors": 0,
+    "matching_core_primary": 2,
+    "in_scope_non_primary_rows": 0,
+    "wildcard_modes": {
+      "catalog": "core_primary",
+      "documents": "core_primary",
+      "saved_searches": "core_primary",
+      "schools": "core_primary"
+    },
+    "disabled_provider_status_count": 14,
+    "disabled_scrapers": [
+      "financejobs",
+      "irishjobs"
+    ],
+    "retained_school_scrapers": [
+      "swiss_schools_ecolint",
+      "swiss_schools_hautlac",
+      "swiss_schools_inspired",
+      "swiss_schools_isb",
+      "swiss_schools_iscs",
+      "swiss_schools_isp",
+      "swiss_schools_nae",
+      "swiss_schools_zis"
+    ]
+  },
+  "logs": {
+    "backend_errors": 0,
+    "worker_errors": 0,
+    "handover_sources_reported_disabled": 14,
+    "exclusive_provider_count_reported_enabled": 3,
+    "scheduled_harvest_retained_for_exclusive_sources": true
+  },
+  "discarded_attempts": [
+    "first worker candidate transform failed before promotion because the restrictive manifest copy was unreadable by the image user",
+    "transformer rerun as root only inside the ephemeral validation container; manifest permissions remained restrictive and deployed services retained their configured users"
+  ],
+  "status": "passed"
+}
