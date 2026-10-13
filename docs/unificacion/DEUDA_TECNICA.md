@@ -1891,6 +1891,27 @@ el orden de corte y disponer de la publicación frontend autorizada.
   recrear `backend`/`worker` y probar política de nueve fuentes, once exclusivas
   y escuelas manuales sin cosecha programada.
 
+### Checkpoint operativo — 2026-10-13 07:38 UTC
+
+- Punto 9 cerrado. `portfolio_backend` y `portfolio_worker` ejecutan la imagen
+  inmutable `board-a292ef4`, con cero reinicios, `/health=200` y Alembic
+  `uu44v3375x21 (head)`.
+- La política efectiva contiene exactamente nueve fuentes transferidas. Las
+  nueve registraron `SKIPPED` en 0,00 s antes de abrir red; las once fuentes
+  exclusivas completaron el ciclo inicial en 93,95 s. La tarea periódica escolar
+  sólo reintenta alertas, mientras los dos endpoints y colectores manuales siguen
+  presentes.
+- Dos fallos de tooling quedaron descartados con evidencia: el primer candidato
+  no se promovió porque esperaba una clave de política preexistente; el
+  transformador corregido inserta/reemplaza idempotentemente. El script final
+  consultó un atributo Settings en mayúsculas inexistente después de que salud,
+  migración y recreación ya pasaran; la lectura correcta en minúsculas confirmó
+  el runtime exacto.
+- Metodología vigente: candidato antes de manifiesto vivo, hash remoto, cambio
+  mínimo de dos servicios, comprobación desde Settings/código/logs desplegados,
+  distinción entre fallos del despliegue y del verificador, y cierre documental
+  antes de avanzar. El punto 10 queda listo para las tres sondas inmutables.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con

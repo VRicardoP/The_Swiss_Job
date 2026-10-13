@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-13T07:25:27.712Z",
+  "observed_at": "2026-10-13T07:38:54Z",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -85,13 +85,16 @@
     },
     {
       "id": 9,
-      "status": "ready_to_execute",
+      "status": "complete",
       "action": "deploy Portfolio backend a292ef4; verify nine transferred sources skip before network, eleven exclusive sources work, scheduled school collection is absent and manual refresh remains",
-      "prepared": "Portfolio backend archive 954 MiB sha256 52435279...a06e; NAS-only transformer and deployment script validated by py_compile, bash -n and idempotence; not transferred or executed"
+      "prepared": "Portfolio backend archive 954 MiB sha256 52435279...a06e; NAS-only transformer and deployment script validated by py_compile, bash -n and idempotence; not transferred or executed",
+      "evidence": "a292ef4 archive hash matched; backend and worker run board-a292ef4 with restart 0, health 200 and Alembic head uu44v3375x21; exact nine transferred sources have false guards and logged SKIPPED in 0.00s before network; exact eleven retained sources completed the 93.95s startup cycle; scheduled school collector absent while both manual refresh routes/call paths remain",
+      "deployment_record": "portfolio-backend-a292ef4-deployment-production.json",
+      "next_action": "item 10: run the three immutable final probes against the coherent deployed state; preserve the expected pre-flip Portfolio routing result for item 11"
     },
     {
       "id": 10,
-      "status": "pending_after_9",
+      "status": "ready_to_execute",
       "action": "run final immutable probes for Core, SwissJob and Portfolio",
       "authorization": "explicitly authorized by the user; execute unchanged only after item 9"
     },

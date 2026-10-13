@@ -1,0 +1,79 @@
+{
+  "observed_at": "2026-10-13T07:38:54Z",
+  "status": "passed",
+  "commit": "a292ef4b56341e61f6c2778a23b23bb89f807319",
+  "archive": {
+    "local_path": "/tmp/portfolio-backend-board-a292ef4.tar.gz",
+    "remote_path": "/share/Public/swissjob/portfolio-backend-a292ef4.tar.gz",
+    "sha256": "52435279efbbbcbae1eb31149f61447876ff3d58c35f07e28cca8c5ab185a06e",
+    "size_mib": 954,
+    "remote_hash_matches": true
+  },
+  "deployment": {
+    "image": "portfolio-backend:board-a292ef4",
+    "services": [
+      "portfolio_backend",
+      "portfolio_worker"
+    ],
+    "both_running": true,
+    "both_restart_count": 0,
+    "health_status_code": 200,
+    "alembic": "uu44v3375x21 (head)",
+    "compose_backup": "/share/CACHEDEV1_DATA/Public/unification-e15-20260914/portfolio.configured.yml.before-a292ef4-20261013T073350Z"
+  },
+  "handover": {
+    "background_schedulers_enabled": true,
+    "disabled_sources": [
+      "arbeitnow",
+      "irishjobs",
+      "jobgether",
+      "nav",
+      "ostjob",
+      "remotive",
+      "thehub",
+      "weworkremotely",
+      "zentraljob"
+    ],
+    "disabled_source_count": 9,
+    "all_disabled_guards_false": true,
+    "all_nine_startup_updates_skipped_before_network": true,
+    "skip_duration_seconds": 0.0,
+    "retained_sources": [
+      "adzuna",
+      "dynamitejobs",
+      "himalayas",
+      "ictjobs",
+      "jobicy",
+      "jobroom",
+      "jobscout24",
+      "jsearch",
+      "remoteok",
+      "swissdevjobs",
+      "swisstechjobs"
+    ],
+    "retained_source_count": 11,
+    "all_eleven_completed_initial_cycle": true,
+    "initial_cycle_seconds": 93.95
+  },
+  "schools": {
+    "scheduled_collector_present": false,
+    "periodic_alert_retry_present": true,
+    "manual_routes": [
+      "POST /api/v1/schools/refresh",
+      "POST /api/v1/schools/{school_id}/refresh"
+    ],
+    "manual_all_collector_present": true,
+    "manual_single_collector_present": true
+  },
+  "validation_basis": {
+    "runtime_settings": "lowercase settings.legacy_disabled_sources resolved exact nine values in backend",
+    "runtime_code_paths": "periodic and manual coroutine code-name inspection in deployed image",
+    "runtime_logs": "exact nine SKIPPED messages plus exact eleven completed messages and terminal All APIs completion",
+    "candidate_tests": "source handover network guard and school scheduler/manual separation covered by the previously green full suite"
+  },
+  "discarded_attempts": [
+    "first candidate transform failed before promotion because the live environment mapping lacked the expected pre-existing policy key; live manifest remained unchanged",
+    "transformer was changed to insert or replace the policy idempotently and produced the same hash on two sanitized applications",
+    "deployment script final diagnostic used nonexistent uppercase Settings attribute after health, migration and recreation had passed; the correct lowercase runtime attribute was then verified separately"
+  ]
+}
