@@ -104,9 +104,9 @@ def test_native_scopes_admit_refresh_and_preserve_raw(db, source):  # noqa: F811
             }
             assert len(rows) == 1 and rows[0].raw == expected[source]
             if source == "jobgether":
-                assert (
-                    rows[0].content["description"] is None
-                )  # sink canonizes absent text
+                description = rows[0].content["description"]
+                assert description.startswith("Full Remote. Location: Norway.")
+                assert "TEFL" in description and "english" in description
                 assert rows[0].content["salary"] == "80-120 EUR"
             else:
                 assert "TEFL" in rows[0].content["description"]
