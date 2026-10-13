@@ -2327,28 +2327,24 @@ def test_max_batches_limits_the_drain(db):
 def test_task_registered_routed_and_runs(db, monkeypatch):
     from jobhunt_core.celery_app import celery_app
     from jobhunt_core.config import settings as core_settings
+    from jobhunt_core.tasks import matching as matching_tasks
     from jobhunt_core.tasks import shadow as shadow_tasks
 
     assert "jobhunt.shadow.project" in celery_app.tasks
-    # El proyector es el motor de matching y carga el bi-encoder. Comparte la
-    # cola del modelo para que ninguna otra clase de worker cree otra copia.
-    assert celery_app.conf.task_routes["jobhunt.shadow.project"] == {
+    assert "jobhunt.matching.recover" in celery_app.tasks
+    assert celery_app.conf.task_routes["jobhunt.matching.recover"] == {
         "queue": "core.matching"
     }
-    # P1-1 (rev. externa parte 2): la tarea SÍ va en el beat (cada 5 min) —
-    # proyectar solo dentro de run_cycle (06:05) acumulaba ~20h de latencia
-    # por lote y latencia_p95<=600s (§6) era imposible. El single-flight
-    # tolera el solape con run_cycle (already_running sale limpio).
     by_task = {e["task"]: e for e in celery_app.conf.beat_schedule.values()}
-    project_entry = by_task["jobhunt.shadow.project"]
+    project_entry = by_task["jobhunt.matching.recover"]
     assert project_entry["schedule"] == float(
-        core_settings.CORE_SHADOW_PROJECT_EVERY_S
+        core_settings.CORE_MATCHING_RECOVERY_EVERY_S
     )
-    # Con un único proceso del modelo, una evaluación puede durar más que la
-    # cadencia. Los ticks ya obsoletos deben caducar en vez de acumularse.
     assert project_entry["options"]["expires"] == float(
-        core_settings.CORE_SHADOW_PROJECT_EVERY_S
+        core_settings.CORE_MATCHING_RECOVERY_EVERY_S
     )
+    assert matching_tasks.RECOVERY_EMBEDDING_ROUNDS == 1
+    assert matching_tasks.RECOVERY_MAX_PROFILES == 1
 
     received = {}
 

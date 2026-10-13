@@ -8,14 +8,81 @@ eval_key, así que el reintento no duplica (DoD).
 import asyncio
 import logging
 from typing import Any
+import uuid
 
 import sqlalchemy as sa
 
 from jobhunt_core import embeddings, matching
 from jobhunt_core.celery_app import celery_app
 from jobhunt_core.database import task_session_factory
+from jobhunt_core.tasks.embedding import _run_pending_impl
 
 logger = logging.getLogger(__name__)
+
+RECOVERY_MAX_PROFILES = 1
+RECOVERY_EMBEDDING_ROUNDS = 1
+_NO_PROFILE = uuid.UUID(int=0)
+
+_ACTIVE_COMBOS_SQL = f"""
+SELECT m.id AS model_id, sp.id AS policy_id,
+       EXISTS (SELECT 1 {matching.ELIGIBLE_CORPUS_FROM.format(model="m.id")} LIMIT 1) AS has_corpus
+  FROM embedding_models m
+  CROSS JOIN scoring_policies sp
+ WHERE m.active AND m.dim = :dim AND sp.active
+   AND COALESCE(sp.weights->>'algorithm', '') NOT LIKE 'cross_encoder%'
+"""
+
+_RECOVERY_NEEDED_SQL = f"""
+WITH combos AS ({_ACTIVE_COMBOS_SQL}),
+gen AS (SELECT generation FROM corpus_generation WHERE id = 1),
+candidates AS (
+    SELECT p.id, cur.revision_id
+      FROM profiles p
+      JOIN LATERAL (
+            SELECT a.revision_id
+              FROM profile_revision_activations a
+             WHERE a.profile_id = p.id
+             ORDER BY a.seq DESC
+             LIMIT 1
+           ) cur ON true
+     WHERE p.projection_active
+       AND p.id NOT IN :evaluated
+       AND EXISTS (
+            SELECT 1
+              FROM combos c
+              LEFT JOIN profile_recovery_state w
+                ON w.profile_revision_id = cur.revision_id
+               AND w.model_id = c.model_id
+               AND w.policy_id = c.policy_id
+             WHERE c.has_corpus
+               AND EXISTS (SELECT 1 FROM profile_embeddings pe
+                            WHERE pe.profile_revision_id = cur.revision_id
+                              AND pe.model_id = c.model_id)
+               AND (w.profile_revision_id IS NULL
+                    OR w.corpus_generation IS DISTINCT FROM (SELECT generation FROM gen)))
+)
+SELECT ca.id,
+       (SELECT min(rs.attempted_at)
+          FROM profile_recovery_state rs
+          JOIN combos c2
+            ON c2.model_id = rs.model_id AND c2.policy_id = rs.policy_id
+         WHERE rs.profile_revision_id = ca.revision_id
+           AND c2.has_corpus
+           AND EXISTS (SELECT 1 FROM profile_embeddings pe2
+                        WHERE pe2.profile_revision_id = ca.revision_id
+                          AND pe2.model_id = c2.model_id)) AS last_try
+  FROM candidates ca
+ ORDER BY last_try ASC NULLS FIRST, ca.id
+ LIMIT :cap
+"""
+
+_RECORD_ATTEMPT_SQL = """
+INSERT INTO profile_recovery_state
+    (profile_revision_id, profile_id, model_id, policy_id, corpus_generation, attempted_at)
+VALUES (:rev, :pid, :model, :policy, :gen, now())
+ON CONFLICT (profile_revision_id, model_id, policy_id) DO UPDATE
+SET corpus_generation = EXCLUDED.corpus_generation, attempted_at = EXCLUDED.attempted_at
+"""
 
 
 @celery_app.task(name="jobhunt.matching.run_profile", bind=True, max_retries=1)
@@ -29,6 +96,88 @@ def run_profile_task(
         # modelos/políticas activos ya pasaron sus validaciones de registro.
         logger.error("matching.run_profile %s falló: %s", profile_id, exc)
         raise self.retry(exc=exc, countdown=120)
+
+
+@celery_app.task(name="jobhunt.matching.recover", bind=True, max_retries=1)
+def recover_task(self) -> dict[str, Any]:
+    """Recover one stale active profile per tick with one embedding pass."""
+    try:
+        return asyncio.run(_recover_impl())
+    except Exception as exc:
+        logger.error("matching.recover failed: %s", exc)
+        raise self.retry(exc=exc, countdown=120)
+
+
+async def _recover_impl(session_factory=None) -> dict[str, Any]:
+    if session_factory is None:
+        async with task_session_factory() as factory:
+            return await _recover_with(factory)
+    return await _recover_with(session_factory)
+
+
+async def _recover_with(session_factory) -> dict[str, Any]:
+    await _drain_embeddings(session_factory)
+    async with session_factory() as session:
+        targets = await _recovery_targets(session, set())
+    for profile_id in targets:
+        await _evaluate_and_record(session_factory, profile_id)
+    return {"profiles_evaluated": len(targets)}
+
+
+async def _drain_embeddings(
+    session_factory, limit: int = 200, max_rounds: int = RECOVERY_EMBEDDING_ROUNDS
+) -> None:
+    for _ in range(min(max_rounds, RECOVERY_EMBEDDING_ROUNDS)):
+        result = await _run_pending_impl(limit, session_factory=session_factory)
+        if not any(result["embedded"].values()) and not any(
+            result["profiles_embedded"].values()
+        ):
+            return
+    logger.info("matching recovery: embedding pass reached its per-tick limit")
+
+
+async def _recovery_targets(
+    session, evaluated: set, limit: int = RECOVERY_MAX_PROFILES
+) -> list:
+    cap = min(limit, RECOVERY_MAX_PROFILES)
+    if cap <= 0:
+        return []
+    rows = (
+        await session.execute(
+            sa.text(_RECOVERY_NEEDED_SQL).bindparams(
+                sa.bindparam("evaluated", expanding=True)
+            ),
+            {
+                "evaluated": sorted(evaluated, key=str) or [_NO_PROFILE],
+                "dim": embeddings.EMBED_DIM,
+                "cap": cap,
+            },
+        )
+    ).all()
+    return [row.id for row in rows]
+
+
+async def _evaluate_and_record(session_factory, profile_id) -> None:
+    async def record(session, result, model_id, policy_id) -> None:
+        if result["corpus_generation"] is None:
+            return
+        await session.execute(
+            sa.text(_RECORD_ATTEMPT_SQL),
+            {
+                "rev": result["profile_revision_id"],
+                "pid": profile_id,
+                "model": model_id,
+                "policy": policy_id,
+                "gen": result["corpus_generation"],
+            },
+        )
+
+    await _run_profile_impl(
+        str(profile_id),
+        matching.CANONICAL_EVAL_LIMIT,
+        session_factory=session_factory,
+        on_evaluated=record,
+    )
 
 
 async def _run_profile_impl(

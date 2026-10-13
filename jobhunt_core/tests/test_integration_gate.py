@@ -881,12 +881,12 @@ def test_tasks_registered_beat_cadences_and_core_queues(db):
     # proyección/entrega solo al cierre del ciclo hacía imposible
     # latencia_p95<=600s); run_cycle diario 06:05 Europe/Zurich.
     by_task = {e["task"]: e for e in celery_app.conf.beat_schedule.values()}
-    assert by_task["jobhunt.shadow.sample_outbox_lag"]["schedule"] == 300.0
+    assert by_task["jobhunt.delivery.check_health"]["schedule"] == 300.0
     assert by_task["jobhunt.shadow.check_slot_health"]["schedule"] == 300.0
     assert by_task["jobhunt.shadow.preview_cycle"]["schedule"] == float(
         settings.CORE_SHADOW_PRE_GATE_EVERY_S
     )
-    assert by_task["jobhunt.shadow.project"]["schedule"] == 300.0
+    assert by_task["jobhunt.matching.recover"]["schedule"] == 300.0
     assert by_task["jobhunt.delivery.dispatch_outbox"]["schedule"] == 300.0
     cron = by_task["jobhunt.shadow.run_cycle"]["schedule"]
     assert cron.hour == {6} and cron.minute == {5}

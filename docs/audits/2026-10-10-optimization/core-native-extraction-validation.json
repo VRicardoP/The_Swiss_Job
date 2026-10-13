@@ -1,0 +1,64 @@
+{
+  "observed_at": "2026-10-13T08:35:40Z",
+  "status": "complete",
+  "checklist_item": 13,
+  "base_commit": "1e56fc3",
+  "matching_recovery": {
+    "task": "jobhunt.matching.recover",
+    "queue": "core.matching",
+    "cadence_seconds": 300,
+    "expires_seconds": 300,
+    "embedding_rounds_per_tick": 1,
+    "profiles_per_tick": 1,
+    "tenant_selection": "profiles.projection_active for every consumer",
+    "removed_dependencies": [
+      "swissjob-shadow consumer lookup",
+      "legacy users lookup",
+      "inactive_user_refs",
+      "shadow_change_log"
+    ],
+    "preserved_signals": [
+      "current profile revision",
+      "monotonic corpus generation",
+      "attempt watermark",
+      "profile vector availability",
+      "deterministic oldest-attempt ordering"
+    ]
+  },
+  "profile_erasure": {
+    "owner_module": "jobhunt_core/erasure.py",
+    "shadow_import_removed": true,
+    "preserved": [
+      "profile then receipt then child lock/delete order",
+      "scrub_capture while the historical staging table exists",
+      "scrub_portfolio_manifests",
+      "foreign-key-safe child deletion"
+    ]
+  },
+  "delivery_health": {
+    "task": "jobhunt.delivery.check_health",
+    "queue": "core.default",
+    "cadence_seconds": 300,
+    "oldest_pending_seconds_max": 900,
+    "dead_total_max": 0,
+    "historical_metrics_write": false
+  },
+  "ndcg": {
+    "owner_module": "jobhunt_core/dev_eval.py",
+    "k": 10,
+    "shadow_import_removed": true
+  },
+  "validation": {
+    "static": "ruff and py_compile passed",
+    "focused": "46 passed; later corrected test-fixture wiring and reran the three affected cases: 3 passed",
+    "full_command": "docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm core-migrate python -m pytest jobhunt_core/tests -q",
+    "full_result": "1924 passed, 1 skipped, 2 warnings, 0 failed",
+    "duration_seconds": 997.75,
+    "skip": "environment-conditioned existing test",
+    "warnings": [
+      "existing Starlette TestClient deprecation",
+      "read-only container pytest cache"
+    ]
+  },
+  "deletion_gate": "green; item 14 may remove the historical shadow runtime while preserving migrations, historical tables, retention and erasure restore"
+}

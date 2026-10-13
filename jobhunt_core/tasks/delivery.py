@@ -45,6 +45,9 @@ from jobhunt_core.database import task_session_factory
 
 logger = logging.getLogger(__name__)
 
+MAX_OLDEST_PENDING_S = 900
+MAX_DEAD_TOTAL = 0
+
 
 @worker_process_init.connect
 def register_shadow_inbox_transport(**_kwargs) -> None:
@@ -188,3 +191,28 @@ async def _dispatch_impl(limit: int) -> dict[str, Any]:
         "lease_overrun": lease_overrun,
         "no_transport": False,
     }
+
+
+@celery_app.task(name="jobhunt.delivery.check_health")
+def check_health_task() -> dict[str, Any]:
+    return asyncio.run(_check_health_impl())
+
+
+async def _check_health_impl(session_factory=None) -> dict[str, Any]:
+    if session_factory is None:
+        async with task_session_factory() as factory:
+            return await _check_health_with(factory)
+    return await _check_health_with(session_factory)
+
+
+async def _check_health_with(session_factory) -> dict[str, Any]:
+    async with session_factory() as session:
+        current = await delivery.stats(session)
+    alerts = []
+    if current["oldest_pending_s"] > MAX_OLDEST_PENDING_S:
+        alerts.append("oldest_pending_s")
+    if current["dead_total"] > MAX_DEAD_TOTAL:
+        alerts.append("dead_total")
+    if alerts:
+        logger.error("delivery_health: alerts=%s values=%s", alerts, current)
+    return {**current, "healthy": not alerts, "alerts": alerts}

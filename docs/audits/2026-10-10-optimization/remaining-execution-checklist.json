@@ -121,12 +121,16 @@
     },
     {
       "id": 13,
-      "status": "ready_to_execute",
-      "action": "extract native Core recovery, erasure, outbox health and nDCG per core-native-extraction-plan.json; run focused and full Core suites"
+      "status": "complete",
+      "action": "extract native Core recovery, erasure, outbox health and nDCG per core-native-extraction-plan.json; run focused and full Core suites",
+      "evidence": "matching recovery is native, limited to one embedding round and one projection_active profile per 300s expiring tick across every consumer; erasure no longer imports shadow; delivery health is native with 900s/0 thresholds; dev_eval owns nDCG; focused and full suites green",
+      "record": "core-native-extraction-validation.json",
+      "validation": "ruff and py_compile passed; focused 46 passed plus 3 corrected cases; full Core 1924 passed, 1 skipped, 0 failed in 997.75s",
+      "next_action": "item 14: remove the historical Core shadow runtime/config/tools while preserving migrations, historical tables, retention and erasure restore; run full suite, deploy and verify before dropping the capture role"
     },
     {
       "id": 14,
-      "status": "pending_after_13",
+      "status": "ready_to_execute",
       "action": "remove Core shadow runtime/config/tools while preserving migrations, historical tables, retention and erasure restore; deploy and verify before dropping the capture role"
     },
     {

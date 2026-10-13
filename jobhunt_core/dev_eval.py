@@ -34,6 +34,7 @@ import asyncio
 import datetime
 import hashlib
 import json
+import math
 import os
 import sys
 import uuid as uuid_mod
@@ -42,9 +43,12 @@ import sqlalchemy as sa
 
 from jobhunt_core import matching
 from jobhunt_core.database import task_session_factory
-from jobhunt_core.shadow.metrics import NDCG_K, _dcg
-
 EVALUATOR_VERSION = "dev-eval-v3"
+NDCG_K = 10
+
+
+def _dcg(rels) -> float:
+    return sum((2**rel - 1) / math.log2(pos + 2) for pos, rel in enumerate(rels))
 
 
 def _sha256_file(path: str) -> str:

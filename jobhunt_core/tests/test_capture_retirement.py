@@ -1,12 +1,8 @@
-"""Retiring the CDC slot must silence its harness WITHOUT silencing the engine.
+"""Retiring the CDC slot must silence its harness without silencing native work.
 
 Once the legacy producers are gone there is nothing left to capture, so the
 tasks that exist only to watch the replication slot and to close the shadow
-cycle stop making sense. But three of the tasks in that beat carry the native
-pipeline, and one of them is named `shadow.project` purely for historical
-reasons: it is what drains embeddings and re-evaluates profiles after every
-native harvest. Disabling the whole `shadow.*` family by name would switch off
-the matching engine while every dashboard still looked green.
+cycle stop making sense. Native matching recovery and delivery health remain.
 
 So the flag is narrow on purpose, defaults to the current behaviour, and these
 tests pin exactly which entries it may remove.
@@ -21,8 +17,8 @@ SLOT_ONLY = {"shadow-check-slot-health", "shadow-preview-cycle", "shadow-run-cyc
 ALWAYS = {
     "harvest-dispatch-native",
     "harvest-check-health",
-    "shadow-project",
-    "shadow-sample-outbox-lag",
+    "matching-recovery",
+    "delivery-check-health",
     "delivery-dispatch-outbox",
     "idempotency-purge-expired",
     "maintenance-archive-sweep",
@@ -57,13 +53,8 @@ def test_disabling_capture_removes_only_the_slot_harness(monkeypatch):
 
 
 def test_the_matching_engine_is_never_switched_off_by_the_flag(monkeypatch):
-    """`shadow.project` drains embeddings and re-evaluates profiles.
-
-    Verified live on 2026-09-21 at 16:59:03 UTC: it ran with `batches: 0` --
-    no CDC batch at all -- and still reported `recovery_evaluated: 3`.
-    """
     for enabled in (True, False):
-        assert "shadow-project" in _schedule(monkeypatch, enabled)
+        assert "matching-recovery" in _schedule(monkeypatch, enabled)
 
 
 @pytest.fixture(autouse=True)

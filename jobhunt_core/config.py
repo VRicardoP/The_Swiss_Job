@@ -76,7 +76,8 @@ class CoreSettings(BaseSettings):
     # CADENCIA — con la proyección solo diaria (06:05) los lotes acumulaban
     # ~20h de latencia y latencia_p95<=600s / outbox_lag_p99<=300s (§6) eran
     # matemáticamente imposibles.
-    CORE_SHADOW_PROJECT_EVERY_S: int = Field(default=300, ge=60)  # matching
+    CORE_MATCHING_RECOVERY_EVERY_S: int = Field(default=300, ge=60)
+    CORE_DELIVERY_HEALTH_EVERY_S: int = Field(default=300, ge=60)
     CORE_DELIVERY_DISPATCH_EVERY_S: int = Field(default=300, ge=60)  # outbox
     # Transfer searches only after legacy drain and an inbox projection proof.
     # Off means no beat entry and manual tasks perform no database work.

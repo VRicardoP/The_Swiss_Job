@@ -7,6 +7,71 @@ The caller commits the receipt and graph deletion in ONE transaction.
 import sqlalchemy as sa
 
 
+_ERASE_TABLES = (
+    "generated_documents",
+    "profile_vacancy_state",
+    "profile_vacancy_events",
+    "match_evaluations",
+    "profile_recovery_state",
+    "profile_embeddings",
+    "profile_revision_activations",
+    "profile_revisions",
+    "applications",
+    "saved_searches",
+)
+
+
+async def _erase_profile_graph(session, external_ref, consumer_name):
+    """Delete one profile graph in foreign-key-safe order."""
+    profile_id = (
+        await session.execute(
+            sa.text(
+                "SELECT p.id FROM profiles p "
+                "JOIN consumers c ON c.id = p.consumer_id "
+                "WHERE c.name = :consumer AND p.external_ref = :ref"
+            ),
+            {"consumer": consumer_name, "ref": external_ref},
+        )
+    ).scalar_one_or_none()
+    if profile_id is None:
+        return None
+    await session.execute(
+        sa.text("SELECT id FROM profiles WHERE id = :pid FOR UPDATE"),
+        {"pid": profile_id},
+    )
+    await session.execute(
+        sa.text(
+            "DELETE FROM idempotency_records WHERE consumer_id = "
+            "(SELECT consumer_id FROM profiles WHERE id=:pid) AND ("
+            "response->>'subject_profile_id' = CAST(:pid AS text) OR "
+            "response->'body'->>'profile_id' = CAST(:pid AS text) OR "
+            "(split_part(route, '/', 3) = 'profiles' AND "
+            "translate(replace(replace(lower(split_part(route, '/', 4)), "
+            "'urn:', ''), 'uuid:', ''), '-{}', '') = :compact) OR "
+            "(split_part(route, '/', 3) = 'applications' AND "
+            "replace(lower(split_part(route, '/', 4)), '-', '') IN "
+            "(SELECT replace(id::text, '-', '') FROM applications WHERE profile_id=:pid)) OR "
+            "(split_part(route, '/', 3) = 'saved-searches' AND "
+            "replace(lower(split_part(route, '/', 4)), '-', '') IN "
+            "(SELECT replace(id::text, '-', '') FROM saved_searches WHERE profile_id=:pid)))"
+        ),
+        {"pid": profile_id, "compact": profile_id.hex},
+    )
+    await session.execute(
+        sa.text("DELETE FROM integration_outbox WHERE subject_profile_id = :pid"),
+        {"pid": profile_id},
+    )
+    for table in _ERASE_TABLES:
+        await session.execute(
+            sa.text(f"DELETE FROM {table} WHERE profile_id = :pid"),
+            {"pid": profile_id},
+        )
+    await session.execute(
+        sa.text("DELETE FROM profiles WHERE id = :pid"), {"pid": profile_id}
+    )
+    return profile_id
+
+
 async def scrub_portfolio_manifests(session, external_ref, profile_id):
     """Remove this subject's material diagnostics, not other users or corpus.
 
@@ -187,8 +252,6 @@ async def erase_owned_profile(session, consumer_id, profile_id):
     Lock order: identity -> profile -> children, matching enrollment. Retries
     require a persisted receipt, never treat an arbitrary 404 as confirmation.
     """
-    from jobhunt_core.shadow.projector import _erase_profile_graph
-
     await lock_erasure_fence(session, exclusive=True)
     params = {"cid": consumer_id, "pid": profile_id}
     receipt = (

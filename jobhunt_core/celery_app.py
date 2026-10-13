@@ -58,13 +58,13 @@ celery_app.conf.update(
         # misma cola que esas tareas garantiza que sólo el worker de modelo
         # carga el bi-encoder; en core.default bloqueaba durante minutos la
         # salud, el outbox y el beat cuando la concurrencia bajó a uno.
-        "jobhunt.shadow.project": {"queue": "core.matching"},
+        "jobhunt.matching.recover": {"queue": "core.matching"},
         # Métricas/muestreo/purga de la sombra (B-04): observabilidad y
         # mantenimiento, NO ingesta — cola general core.default. En
         # core.harvest el muestreador (cadencia 5 min vía B-05) quedaría
         # detrás de lotes largos del proyector (prefetch=1 + acks_late) y
         # ninguna de estas tareas toca los locks del sink.
-        "jobhunt.shadow.sample_outbox_lag": {"queue": "core.default"},
+        "jobhunt.delivery.check_health": {"queue": "core.default"},
         "jobhunt.shadow.compute_cycle": {"queue": "core.default"},
         "jobhunt.shadow.preview_cycle": {"queue": "core.default"},
         "jobhunt.shadow.purge_staging": {"queue": "core.default"},
@@ -120,9 +120,9 @@ celery_app.conf.update(
             # native scopes remain disabled until their individual handover.
             "schedule": crontab(hour="0,6,12,18", minute=10),
         },
-        "shadow-sample-outbox-lag": {
-            "task": "jobhunt.shadow.sample_outbox_lag",
-            "schedule": float(settings.CORE_SHADOW_OUTBOX_SAMPLE_EVERY_S),
+        "delivery-check-health": {
+            "task": "jobhunt.delivery.check_health",
+            "schedule": float(settings.CORE_DELIVERY_HEALTH_EVERY_S),
         },
         # G9 P2-C: nadie leía consecutive_failures/last_complete_at — una fuente
         # que dejaba de cosechar no producía alerta alguna hasta que el archivado
@@ -158,11 +158,11 @@ celery_app.conf.update(
         # único proceso del bi-encoder: el mensaje caduca al llegar el siguiente
         # tick para que los disparos obsoletos no formen una cola sin cota. El
         # single-flight sigue protegiendo solapes con run_cycle.
-        "shadow-project": {
-            "task": "jobhunt.shadow.project",
-            "schedule": float(settings.CORE_SHADOW_PROJECT_EVERY_S),
+        "matching-recovery": {
+            "task": "jobhunt.matching.recover",
+            "schedule": float(settings.CORE_MATCHING_RECOVERY_EVERY_S),
             "options": {
-                "expires": float(settings.CORE_SHADOW_PROJECT_EVERY_S),
+                "expires": float(settings.CORE_MATCHING_RECOVERY_EVERY_S),
             },
         },
         "delivery-dispatch-outbox": {

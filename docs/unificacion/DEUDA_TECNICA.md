@@ -1966,6 +1966,34 @@ el orden de corte y disponer de la publicación frontend autorizada.
   entonces borrar runtime/config/herramientas shadow y el rol capture; después
   continuar con Portfolio, SwissJob y frontend en orden numérico.
 
+### Checkpoint operativo — 2026-10-13 08:35 UTC
+
+- Punto 13 cerrado. La recuperación periódica pertenece ahora a
+  `jobhunt_core.tasks.matching`: usa sólo `profiles.projection_active` para
+  todos los consumidores, conserva las señales de revisión/generación e intento,
+  omite perfiles sin vector y ordena de forma determinista por el intento más
+  antiguo. Cada tick de 300 s caduca al siguiente, drena una sola ronda de
+  embeddings y evalúa como máximo un perfil.
+- El borrado FK-safe vive junto a `erase_owned_profile` y ya no importa el
+  proyector. Se mantienen `scrub_capture` mientras exista la tabla histórica,
+  `scrub_portfolio_manifests` y el orden de locks/recibo/hijos. La salud de
+  entrega pasa a `jobhunt.delivery.check_health`, con alerta si el pendiente más
+  antiguo supera 900 s o existe un dead-letter; no escribe métricas shadow.
+  `dev_eval` posee localmente `NDCG_K=10` y la fórmula DCG.
+- Verificación: `ruff` y `py_compile` verdes; 46 pruebas focalizadas y los
+  tres casos corregidos verdes; suite completa oficial: 1.924 pasadas, una
+  omitida por condición conocida del entorno y cero fallos en 997,75 s. La
+  evidencia reproducible está en
+  `core-native-extraction-validation.json`.
+- Metodología vigente: trazar cada consumidor antes de mover código; trasladar
+  el contrato mínimo a su módulo propietario sin capa nueva; mantener el runtime
+  histórico hasta que los reemplazos tengan pruebas focalizadas y suite completa;
+  distinguir defectos funcionales de fallos de infraestructura de test; cerrar
+  evidencia, checklist, deuda y commit por punto. El punto 14 debe inventariar
+  referencias ejecutables con `rg`, borrar sólo runtime/config/herramientas
+  shadow, conservar migraciones/tablas/retención/restauración, repetir la suite
+  completa y desplegar/verificar antes de eliminar el rol capture.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con
@@ -1978,10 +2006,10 @@ el orden de corte y disponer de la publicación frontend autorizada.
 - No suplantar usuarios construyendo JWT desde la base o la clave de firma: la
   revisión automática rechazó esa sonda. La prueba de facetas en producción se
   resolvió de forma segura con logs HTTP agregados; no repetir el intento.
-- `shadow-project` no es sólo CDC: hoy drena embeddings y recupera matching nativo.
-  `erasure.py`, `tasks/delivery.py`, `dev_eval.py`, `import_search_corpus.py`,
-  `retention.py` y `erasure_restore.py` tienen dependencias ejecutables exactas
-  registradas en `runtime-cleanup-inventory.json`; resolverlas antes de borrar el paquete.
+- La recuperación, el borrado, la salud de entrega y nDCG ya son nativos.
+  `import_search_corpus.py`, `retention.py` y `erasure_restore.py` conservan
+  requisitos exactos registrados en `runtime-cleanup-inventory.json`; comprobarlos
+  al borrar el paquete y preservar migraciones y tablas históricas.
 - No cerrar 28.767 ofertas legacy en bloque: la admisión nativa de siete días no
   repone de inmediato el histórico. Se apagan productores y sus filas envejecen.
 - No borrar presentación/normalizadores de fuentes del frontend mientras Core

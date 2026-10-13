@@ -3059,7 +3059,6 @@ def test_tasks_registered_routed_to_core_default_and_run(db):
     )
 
     for name in (
-        "jobhunt.shadow.sample_outbox_lag",
         "jobhunt.shadow.compute_cycle",
         "jobhunt.shadow.purge_staging",
     ):
@@ -3067,10 +3066,13 @@ def test_tasks_registered_routed_to_core_default_and_run(db):
         # Decisión B-04: observabilidad/mantenimiento → core.default (jamás
         # detrás de un lote del proyector en core.harvest).
         assert celery_app.conf.task_routes[name] == {"queue": "core.default"}
-    # Cadencia cableada por B-05: el muestreador SÍ va en el beat (5 min);
-    # compute_cycle/purge NO — los orquesta jobhunt.shadow.run_cycle.
+    assert "jobhunt.shadow.sample_outbox_lag" in celery_app.tasks
+    assert "jobhunt.shadow.sample_outbox_lag" not in celery_app.conf.task_routes
+    # El muestreador histórico sigue invocable, pero la vigilancia periódica
+    # ya pertenece a delivery y no escribe en las tablas de la sombra.
     beat_tasks = {e["task"] for e in celery_app.conf.beat_schedule.values()}
-    assert "jobhunt.shadow.sample_outbox_lag" in beat_tasks
+    assert "jobhunt.shadow.sample_outbox_lag" not in beat_tasks
+    assert "jobhunt.delivery.check_health" in beat_tasks
     assert "jobhunt.shadow.compute_cycle" not in beat_tasks
     assert "jobhunt.shadow.purge_staging" not in beat_tasks
 
