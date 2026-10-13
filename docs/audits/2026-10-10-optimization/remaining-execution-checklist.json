@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-13T09:03:00Z",
+  "observed_at": "2026-10-13T09:16:20Z",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -130,16 +130,18 @@
     },
     {
       "id": 14,
-      "status": "local_validated_pending_deploy",
+      "status": "complete",
       "action": "remove Core shadow runtime/config/tools while preserving migrations, historical tables, retention and erasure restore; deploy and verify before dropping the capture role",
       "local_evidence": "shadow runtime/config/capture service and closed transition tools removed; historical migrations/tables, retention, erasure restore and scrub_capture preserved",
       "validation": "focused 138 passed; full Core 1547 passed, 1 skipped in 460.41s; Ruff/compileall/bash/diff-check and eight Compose models green",
-      "record": "core-shadow-runtime-removal-validation.json",
-      "next_action": "commit exact tree, deploy immutable Core, verify four native services/delivery/17 sources/historical tables, then drop jobhunt_capture and prove absence"
+      "record": "core-shadow-runtime-removal-production.json",
+      "next_action": "item 15: replace Portfolio transferred-source routers with the common Core adapter and remove retired producer modules per the verified plan",
+      "evidence": "release 3ed6462/core0054 on exactly four native services, restart 0, 3/3 workers pong, five queues zero, Core probe failures=[], 17/17 and delivery drained; historical tables retained; capture role/slot/service/container/env file absent; jobhunt_core has zero privileged public relations",
+      "deployment_correction": "generic DB target mismatch was detected immediately; accidental schema contained only three migration seed rows, was dropped, absence verified, and deploy_nas.sh now derives and validates the live R5 database"
     },
     {
       "id": 15,
-      "status": "authorized_pending_numeric_order",
+      "status": "ready_to_execute",
       "action": "replace Portfolio transferred-source routers with the common Core adapter, remove 25 modules plus nine normalizer classes, fix routing consumers and preserve notification gates/exclusive-source runtime",
       "plan": "portfolio-compatibility-adapter-plan.json"
     },

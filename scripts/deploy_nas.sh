@@ -248,12 +248,31 @@ ssh nas "grep -n '$PATRON' $E/$COMPOSE"
 
 if [[ "$SERVICIO" == core ]]; then
   echo "== migraciones del núcleo ANTES de recrear (trampa 5)"
-  # El bootstrap necesita la credencial admin para converger grants y rol;
-  # pasar sólo CORE_DATABASE_URL ejecutaría Alembic pero omitiría aislamiento.
-  ssh nas "$D run --rm --network container:$CONTENEDOR_API \
-    --env-file /share/Public/swissjob/.env.core.prod \
-    --env-file /share/Public/swissjob/.env.core.admin.prod \
-    $IMAGEN python -m jobhunt_core.migrate"
+  # El runtime R5 usa una base aislada. Se toma su URL exacta del contenedor
+  # vivo y se ajusta sólo el nombre de base del DSN admin en ficheros efímeros;
+  # así no se imprimen credenciales ni se migra por error la base genérica.
+  ssh nas bash -s -- "$D" "$CONTENEDOR_API" "$IMAGEN" <<'REMOTE_CORE_MIGRATE'
+set -euo pipefail
+D="$1"; API="$2"; IMAGEN="$3"
+TMP_MIGRATE="$(mktemp -d /tmp/core-migrate.XXXXXX)"
+trap 'rm -rf "$TMP_MIGRATE"' EXIT
+LIVE_DB="$($D exec "$API" python -c 'import os; from urllib.parse import urlsplit; print(urlsplit(os.environ["CORE_DATABASE_URL"]).path.lstrip("/"))')"
+[[ "$LIVE_DB" =~ ^[a-zA-Z0-9_]+$ ]] || exit 1
+grep -v '^CORE_DATABASE_URL=' /share/Public/swissjob/.env.core.prod > "$TMP_MIGRATE/runtime.env"
+$D inspect "$API" --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  | grep '^CORE_DATABASE_URL=' >> "$TMP_MIGRATE/runtime.env"
+grep -v '^CORE_ADMIN_DATABASE_URL=' /share/Public/swissjob/.env.core.admin.prod > "$TMP_MIGRATE/admin.env"
+ADMIN_LINE="$(grep '^CORE_ADMIN_DATABASE_URL=' /share/Public/swissjob/.env.core.admin.prod)"
+ADMIN_URL="${ADMIN_LINE#CORE_ADMIN_DATABASE_URL=}"
+printf 'CORE_ADMIN_DATABASE_URL=%s/%s\n' "${ADMIN_URL%/*}" "$LIVE_DB" >> "$TMP_MIGRATE/admin.env"
+chmod 600 "$TMP_MIGRATE/runtime.env" "$TMP_MIGRATE/admin.env"
+$D run --rm --network "container:$API" \
+  --env-file "$TMP_MIGRATE/runtime.env" --env-file "$TMP_MIGRATE/admin.env" \
+  "$IMAGEN" python -c 'import os; from urllib.parse import urlsplit; a=urlsplit(os.environ["CORE_DATABASE_URL"]); b=urlsplit(os.environ["CORE_ADMIN_DATABASE_URL"]); assert a.hostname==b.hostname and a.path==b.path; print("migration target validated", a.hostname, a.path)'
+$D run --rm --network "container:$API" \
+  --env-file "$TMP_MIGRATE/runtime.env" --env-file "$TMP_MIGRATE/admin.env" \
+  "$IMAGEN" python -m jobhunt_core.migrate
+REMOTE_CORE_MIGRATE
 fi
 
 echo "== recreando ${SERVICIOS[*]} (con el proyecto correcto: trampa 2)"

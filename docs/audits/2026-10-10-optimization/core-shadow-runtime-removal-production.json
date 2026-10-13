@@ -1,0 +1,81 @@
+{
+  "observed_at": "2026-10-13T09:16:20Z",
+  "point": 14,
+  "status": "complete",
+  "release": {
+    "commit": "3ed64622a76fd6e26a60fe8251af49f492c45ba2",
+    "short": "3ed6462",
+    "image": "swissjob-core:point5-3ed6462",
+    "image_id": "sha256:e596fff10f22fb0ed444fded3ea906c808caf3a635cfa2973b44937e8025a2f7",
+    "alembic": "core0054"
+  },
+  "deployment": {
+    "services": [
+      "core-api",
+      "core-worker",
+      "core-harvest-worker",
+      "core-ops-worker"
+    ],
+    "all_restart_count": 0,
+    "api_health": "healthy",
+    "workers_ping": "3/3 pong",
+    "queues": {
+      "core.default": 0,
+      "core.harvest": 0,
+      "core.embedding": 0,
+      "core.matching": 0,
+      "core.notifications": 0
+    }
+  },
+  "functional_gate": {
+    "probe_failures": [],
+    "harvest": "17/17 with alerts=[]",
+    "delivery": {
+      "delivered": 25160,
+      "dead_total": 0,
+      "oldest_pending_s": 0.0
+    },
+    "capture_staging_pending": 0,
+    "capture_slots": 0,
+    "beat_entries": 12,
+    "shadow_beat_entries": 0,
+    "http_destinations": [
+      "portfolio",
+      "swissjob-shadow"
+    ],
+    "http_token_configured": true
+  },
+  "retained_history": {
+    "shadow_capture_state": true,
+    "shadow_change_log": true,
+    "shadow_projection_batches": true,
+    "shadow_inbox": true,
+    "shadow_cycle_metrics": true,
+    "profile_erasure_receipts": true
+  },
+  "retired": {
+    "capture_role_exists": false,
+    "capture_env_file_exists": false,
+    "capture_service_declared": false,
+    "capture_container_exists": false
+  },
+  "isolation": {
+    "core_public_privileged_relations": 0,
+    "migration_target": "postgres/swissjobhunter_r5_rehearsal",
+    "admin_and_runtime_target_validated_equal": true
+  },
+  "deployment_correction": {
+    "detected": "the first migration invocation used generic .env.core.prod and targeted swissjobhunter instead of the live swissjobhunter_r5_rehearsal database",
+    "impact": "a new jobhunt schema with 62 tables was created in the generic database; only alembic_version, corpus_generation and profile_erasure_fence contained one migration seed row each",
+    "remediation": "migrated the exact live target after validating runtime/admin host and database; dropped only the accidental empty schema; verified it is absent; updated deploy_nas.sh to derive and validate the live database before every Core migration",
+    "user_data_affected": false
+  },
+  "validation": {
+    "local_full": "1547 passed, 1 skipped, 0 failed in 460.41s",
+    "local_focused": "138 passed, 0 failed in 87.53s",
+    "ruff": "green",
+    "compose": "eight models green",
+    "post_drop_probe": "failures=[]"
+  },
+  "next_action": "item 15: execute portfolio-compatibility-adapter-plan.json in numeric order"
+}

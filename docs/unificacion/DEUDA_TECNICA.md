@@ -2071,3 +2071,33 @@ Este documento se actualiza **al cerrar cada fase**, junto con el backlog. Regla
   propietario, construir/desplegar ese SHA, ejecutar las sondas de producción y
   retirar `jobhunt_capture` únicamente si todo sigue verde. Después marcar el
   punto 14 completo y habilitar el punto 15.
+
+### Checkpoint operativo — 2026-10-13 09:16 UTC
+
+- Punto 14 cerrado en producción. Los cuatro servicios Core ejecutan la imagen
+  inmutable `swissjob-core:point5-3ed6462`, publican
+  `3ed6462/core0054`, tienen cero reinicios y los tres workers responden
+  `pong`. Las cinco colas están a cero; la sonda final devuelve
+  `failures=[]`, 17/17 fuentes sin alertas, entrega drenada y staging a cero.
+- El beat contiene doce tareas nativas y ninguna tarea shadow. Los destinos HTTP
+  `portfolio` y `swissjob-shadow` conservan configuración completa; este último
+  es el identificador contractual del consumidor SwissJob, no el runtime CDC
+  retirado. Las seis tablas históricas comprobadas siguen presentes para
+  retención, recibos y restauración.
+- Se eliminó `jobhunt_capture` tras comprobar cero sesiones, slots y
+  memberships; también desaparecieron el fichero secreto, servicio, contenedor
+  y slot. `jobhunt_core` conserva cero relaciones privilegiadas en `public`.
+- Incidencia corregida durante el despliegue: la primera invocación de migración
+  tomó `.env.core.prod` y apuntó a `swissjobhunter` en vez de la base viva
+  `swissjobhunter_r5_rehearsal`. Se detectó antes del cierre; el esquema creado
+  tenía 62 tablas y sólo tres filas semilla de migración, sin datos de usuario.
+  Se migró la base viva tras validar que DSN runtime/admin coincidían, se borró
+  únicamente ese esquema accidental y se verificó su ausencia. El script queda
+  corregido para derivar y validar siempre la base del contenedor vivo sin
+  imprimir credenciales.
+- Metodología vigente: comprobar el destino efectivo además de que el comando
+  termine en verde; tratar cada desviación como incidente reversible, medir su
+  alcance antes de limpiar, conservar evidencia y repetir todos los gates tras
+  la corrección. El punto 15 queda habilitado; aplicar su plan ya verificado,
+  mantener adaptador común y fuentes exclusivas, ejecutar pruebas y desplegar
+  antes de avanzar al punto 16.
