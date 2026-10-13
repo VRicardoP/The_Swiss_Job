@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-13T00:41:00+00:00",
+  "observed_at": "2026-10-13T00:48:00+00:00",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -46,18 +46,19 @@
     },
     {
       "id": 6,
-      "status": "active_dedup_gate",
+      "status": "waiting_explicit_scope_approval",
       "action": "deploy Core f29fd44, verify authoritative ready/routes/dedup batching, then grant portfolio harvest:write exactly once",
       "plan": "core-postdeploy-verification-plan.json",
       "evidence": "19efe49/core0054 deployed on four coherent services with restart 0; 17/17 healthy; nine aggregate routes and ETag pass with no failures; isolated Arbeitnow 165214.579 -> 35382.782 ms (78.58% faster)",
       "diagnosis": "EXPLAIN ANALYZE 49716.035 ms: 21402 lateral latest-revision lookups consume 27447.213 ms; 1,953,864 shared hits and 193,645 reads because the materialized source_rows CTE also carries full offer JSON through every facet scan",
-      "next_action": "let the existing chain reach its single terminal batch; verify all durations/errors and drained queues, then grant harvest:write and rerun --after-grant",
+      "next_action": "after explicit user approval naming persistent production harvest:write and its dispatch capability, rerun the rejected idempotent grant command, verify scope once and run --after-grant route probe",
       "scope_grant_applied": false,
       "remediation_commit": "e535e45",
       "validation": "focused 10/10; Core full 1912 passed, 1 skipped in 972.98 s; Ruff and py_compile green",
-      "dedup": "13 partials passed; 3250 rows, 641 new candidates; latest 341.171 s and maximum 1451.184 s <1800; fourteenth 60e1a405-00dc-49e2-9b52-d6e4e1339323 active for measured 109 remaining plus final exact/lexical arms; 0 errors",
+      "dedup": "verified: 14 batches (13 partial, 1 terminal), 3359 rows, 671 new candidates, max 1451.184 s <1800, exact 4403, lexical 1414, failures=[]; all five queues zero",
       "resume_observation": "read ops-worker logs since 2026-10-12T22:16:12Z and run verify_dedup_batch_log.py only after one terminal; do not trigger another root chain",
-      "count_correction": "exact read-only _CORPUS_SQL recount at 00:31 UTC: 3359 total, 609 after the eleventh cursor; likely two more 250 partials and a 109 terminal, but complete=true is the sole closure condition"
+      "count_correction": "exact read-only _CORPUS_SQL recount at 00:31 UTC: 3359 total, 609 after the eleventh cursor; likely two more 250 partials and a 109 terminal, but complete=true is the sole closure condition",
+      "automatic_review": "rejected before execution because general authorization was deemed insufficient for a persistent production privilege; no credential changed"
     },
     {
       "id": 7,

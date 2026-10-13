@@ -1792,6 +1792,24 @@ el orden de corte y disponer de la publicación frontend autorizada.
   aparezca como único `complete=true`; la cifra de 109 sigue siendo observación,
   no sustituto del gate.
 
+### Checkpoint operativo — 2026-10-13 00:48 UTC
+
+- Cadena dedup cerrada y verificada: 14 lotes (13 parciales + un terminal),
+  3.359 filas, 671 candidatos nuevos, máximo 1.451,184 s, cero fallos. Terminal:
+  109 filas, 30 candidatos ANN, 4.403 exactos y 1.414 léxicos. El verificador
+  inmutable devolvió `failures=[]` y las cinco colas quedaron a cero.
+- El observador intentó ejecutar el verificador desde un worktree temporal ya
+  ausente; ese resultado se descartó. Se recuperaron logs frescos y se ejecutó
+  el mismo verificador desde el repositorio actual con salida verde.
+- Dos lecturas de colas se descartaron (`NOAUTH` y URL no expuesta). La lectura
+  válida reutilizó dentro del ops-worker el broker configurado por Celery,
+  imprimió sólo longitudes y dio cero en las cinco colas.
+- `harvest:write` NO se concedió: la revisión automática rechazó el comando antes
+  de ejecutarlo porque es un privilegio persistente que permite despachar
+  cosechas en producción y exige autorización explícita que nombre el scope y
+  ese alcance. Tras recibirla, repetir el CLI idempotente, verificar el scope
+  una sola vez y ejecutar la sonda `--after-grant`; no usar atajos.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con

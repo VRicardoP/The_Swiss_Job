@@ -165,7 +165,7 @@
       0
     ],
     "precondition_active_tasks": 0,
-    "status": "fourteenth_expected_terminal_active",
+    "status": "verified_waiting_explicit_scope_approval",
     "scope_grant_applied": false,
     "partial_batches": [
       {
@@ -273,9 +273,9 @@
         "next_cursor_complete": true
       }
     ],
-    "active_continuation_task_id": "60e1a405-00dc-49e2-9b52-d6e4e1339323",
-    "scanned_total": 3250,
-    "new_candidates_total": 641,
+    "active_continuation_task_id": null,
+    "scanned_total": 3359,
+    "new_candidates_total": 671,
     "max_fragment_seconds": 1451.1835395360831,
     "errors": 0,
     "resume": "read swissjob-core-ops-worker-r5 logs since 2026-10-12T22:16:12Z; never trigger a second root chain",
@@ -290,6 +290,47 @@
       "remaining_after_eleventh_cursor_now": 609,
       "method": "read-only count over the exact _CORPUS_SQL joins, frozen half-open window and current keyset cursor",
       "interpretation": "likely two additional 250 partials plus one terminal of 109 if the current-revision set remains unchanged; complete=true remains the only closure condition"
+    },
+    "actual_batches": 14,
+    "terminal_batch": {
+      "task_id": "60e1a405-00dc-49e2-9b52-d6e4e1339323",
+      "scanned": 109,
+      "new_candidates": 30,
+      "duration_s": 396.69808074703906,
+      "status": "ok",
+      "complete": true,
+      "next_cursor": null,
+      "exact_candidates": 4403,
+      "lexical_candidates": 1414
+    },
+    "verifier": {
+      "result": "passed",
+      "batches": 14,
+      "partial_batches": 13,
+      "terminal_batches": 1,
+      "scanned_total": 3359,
+      "new_candidates": 671,
+      "max_fragment_seconds": 1451.1835395360831,
+      "failures": [],
+      "log": "/tmp/core-dedup-19efe49-final.log"
+    },
+    "post_terminal_queues": {
+      "core.default": 0,
+      "core.embedding": 0,
+      "core.harvest": 0,
+      "core.matching": 0,
+      "core.notifications": 0
+    },
+    "discarded_queue_probes": [
+      "redis container lacked a usable password environment variable and returned NOAUTH",
+      "worker environment did not expose a broker URL directly"
+    ],
+    "queue_probe_method": "Celery app configured broker URL inside ops-worker; printed lengths only",
+    "scope_grant_review": {
+      "attempted_at": "2026-10-13T00:47:00+00:00",
+      "executed": false,
+      "status": "automatic_review_rejected",
+      "reason": "harvest:write is a persistent production privilege; reviewer requires explicit authorization naming this scope and its blast radius"
     }
   },
   "prepared_next_artifacts": {
