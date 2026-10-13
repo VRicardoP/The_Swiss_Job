@@ -25,6 +25,13 @@ CLAVE_SENSIBLE = re.compile(
 LITERAL_LARGO = re.compile(
     r"^\s*(?P<clave>[A-Za-z_]+)\s*:\s*['\"]?(?P<valor>[A-Za-z0-9+/=_.:@-]{24,})['\"]?\s*$"
 )
+# Banderas booleanas cuyo nombre contiene TOKEN pero cuyo valor fijo no es una
+# credencial. La lista es por clave y valor: no permite convertirlas en secretos
+# literales ni relajar otras claves sensibles.
+LITERALES_NO_SECRETOS = {
+    "AUTH_REFRESH_TOKEN_IN_BODY": {"false"},
+}
+
 CLAVES_LARGAS_LEGITIMAS = {
     "image",
     "container_name",
@@ -52,6 +59,9 @@ def revisar(ruta: pathlib.Path) -> list[str]:
             continue
         m = CLAVE_SENSIBLE.match(linea)
         if m and not es_variable(m.group("valor")):
+            valor = m.group("valor").strip().strip("'\"").lower()
+            if valor in LITERALES_NO_SECRETOS.get(m.group("clave"), set()):
+                continue
             hallazgos.append(f"{ruta}:{n}: {m.group('clave')} lleva un literal")
             continue
         m = LITERAL_LARGO.match(linea)
