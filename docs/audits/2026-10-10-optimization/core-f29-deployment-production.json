@@ -165,7 +165,7 @@
       0
     ],
     "precondition_active_tasks": 0,
-    "status": "eighth_continuation_active",
+    "status": "ninth_continuation_active",
     "scope_grant_applied": false,
     "eligible": 2557,
     "expected_batches": 11,
@@ -225,11 +225,19 @@
         "duration_s": 541.5993346000323,
         "continuation_enqueued": true,
         "next_cursor_complete": true
+      },
+      {
+        "task_id": "054b9f1f-7e8c-48c6-a4ba-8402585ffef7",
+        "scanned": 250,
+        "new_candidates": 57,
+        "duration_s": 422.2436712880153,
+        "continuation_enqueued": true,
+        "next_cursor_complete": true
       }
     ],
-    "active_continuation_task_id": "054b9f1f-7e8c-48c6-a4ba-8402585ffef7",
-    "scanned_total": 1750,
-    "new_candidates_total": 305,
+    "active_continuation_task_id": "e824fe4c-c950-4ee6-9b90-f1d71d0d82e0",
+    "scanned_total": 2000,
+    "new_candidates_total": 362,
     "max_fragment_seconds": 1451.1835395360831,
     "errors": 0,
     "resume": "read swissjob-core-ops-worker-r5 logs since 2026-10-12T22:16:12Z; never trigger a second root chain"

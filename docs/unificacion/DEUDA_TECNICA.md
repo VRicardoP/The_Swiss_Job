@@ -1724,6 +1724,13 @@ el orden de corte y disponer de la publicación frontend autorizada.
   1.451,184 s. La octava tarea `054b9f1f-7e8c-48c6-a4ba-8402585ffef7`
   está activa. El cambio de fecha UTC no altera la ventana congelada original.
 
+### Checkpoint operativo — 2026-10-13 00:10 UTC
+
+- Octavo fragmento dedup verde: 250 filas, 57 candidatos nuevos y 422,244 s.
+  Acumulado: 2.000 filas, 362 candidatos, ocho parciales, cero errores y máximo
+  1.451,184 s. La novena tarea `e824fe4c-c950-4ee6-9b90-f1d71d0d82e0`
+  está activa; quedan tres fragmentos contando el actual.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con
