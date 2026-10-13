@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-13T10:06:00Z",
+  "observed_at": "2026-10-13T11:49:59Z",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -149,16 +149,19 @@
     },
     {
       "id": 16,
-      "status": "in_progress",
+      "status": "complete",
       "action": "remove SwissJob transferred producers and local Core-owned engines, simplify every routing consumer, and preserve applications/profiles, MatchResult overlay, feedback, watchlist health and notification gates",
       "plan": "swissjob-producer-retirement-plan.json",
       "checkpoint": "numeric-order gate opened after item 15 production validation",
-      "next_action": "revalidate live registries, configuration, imports, queues and retained responsibilities; then remove the 14+2 transferred producers and obsolete handover control plane atomically"
+      "next_action": "item 17: apply only the verified JobCardExtras presentation extraction and run all repository suites/builds",
+      "evidence": "42ecf96/8acb043 integrated; d54b2ec deployed to BFF and worker; 1912 passed, 4 xfailed; image 2.963 GB -> 1.202 GB (-59.43%); runtime probe failures=[]; exact 12 providers, 13 scrapers and eight schools; no retired modules/env/model packages; worker pong with empty active/reserved; Jobicy read-only probe returned 13; Core final probe 17/17 with delivery drained",
+      "record": "swissjob-runtime-retirement-production.json"
     },
     {
       "id": 17,
-      "status": "pending_after_15_and_16",
-      "action": "apply only the verified JobCardExtras presentation extraction; run all repository suites and build release images from clean heads"
+      "status": "in_progress",
+      "action": "apply only the verified JobCardExtras presentation extraction; run all repository suites and build release images from clean heads",
+      "checkpoint": "numeric-order gate opened after item 16 production validation"
     },
     {
       "id": 18,

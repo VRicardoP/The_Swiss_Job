@@ -1,0 +1,97 @@
+{
+  "observed_at": "2026-10-13T11:49:59Z",
+  "implementation": {
+    "deployed_artifact_commit": "d54b2ec",
+    "integrated_commits": [
+      "42ecf96",
+      "8acb043"
+    ],
+    "diff": {
+      "files_changed": 181,
+      "insertions": 686,
+      "deletions": 23454
+    },
+    "release_images": {
+      "bff": "swissjob-backend:point5-d54b2ec",
+      "worker": "swissjob-worker:point5-d54b2ec"
+    }
+  },
+  "local_validation": {
+    "focused_profile_school_tests": "9 passed",
+    "fetch_tasks": "23 passed",
+    "full_suite": "1912 passed, 4 xfailed, 0 failed in 213.92 s",
+    "ruff": "green",
+    "compileall": "green",
+    "bash_n": "green",
+    "diff_check": "green"
+  },
+  "image": {
+    "before_bytes": 2963149942,
+    "after_bytes": 1202129754,
+    "reduction_bytes": 1761020188,
+    "reduction_percent": 59.43,
+    "removed_packages": [
+      "numpy",
+      "sentence_transformers",
+      "torch"
+    ]
+  },
+  "production": {
+    "containers": {
+      "swissjob-backend": {
+        "restart_count": 0,
+        "running": true,
+        "oom_killed": false,
+        "memory_mib_single_sample": 328.9
+      },
+      "swissjob-worker": {
+        "restart_count": 0,
+        "running": true,
+        "oom_killed": false,
+        "memory_mib_single_sample": 138.3
+      }
+    },
+    "runtime_probe": {
+      "failures": [],
+      "active_users": 2,
+      "linked_active_users": 2,
+      "pending_snapshots": 0,
+      "active_snapshot_errors": 0,
+      "providers": 12,
+      "scrapers": 13,
+      "school_scrapers": 8,
+      "retired_modules_present": [],
+      "retired_environment_present": [],
+      "authorities": {
+        "applications": "local",
+        "profiles": "local",
+        "catalog": "core",
+        "documents": "core",
+        "matching": "core",
+        "schools": "core"
+      }
+    },
+    "worker": {
+      "ping": "pong",
+      "active": 0,
+      "reserved": 0
+    },
+    "retained_source_read_only_probe": {
+      "source": "jobicy",
+      "query": "translation",
+      "count": 13
+    },
+    "core_final_probe": {
+      "failures": [],
+      "release": "3ed6462",
+      "alembic": "core0054",
+      "harvest": "17/17",
+      "alerts": [],
+      "delivery_pending": 0,
+      "delivery_dead": 0,
+      "capture_slot_exists": false
+    },
+    "transient_observation": "Two intermediate Core samples saw 21 pending and 13 inflight deliveries; both drained without intervention before closure."
+  },
+  "next_action": "Item 17: apply only the verified JobCardExtras extraction, then run repository suites and build from clean heads."
+}
