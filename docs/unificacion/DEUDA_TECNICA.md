@@ -1810,6 +1810,27 @@ el orden de corte y disponer de la publicación frontend autorizada.
   ese alcance. Tras recibirla, repetir el CLI idempotente, verificar el scope
   una sola vez y ejecutar la sonda `--after-grant`; no usar atajos.
 
+### Checkpoint operativo — 2026-10-13 06:28 UTC
+
+- El usuario autorizó explícitamente conceder de forma persistente
+  `harvest:write` a la credencial `portfolio`, incluido su alcance para despachar
+  cosechas en Core. El CLI idempotente lo añadió a la única clave activa
+  `48c26fe326c924f4`; el listado posterior muestra una clave y una sola aparición
+  del scope.
+- La sonda `--after-grant` quedó verde: release `19efe49`, migración `core0054`,
+  Core autoritativo, nueve agregados 200 con contrato y salud válidos, ETag 304 y
+  despacho sobre una fuente inexistente 404/`not_found`, sin encolar. Celery
+  confirmó cero tareas reservadas y activas en sus tres nodos.
+- El presupuesto anterior de 60 s era insuficiente bajo carga real: Arbeitnow
+  tardó 128,288 s y su revalidación 59,174 s. Se eleva sólo el timeout de la
+  sonda a 180 s y se conserva la latencia como dato; no se relaja ningún gate
+  funcional. El punto 6 queda completo y el 7 pasa a ejecutable.
+- Metodología vigente: confirmar autorización y estado vivo antes de cada
+  mutación, aplicar una operación idempotente mínima, probar el efecto por el
+  límite público sin generar trabajo, comprobar colas, registrar latencias y
+  fallos descartados, actualizar evidencia/checklist/deuda y crear un commit
+  estrecho antes de avanzar al siguiente punto.
+
 ### Límites y cautelas para el siguiente agente
 
 - El middleware global propio de rate limiting no es código histórico retirable con

@@ -65,7 +65,7 @@ def main() -> int:
     with httpx.Client(
         base_url=settings.CORE_API_BASE_URL,
         headers=headers,
-        timeout=60,
+        timeout=180,
     ) as client:
         ready, ready_ms = request_ms(client, "GET", "/ready")
         ready_body = ready.json() if ready.status_code == 200 else {}

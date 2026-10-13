@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-12T21:45:17Z",
+  "observed_at": "2026-10-13T06:28:48Z",
   "release": "f29fd44",
   "archive": {
     "local_path": "/tmp/swissjob-core-point5-f29fd44.tar.gz",
@@ -47,8 +47,8 @@
     "final_probe_failures": []
   },
   "route_gate": {
-    "status": "failed_performance_gate",
-    "scope_grant_applied": false,
+    "status": "passed_after_remediation_and_scope_grant",
+    "scope_grant_applied": true,
     "initial_probe": "httpx.ReadTimeout on first aggregate request with a 60 second budget",
     "arbeitnow_http": {
       "status_code": 200,
@@ -116,6 +116,44 @@
         "etag_elapsed_ms": 44224.967
       },
       "status": "passed"
+    },
+    "after_grant_probe": {
+      "observed_at": "2026-10-13T06:24:00Z",
+      "timeout_seconds_per_request": 180,
+      "failures": [],
+      "ready": {
+        "status_code": 200,
+        "status": "ready",
+        "release": "19efe49",
+        "alembic": "core0054",
+        "authoritative": true,
+        "elapsed_ms": 73.942
+      },
+      "all_nine_sources_status_200": true,
+      "all_contracts_valid": true,
+      "all_sources_healthy": true,
+      "source_ms": {
+        "arbeitnow": 128287.941,
+        "irishjobs": 4303.007,
+        "jobgether": 6875.411,
+        "nav_arbeidsplassen": 4345.748,
+        "ostjob": 40719.683,
+        "remotive": 614.743,
+        "thehub": 819.687,
+        "weworkremotely": 3967.56,
+        "zentraljob": 2260.56
+      },
+      "etag": {
+        "status_code": 304,
+        "elapsed_ms": 59174.321
+      },
+      "dispatch_scope": {
+        "status_code": 404,
+        "error_code": "not_found",
+        "elapsed_ms": 779.418,
+        "enqueued": false
+      },
+      "latency_note": "functional gate passed; cold aggregate latency exceeded the old 60 second probe budget, so the immutable probe budget is now 180 seconds and latency remains measured evidence"
     }
   },
   "discarded_observations": [
@@ -165,8 +203,8 @@
       0
     ],
     "precondition_active_tasks": 0,
-    "status": "verified_waiting_explicit_scope_approval",
-    "scope_grant_applied": false,
+    "status": "complete_scope_granted_and_verified",
+    "scope_grant_applied": true,
     "partial_batches": [
       {
         "task_id": "a241e370-c422-437d-b981-ebdd00703cdf",
@@ -328,9 +366,25 @@
     "queue_probe_method": "Celery app configured broker URL inside ops-worker; printed lengths only",
     "scope_grant_review": {
       "attempted_at": "2026-10-13T00:47:00+00:00",
-      "executed": false,
-      "status": "automatic_review_rejected",
-      "reason": "harvest:write is a persistent production privilege; reviewer requires explicit authorization naming this scope and its blast radius"
+      "executed": true,
+      "status": "approved_after_explicit_user_authorization",
+      "reason": "user explicitly authorized persistent harvest:write for portfolio and its ability to dispatch Core harvest runs"
+    },
+    "scope_grant": {
+      "observed_at": "2026-10-13T06:17:00Z",
+      "consumer": "portfolio",
+      "key_id": "48c26fe326c924f4",
+      "scope": "harvest:write",
+      "active_keys": 1,
+      "scope_occurrences": 1,
+      "authorization": "explicit user authorization naming the persistent production scope and harvest dispatch capability",
+      "verification": "credential listing shows one active key and harvest:write exactly once; after-grant probe reached the dispatch handler and returned not_found for an intentionally absent source without enqueueing"
+    },
+    "post_scope_probe_queues": {
+      "reserved": 0,
+      "active": 0,
+      "nodes_observed": 3,
+      "method": "Celery inspect through jobhunt_core.celery_app in the live ops worker"
     }
   },
   "prepared_next_artifacts": {

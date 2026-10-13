@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-13T00:48:00+00:00",
+  "observed_at": "2026-10-13T06:28:48Z",
   "resume_rule": "execute strictly in numeric order; recheck every live precondition immediately before mutation; preserve rollback until each following gate is proven",
   "immutable_inputs": {
     "core_bff_worktree": "/tmp/swissjob-deploy-f29fd44 @ f29fd441396e1c80633ca3127ccc8395c6405443",
@@ -46,23 +46,25 @@
     },
     {
       "id": 6,
-      "status": "waiting_explicit_scope_approval",
+      "status": "complete",
       "action": "deploy Core f29fd44, verify authoritative ready/routes/dedup batching, then grant portfolio harvest:write exactly once",
       "plan": "core-postdeploy-verification-plan.json",
-      "evidence": "19efe49/core0054 deployed on four coherent services with restart 0; 17/17 healthy; nine aggregate routes and ETag pass with no failures; isolated Arbeitnow 165214.579 -> 35382.782 ms (78.58% faster)",
+      "evidence": "19efe49/core0054 on four coherent services; 17/17 healthy; dedup verified in 14 batches over 3359 rows with failures=[]; portfolio has one active credential with harvest:write exactly once; after-grant probe passed nine aggregate contracts, ETag 304 and safe missing-source dispatch 404/not_found without enqueueing",
       "diagnosis": "EXPLAIN ANALYZE 49716.035 ms: 21402 lateral latest-revision lookups consume 27447.213 ms; 1,953,864 shared hits and 193,645 reads because the materialized source_rows CTE also carries full offer JSON through every facet scan",
-      "next_action": "after explicit user approval naming persistent production harvest:write and its dispatch capability, rerun the rejected idempotent grant command, verify scope once and run --after-grant route probe",
-      "scope_grant_applied": false,
+      "next_action": "item 7: apply exact worker handover policy, deploy SwissJob BFF f29fd44 and run the final SwissJob probe",
+      "scope_grant_applied": true,
       "remediation_commit": "e535e45",
       "validation": "focused 10/10; Core full 1912 passed, 1 skipped in 972.98 s; Ruff and py_compile green",
       "dedup": "verified: 14 batches (13 partial, 1 terminal), 3359 rows, 671 new candidates, max 1451.184 s <1800, exact 4403, lexical 1414, failures=[]; all five queues zero",
       "resume_observation": "read ops-worker logs since 2026-10-12T22:16:12Z and run verify_dedup_batch_log.py only after one terminal; do not trigger another root chain",
       "count_correction": "exact read-only _CORPUS_SQL recount at 00:31 UTC: 3359 total, 609 after the eleventh cursor; likely two more 250 partials and a 109 terminal, but complete=true is the sole closure condition",
-      "automatic_review": "rejected before execution because general authorization was deemed insufficient for a persistent production privilege; no credential changed"
+      "automatic_review": "rejected before execution because general authorization was deemed insufficient for a persistent production privilege; no credential changed",
+      "authorization": "explicit user approval received after automatic review named persistent production harvest:write and dispatch capability",
+      "after_grant_probe": "failures=[]; release 19efe49/core0054 authoritative; nine sources 200; ETag 304; dispatch probe 404/not_found, enqueued=false; reserved=active=0"
     },
     {
       "id": 7,
-      "status": "pending_after_6",
+      "status": "ready_to_execute",
       "action": "apply SwissJob worker config-only preserving point5-84853cf, then deploy BFF f29fd44 and verify profile delivery plus 14 providers and 2 scrapers disabled",
       "prepared": "BFF archive 638 MiB sha256 4110915f...0803; NAS-only idempotent transformer and worker/BFF scripts syntax-valid; not transferred or executed"
     },
@@ -133,7 +135,8 @@
     "core_worker_concurrency_change": "authorized and completed",
     "ssh_scp_script_and_probe_transfer": "authorized at 2026-10-11T09:14:55+00:00",
     "remote_probe_execution": "authorized at 2026-10-11T09:14:55+00:00",
-    "frontend_remote_publication": "GitHub, GitLab and Cloudflare Pages authorized at 2026-10-11T09:14:55+00:00"
+    "frontend_remote_publication": "GitHub, GitLab and Cloudflare Pages authorized at 2026-10-11T09:14:55+00:00",
+    "portfolio_harvest_write": "explicitly authorized and granted once at 2026-10-13T06:17:00Z; verified by safe after-grant probe"
   },
   "references": [
     "docs/RETIRADA_SLOT_CDC_PUNTO4.md",
