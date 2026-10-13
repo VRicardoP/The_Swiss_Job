@@ -16,7 +16,10 @@ from models.match_result import MatchResult
 from services.matching.identity import set_profile_link
 from services.schools import CoreSchools, CoreUnavailableError, resolve_schools
 from services.schools.http_client import SchoolClient
-from services.schools.presentation import overlay_school_results
+from services.schools.presentation import (
+    clear_school_presentation_cache,
+    overlay_school_results,
+)
 from tests.test_applications_contract import seed_job, seed_match, JOB_HASH
 
 
@@ -198,7 +201,11 @@ async def test_native_school_vacancy_keeps_actionable_identity(
     assert results[0]["match"].job_hash == JOB_HASH
     assert results[0]["job"].source == "swiss_schools_zis"
     pages.assert_awaited_once_with("/school-jobs")
-    # Missing linkage cannot turn a native vacancy into an actionable local job.
+    cached, cached_total = await matcher.results(uid)
+    assert cached_total == 1 and cached[0]["match"].job_hash == JOB_HASH
+    pages.assert_awaited_once_with("/school-jobs")
+    # A corpus change invalidates the bounded presentation cache.
+    clear_school_presentation_cache()
     pages.return_value = []
     assert await matcher.results(uid) == ([], 0)
 
@@ -389,7 +396,8 @@ async def test_feed_overlay_does_not_dirty_local_match(client, db_session, monke
     await db_session.commit()
     pid = uuid.uuid4()
     await set_profile_link(db_session, uid, pid)
-    SchoolApi(pid).install(monkeypatch)
+    api = SchoolApi(pid)
+    api.install(monkeypatch)
     job = await db_session.scalar(select(Job).where(Job.hash == JOB_HASH))
     match = await db_session.scalar(
         select(MatchResult).where(MatchResult.user_id == uid)
@@ -400,5 +408,11 @@ async def test_feed_overlay_does_not_dirty_local_match(client, db_session, monke
     assert result[0]["match"].application_status == "detected"
     assert result[0]["match"].draft_letter is None
     assert result[0]["school"].name == "Core School"
+    calls = list(api.calls)
+    again = await overlay_school_results(
+        db_session, uid, [{"match": match, "job": job}]
+    )
+    assert again[0]["school"].name == "Core School"
+    assert api.calls == calls
     assert match.application_status == "sent" and match.draft_letter == "LOCAL"
     assert match not in db_session.dirty

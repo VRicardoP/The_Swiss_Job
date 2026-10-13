@@ -21,13 +21,14 @@ logger = logging.getLogger(__name__)
 
 def clear_erased_caches(profile_id):
     if profile_id is not None:
-        from services.profiles.core_client import clear_profile_cache
+        from services.matching.cache_bus import publicar_sin_esperar
         from services.matching.core_client import clear_feed_cache
+        from services.profiles.core_client import clear_profile_cache
+        from services.schools.presentation import clear_school_presentation_cache
 
         clear_profile_cache(profile_id)
         clear_feed_cache(profile_id)
-        from services.matching.cache_bus import publicar_sin_esperar
-
+        clear_school_presentation_cache(profile_id)
         publicar_sin_esperar(profile_id)
 
 

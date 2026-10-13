@@ -132,7 +132,11 @@ async def setup_db(_ensure_test_db):
     La guarda permanente de que esto NO deja residuo está en
     `tests/test_g9_aislamiento_fixture.py`.
     """
+    from services.schools.presentation import clear_school_presentation_cache
+
+    clear_school_presentation_cache()
     yield
+    clear_school_presentation_cache()
     async with test_engine.begin() as conn:
         dirty = [row[0] for row in (await conn.execute(text(_DIRTY_PROBE))).all()]
         if dirty:

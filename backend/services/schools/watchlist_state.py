@@ -180,6 +180,9 @@ class CoreWatchlist:
                 "job_url": job.url,
             },
         )
+        from .presentation import clear_school_presentation_cache
+
+        clear_school_presentation_cache(pid)
         return True
 
     async def set_match_status(self, user_id, job_hash, application_status):
