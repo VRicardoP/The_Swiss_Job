@@ -281,6 +281,8 @@ async def _vacancy_dtos(session, vacancy_ids) -> dict:
                 apply_url=r.apply_url,
             )
         )
+    from jobhunt_core.match_categories import classify
+
     out = {}
     for row in contents:
         c = row.content
@@ -295,6 +297,7 @@ async def _vacancy_dtos(session, vacancy_ids) -> dict:
             location=c.get("location"),
             remote=c.get("remote"),
             language=_canonical_language(c.get("language")),
+            job_category=classify(c.get("title"), c.get("tags")),
             primary_listing=(
                 schemas.PrimaryListingDTO(
                     source=primary.source,

@@ -39,7 +39,7 @@ async def calentar_una_vez(redis=None) -> dict[str, int]:
     """Una pasada sobre todos los enrolados. No propaga fallos por usuario."""
     from services.matching import resolve_matching
 
-    calentados, fallos, traducidos = 0, 0, 0
+    calentados, facetas, fallos, traducidos = 0, 0, 0, 0
     async with async_session() as db:
         usuarios = await _usuarios_enrolados(db)
     for user_id in usuarios:
@@ -51,6 +51,9 @@ async def calentar_una_vez(redis=None) -> dict[str, int]:
                     continue  # backend local: no hay recorrido que calentar
                 if await calentar(user_id):
                     calentados += 1
+                calentar_facetas = getattr(backend, "warm_facets", None)
+                if calentar_facetas is not None and await calentar_facetas(user_id):
+                    facetas += 1
                 traducidos += await _traducir_en_fondo(db, backend, user_id, redis)
         except asyncio.CancelledError:
             raise
@@ -62,6 +65,7 @@ async def calentar_una_vez(redis=None) -> dict[str, int]:
     return {
         "usuarios": len(usuarios),
         "calentados": calentados,
+        "facetas": facetas,
         "fallos": fallos,
         "traducidos": traducidos,
     }
@@ -113,7 +117,12 @@ async def run_feed_warmup(redis=None) -> None:
     while True:
         try:
             resumen = await calentar_una_vez(redis)
-            if resumen["calentados"] or resumen["fallos"] or resumen["traducidos"]:
+            if (
+                resumen["calentados"]
+                or resumen["facetas"]
+                or resumen["fallos"]
+                or resumen["traducidos"]
+            ):
                 logger.info("calentamiento del feed: %s", resumen)
         except asyncio.CancelledError:
             raise

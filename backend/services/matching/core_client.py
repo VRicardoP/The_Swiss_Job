@@ -6,6 +6,7 @@ retained feedback/application overlay only while those separate gates require it
 
 import asyncio
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -83,6 +84,19 @@ _profile_generations: dict[str, int] = {}
 # algun dia hace falta mutarlos, copia primero.
 _FEED_CACHE_MAX = 32
 _feed_cache: dict[str, tuple[str, list[dict], int]] = {}
+_feed_verified_at: dict[str, float] = {}
+_facets_cache: dict[str, tuple[dict, float]] = {}
+
+
+def _warm_cache_is_fresh(checked_at: float) -> bool:
+    """Keep request-time reads on data checked by the background warmer."""
+    max_age = max(60, settings.FEED_WARMUP_INTERVAL_SECONDS * 2)
+    return time.monotonic() - checked_at <= max_age
+
+
+def _copy_facets(payload: dict) -> dict:
+    """Return a small defensive copy; response serialization may mutate lists."""
+    return {**payload, "categories": [dict(item) for item in payload["categories"]]}
 
 
 def clear_feed_cache(profile_id=None) -> None:
@@ -93,12 +107,16 @@ def clear_feed_cache(profile_id=None) -> None:
         _profile_generations.clear()
         _etag_cache.clear()
         _feed_cache.clear()
+        _feed_verified_at.clear()
+        _facets_cache.clear()
         return
     pid = str(profile_id)
     if pid not in _profile_generations and len(_profile_generations) >= _ETAG_CACHE_MAX:
         clear_feed_cache()  # bounded state; global epoch fences older in-flight requests
     _profile_generations[pid] = _profile_generations.get(pid, 0) + 1
     _feed_cache.pop(pid, None)
+    _feed_verified_at.pop(pid, None)
+    _facets_cache.pop(pid, None)
     for key in list(_etag_cache):
         if key[0] == pid:
             _etag_cache.pop(key, None)
@@ -132,6 +150,7 @@ class _VacancyDTO(BaseModel):
     description: str | None = None
     tags: list | None = None
     location: str | None = None
+    job_category: str | None = Field(default=None, pattern=r"^(?:[A-M]|otros)$")
     primary_listing: _ListingDTO | None = None
     listings: list[_ListingDTO] | None = None
 
@@ -331,6 +350,7 @@ def _job_view(vacancy: dict, job_ref_source: str | None) -> CoreJobView:
         # linea el campo existia y era SIEMPRE None, y el router detectaba el
         # idioma por titulo en cada oferta servida.
         language=_language_of(vacancy),
+        category=vacancy.get("job_category"),
     )
 
 
@@ -441,9 +461,39 @@ class CoreMatching:
         ):
             return 0
         items, _total = await self._fetch_full_feed(core_profile_id, None)
+        pid = str(core_profile_id)
+        if pid in _feed_cache:
+            _feed_verified_at[pid] = time.monotonic()
         return len(items)
 
     async def facets(self, user_id: uuid.UUID) -> dict:
+        core_profile_id = await self._core_profile(user_id)
+        cached = _facets_cache.get(str(core_profile_id))
+        if cached is not None and _warm_cache_is_fresh(cached[1]):
+            return _copy_facets(cached[0])
+        return await self._fetch_facets(core_profile_id)
+
+    async def warm_facets(self, user_id: uuid.UUID) -> bool:
+        """Refresh compact facets only when the canonical feed version changed."""
+        core_profile_id = await self._core_profile(user_id)
+        pid = str(core_profile_id)
+        cached = _facets_cache.get(pid)
+        try:
+            async with self._client_factory() as client:
+                current = await self._feed_version(client, core_profile_id)
+        except httpx.HTTPError as exc:
+            raise CoreUnavailableError(f"core /v1 inaccesible: {exc}") from exc
+        if (
+            cached is not None
+            and current is not None
+            and cached[0]["version"] == current[0]
+        ):
+            _facets_cache[pid] = (cached[0], time.monotonic())
+            return False
+        await self._fetch_facets(core_profile_id)
+        return True
+
+    async def _core_profile(self, user_id: uuid.UUID) -> uuid.UUID:
         core_profile_id = await resolve_core_profile_id(self._db, user_id)
         if core_profile_id is None:
             raise CoreUnavailableError(
@@ -454,6 +504,9 @@ class CoreMatching:
             and not settings.CORE_CONSUMER_KEY
         ):
             raise CoreUnavailableError("CORE_CONSUMER_KEY no configurada")
+        return core_profile_id
+
+    async def _fetch_facets(self, core_profile_id: uuid.UUID) -> dict:
         try:
             async with self._client_factory() as client:
                 response = await client.get(
@@ -467,9 +520,14 @@ class CoreMatching:
                 f"{core_profile_id}"
             )
         try:
-            return _FacetsDTO.model_validate(response.json()).model_dump(mode="json")
+            payload = _FacetsDTO.model_validate(response.json()).model_dump(mode="json")
         except _PAYLOAD_ERRORS as exc:
             raise CoreUnavailableError("payload invalido de facetas del core") from exc
+        pid = str(core_profile_id)
+        if len(_facets_cache) >= _FEED_CACHE_MAX and pid not in _facets_cache:
+            _facets_cache.clear()
+        _facets_cache[pid] = (payload, time.monotonic())
+        return _copy_facets(payload)
 
     async def results(
         self,
@@ -497,12 +555,29 @@ class CoreMatching:
         # las paginas que cubren la ventana pedida; la rama local si excluye
         # (accionabilidad y feedback negativo) y su total exige el recorrido.
         needed = offset + limit if settings.CORE_FEEDBACK_ENABLED else None
-        items, core_total = await self._fetch_full_feed(
-            core_profile_id,
-            needed,
-            category=category,
-            category_window=offset + limit if category is not None else None,
-        )
+        items = None
+        pid = str(core_profile_id)
+        cached = _feed_cache.get(pid)
+        if (
+            category is not None
+            and category != "__watchlist"
+            and cached is not None
+            and _warm_cache_is_fresh(_feed_verified_at.get(pid, 0))
+            and all(item["vacancy"].get("job_category") for item in cached[1])
+        ):
+            items = [
+                item
+                for item in cached[1]
+                if item["vacancy"]["job_category"] == category
+            ]
+            core_total = len(items)
+        if items is None:
+            items, core_total = await self._fetch_full_feed(
+                core_profile_id,
+                needed,
+                category=category,
+                category_window=offset + limit if category is not None else None,
+            )
         # Identidad por item (candidatos DETERMINISTAS: cualquier listing
         # `legacy:*`, no solo el primary) + respaldo accionable + overlay
         # local en lotes. Los errores de FORMA del payload se traducen a

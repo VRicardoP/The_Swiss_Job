@@ -551,6 +551,7 @@ def test_match_facets_and_category_page_share_the_authoritative_taxonomy(db):
     assert [item["vacancy"]["title"] for item in page.json()["items"]] == [
         "Senior Content Editor"
     ]
+    assert page.json()["items"][0]["vacancy"]["job_category"] == "A"
 
     watchlist = _api(factory, base + "?category=__watchlist&limit=50", token=token)
     assert watchlist.status_code == 200

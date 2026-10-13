@@ -436,6 +436,31 @@ async def test_core_facets_validates_the_strict_contract(db_session):
 
     core = make_core_matching(db_session, httpx.MockTransport(handler))
     assert await core.facets(user_id) == payload
+    # The user-facing second read is served by the bounded warmed cache.
+    assert await core.facets(user_id) == payload
+
+
+async def test_recent_warmed_feed_serves_category_without_core_roundtrip(
+    seeded, monkeypatch
+):
+    user_id, matchings, fake = seeded
+    core = matchings["core"]
+    pid = str(fake.profile_id)
+    items = fake.items
+    for index, item in enumerate(items):
+        item["vacancy"]["job_category"] = "A" if index == 0 else "otros"
+    from services.matching import core_client
+
+    core_client._feed_cache[pid] = ("v1", items, len(items))
+    core_client._feed_verified_at[pid] = core_client.time.monotonic()
+    monkeypatch.setattr(settings, "CORE_FEEDBACK_ENABLED", True)
+
+    results, total = await core.results(user_id, category="A")
+
+    assert total == 1
+    assert len(results) == 1
+    assert results[0]["job"].category == "A"
+    assert fake.requests == []
 
 
 async def test_core_etag_second_pass_uses_304(seeded, db_session):
