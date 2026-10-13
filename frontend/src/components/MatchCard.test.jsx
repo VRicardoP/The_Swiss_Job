@@ -68,3 +68,17 @@ describe("clasificación canónica", () => {
     expect(classifyMatch({ job_category: "Z" })).toBe("otros");
   });
 });
+
+describe("presentación de colegios", () => {
+  it("muestra la descripción y conserva el enlace al detalle", () => {
+    const html = pintar({
+      ...BASE,
+      school_id: "zis_zurich",
+      school_policy: "portal_only",
+    });
+
+    expect(html).toContain("Descripción corta.");
+    expect(html).toContain('href="/job/h1"');
+    expect(html).toContain("View details");
+  });
+});
