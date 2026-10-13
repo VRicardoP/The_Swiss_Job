@@ -76,9 +76,7 @@ def main() -> int:
 
     durations = [float(value) for value in DURATION_RE.findall(raw)]
     if batches and len(durations) != len(batches):
-        failures.append(
-            f"duration_count:{len(durations)}_for_{len(batches)}_batches"
-        )
+        failures.append(f"duration_count:{len(durations)}_for_{len(batches)}_batches")
     if any(duration >= 1800 for duration in durations):
         failures.append("fragment_reached_soft_limit")
 

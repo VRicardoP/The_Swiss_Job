@@ -36,11 +36,7 @@ def set_enabled(path: Path, enabled: bool) -> bool:
         if environment < 0:
             raise ValueError("servicio backend sin bloque environment")
         insert_at = environment + len("    environment:\n")
-        changed = (
-            data[:insert_at]
-            + f"      {KEY}: '{wanted}'\n"
-            + data[insert_at:]
-        )
+        changed = data[:insert_at] + f"      {KEY}: '{wanted}'\n" + data[insert_at:]
     else:
         changed = pattern.sub(rf"\g<1>{wanted}\g<2>", data, count=1)
     if changed == data:

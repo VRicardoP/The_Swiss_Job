@@ -50,22 +50,25 @@ EXPECTED_SCRAPERS = {
     "swiss_schools_zis",
 }
 RETIRED_MODULES = {
-    *(f"providers.{name}" for name in (
-        "arbeitnow",
-        "euremotejobs",
-        "globaljobs",
-        "jobgether",
-        "jobspresso",
-        "nav",
-        "ostjob",
-        "publicjobs",
-        "remotive",
-        "thehub",
-        "weworkremotely",
-        "workingnomads",
-        "zebis",
-        "zentraljob",
-    )),
+    *(
+        f"providers.{name}"
+        for name in (
+            "arbeitnow",
+            "euremotejobs",
+            "globaljobs",
+            "jobgether",
+            "jobspresso",
+            "nav",
+            "ostjob",
+            "publicjobs",
+            "remotive",
+            "thehub",
+            "weworkremotely",
+            "workingnomads",
+            "zebis",
+            "zentraljob",
+        )
+    ),
     "scrapers.financejobs",
     "scrapers.irishjobs",
     "services.legacy_sources",
@@ -75,7 +78,9 @@ RETIRED_MODULES = {
 async def main() -> int:
     provider_names = set(providers.get_provider_names())
     scraper_names = set(scrapers.get_scraper_names())
-    school_scrapers = {name for name in scraper_names if name.startswith("swiss_schools_")}
+    school_scrapers = {
+        name for name in scraper_names if name.startswith("swiss_schools_")
+    }
 
     async with async_session() as session:
         active_ids = list(
@@ -128,7 +133,9 @@ async def main() -> int:
         }
 
     present_retired = sorted(
-        module for module in RETIRED_MODULES if importlib.util.find_spec(module) is not None
+        module
+        for module in RETIRED_MODULES
+        if importlib.util.find_spec(module) is not None
     )
     result = {
         "flags": {
@@ -149,7 +156,12 @@ async def main() -> int:
     failures = []
     if result["flags"] != {"profile_sync": True, "feedback": True, "facets": True}:
         failures.append("core_flags_not_enabled")
-    if not active_ids or linked != len(active_ids) or pending_snapshots or snapshot_errors:
+    if (
+        not active_ids
+        or linked != len(active_ids)
+        or pending_snapshots
+        or snapshot_errors
+    ):
         failures.append("active_profile_delivery_incomplete")
     if authorities != {
         "catalog": CoreCatalog.__name__,

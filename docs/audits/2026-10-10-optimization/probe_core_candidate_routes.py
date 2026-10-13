@@ -113,7 +113,9 @@ def main() -> int:
                             "max_consecutive_failures"
                         ),
                         "etag": bool(response.headers.get("etag")),
-                        "count_keys": sorted(counts) if isinstance(counts, dict) else [],
+                        "count_keys": sorted(counts)
+                        if isinstance(counts, dict)
+                        else [],
                     }
                 )
                 if body.get("source") != source:

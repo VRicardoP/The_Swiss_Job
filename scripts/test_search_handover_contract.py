@@ -48,6 +48,5 @@ class SearchContract(unittest.TestCase):
             self.assertEqual(literal(core, name), literal(legacy, name))
 
 
-
 if __name__ == "__main__":
     unittest.main()

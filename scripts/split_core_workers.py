@@ -49,10 +49,7 @@ def split(path: Path) -> bool:
         raise ValueError("core-worker no tiene la topología esperada")
     model = original.replace(ALL_QUEUES, "core.embedding,core.matching", 1)
     model = model.replace(
-        "    - --concurrency=1\n"
-        "    - -B\n"
-        "    - -s\n"
-        "    - /tmp/celerybeat-schedule\n",
+        "    - --concurrency=1\n    - -B\n    - -s\n    - /tmp/celerybeat-schedule\n",
         "    - --concurrency=1\n",
         1,
     )
