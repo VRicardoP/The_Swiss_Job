@@ -57,6 +57,23 @@ continuar sin rediseñarlo.
    SwissDevJobs.
 6. Añadir aquí un checkpoint después de cada fuente u oleada con estados,
    pruebas, SHA, evidencia viva, rollback y siguiente paso exacto.
+7. **Relevo operativo verificado el 2026-10-14:** SwissJob/Core continúa en
+   `feat/fase-a-core`, cabeza documental `12fabdc` (capacidad ICTJobs en
+   `f273a24`); ReactPortfolio continúa en `feat/dt144-free-gate`, cabeza
+   `fda24a9`. La CI SwissJob/Core `38564269161` de `12fabdc` tenía siete
+   trabajos verdes y las suites `backend-test`/`core-test` aún en ejecución al
+   cerrar esta anotación; el siguiente agente debe consultar ese run y registrar
+   su conclusión antes de modificar SwissDevJobs.
+8. El worktree ReactPortfolio estaba limpio. En SwissJob/Core ya existían
+   cambios ajenos a DT-144 en `CLAUDE.md`, documentación histórica y de
+   unificación, además de documentos/auditorías sin seguimiento. No añadirlos,
+   restaurarlos ni reformatearlos: comprobar `git status` y seleccionar para
+   cada commit sólo los archivos DT-144 modificados por el agente.
+9. La metodología obligatoria es la sección 7.1 del contrato: preflight; trazado
+   extremo a extremo y contraste con runtime; línea base viva saneada y con
+   huellas; implementación mínima en Core; pruebas por capas y doble ciclo
+   aislado; paridad explicada; adaptación del consumidor y apagado local;
+   suites/CI; y checkpoint de relevo antes de avanzar al portal siguiente.
 
 ### Checkpoint 2026-10-14 · Fase -1 parcialmente completada
 
