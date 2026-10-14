@@ -432,6 +432,13 @@ def test_source_aggregate_is_bounded_and_uses_latest_raw(db):  # noqa: F811
         if isinstance(counts, dict)
     )
 
+    expanded = _api(
+        factory,
+        f"/v1/harvest/sources/{source}/aggregate?item_limit=1&top_n=1000",
+        token=token,
+    )
+    assert expanded.status_code == 200
+
     unchanged = _api(
         factory,
         url,

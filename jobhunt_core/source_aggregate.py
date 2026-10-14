@@ -9,9 +9,12 @@ _SOURCE_AGGREGATE_SQL = sa.text(
              i.first_seen_at, i.last_seen_at,
              o.content->>'title' AS title,
              o.content->>'company' AS company,
-             CASE WHEN s.name='jsearch'
+             CASE WHEN s.name IN ('jsearch','dynamitejobs')
                   THEN left(latest.provider_description, 500)
                   ELSE left(o.content->>'description', 500) END AS description,
+             CASE WHEN s.name='dynamitejobs'
+                  THEN latest.statistics_location
+                  ELSE o.content->>'location' END AS statistics_location,
              o.content->>'location' AS location,
              o.content->>'salary' AS salary,
              CASE WHEN jsonb_typeof(o.content->'salary_min')='number'
@@ -75,6 +78,9 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                CASE WHEN jsonb_typeof(r.raw->'_core_statistics_tags')='array'
                     THEN r.raw->'_core_statistics_tags' ELSE '[]'::jsonb
                END AS statistics_tags_raw,
+               CASE WHEN jsonb_typeof(r.raw->'_core_statistics_location')='string'
+                    THEN r.raw->>'_core_statistics_location' END
+                 AS statistics_location,
                CASE WHEN jsonb_typeof(r.raw->'_core_order')='number'
                     THEN (r.raw->>'_core_order')::int END AS source_order,
                CASE WHEN jsonb_typeof(r.raw->'job_city')='string'
@@ -85,8 +91,12 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                     THEN r.raw->>'job_country' END AS country,
                CASE WHEN jsonb_typeof(r.raw->'job_publisher')='string'
                     THEN r.raw->>'job_publisher' END AS publisher,
-               CASE WHEN jsonb_typeof(r.raw->'job_description')='string'
-                    THEN r.raw->>'job_description' END AS provider_description,
+               COALESCE(
+                 CASE WHEN jsonb_typeof(r.raw->'job_description')='string'
+                      THEN r.raw->>'job_description' END,
+                 CASE WHEN jsonb_typeof(r.raw->'_core_description')='string'
+                      THEN r.raw->>'_core_description' END
+               ) AS provider_description,
                CASE WHEN jsonb_typeof(r.raw->'job_id') IN ('string','number')
                     THEN r.raw->>'job_id' END AS provider_id,
                COALESCE(
@@ -106,6 +116,8 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                       THEN r.raw->'pubDate' END,
                  CASE WHEN jsonb_typeof(r.raw->'activeFrom')='string'
                        THEN r.raw->'activeFrom' END,
+                 CASE WHEN jsonb_typeof(r.raw->'_core_published_at')='string'
+                       THEN r.raw->'_core_published_at' END,
                  CASE WHEN jsonb_typeof(
                             r.raw#>'{jobAdvertisement,publication,startDate}'
                           )='string'
@@ -174,12 +186,13 @@ _SOURCE_AGGREGATE_SQL = sa.text(
         CASE WHEN :source IN ('adzuna','jsearch')
              THEN published_at #>> '{}' END DESC NULLS LAST,
         CASE WHEN :source IN ('adzuna','jsearch') THEN source_order END ASC NULLS LAST,
+        CASE WHEN :source='dynamitejobs' THEN source_order END ASC NULLS LAST,
         last_seen_at DESC, incarnation_id
       LIMIT :item_limit
     ),
     location_counts AS (
       SELECT value, count(*)::int AS n FROM (
-        SELECT location AS value FROM source_rows
+        SELECT statistics_location AS value FROM source_rows
       ) values_ WHERE value IS NOT NULL AND btrim(value)<>''
       GROUP BY value ORDER BY n DESC, value LIMIT :top_n
     ),
@@ -190,7 +203,7 @@ _SOURCE_AGGREGATE_SQL = sa.text(
         FROM jsonb_array_elements(
           CASE
             WHEN :source='swissdevjobs' THEN technologies_raw
-            WHEN :source='jobroom' THEN statistics_tags_raw
+            WHEN :source IN ('jobroom','dynamitejobs') THEN statistics_tags_raw
             ELSE tags
           END
         ) AS entry(item)
@@ -274,6 +287,8 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                        CASE WHEN :source IN ('adzuna','jsearch')
                             THEN published_at #>> '{}' END DESC NULLS LAST,
                        CASE WHEN :source IN ('adzuna','jsearch')
+                            THEN source_order END ASC NULLS LAST,
+                       CASE WHEN :source='dynamitejobs'
                             THEN source_order END ASC NULLS LAST,
                        last_seen_at DESC, incarnation_id)
                      FROM recent), '[]'::jsonb) AS items,

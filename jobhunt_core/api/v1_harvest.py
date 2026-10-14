@@ -109,7 +109,7 @@ async def get_source_aggregate(
     request: Request,
     source: str = Path(min_length=1, max_length=100),
     item_limit: int = Query(200, ge=1, le=500),
-    top_n: int = Query(100, ge=1, le=500),
+    top_n: int = Query(100, ge=1, le=1000),
     session=Depends(get_session),
     principal=Depends(require_scope("vacancies:read")),
 ):
