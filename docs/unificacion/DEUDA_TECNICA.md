@@ -38,11 +38,22 @@ continuar sin rediseñarlo.
 
 ### Punto de reanudación
 
-1. Ejecutar la Fase -1: inventario legible por máquinas, checks de ratchet y
-   protecciones de revisión/despliegue.
-2. Completar la Fase 0 contra código y producción de los tres componentes.
-3. Usar Jobicy como primer corte de extremo a extremo.
-4. Añadir aquí un checkpoint después de cada fuente u oleada con estados,
+1. No repetir el inventario ni la Fase 0: las 58 fuentes están verificadas y
+   `The_Swiss_Job/main` ya tiene los nueve checks y la revisión CODEOWNER
+   obligatorios. Comprobar el último checkpoint y el estado remoto antes de
+   actuar, porque este bloque es solo el acceso rápido al ledger cronológico.
+2. Mantener `ReactPortfolioServer` privado y no contratar GitHub Pro ni ningún
+   servicio de pago. Para cerrar la Fase -1 falta verificar e implantar una
+   protección gratuita equivalente que haga obligatorios CI y revisión; no se
+   rebaja la puerta para sortear la limitación de GitHub Free.
+3. Verificar el CI del último SHA publicado y hacer entrar los checkpoints por
+   una ruta revisada. No empujar directamente a una rama protegida para
+   sortear la revisión.
+4. Solo cuando ambas protecciones sean operables, iniciar Jobicy como primer
+   corte de extremo a extremo. Su sombra Core debe conservar las ocho consultas
+   inventariadas y resolver o clasificar con evidencia el síntoma SwissJob
+   `69 descargadas / 0 persistidas / 17 ciclos` antes del corte.
+5. Añadir aquí un checkpoint después de cada fuente u oleada con estados,
    pruebas, SHA, evidencia viva, rollback y siguiente paso exacto.
 
 ### Checkpoint 2026-10-14 · Fase -1 parcialmente completada
@@ -296,6 +307,29 @@ continuar sin rediseñarlo.
 - No se creó fuente ni scope Core, no se ejecutó una sombra, no se detuvo ningún
   productor y no cambió producción. La Fase -1 continúa **NO SUPERADA** hasta
   que ambos repositorios tengan protección operable y obligatoria.
+
+### Decisión de propietario 2026-10-14 · cero servicios de pago
+
+- `ReactPortfolioServer` seguirá privado y no se contratará GitHub Pro ni
+  ningún otro servicio de pago. Esta decisión sustituye la vía económica
+  descrita en el checkpoint anterior, no el objetivo ni la puerta de Fase -1.
+- GitHub Free rechazó por API la protección del backend privado. No se tratará
+  una regla documental, un CI no obligatorio o el bloqueo de despliegue local
+  como si fueran protección de rama verificable.
+- Debe comprobarse la alternativa gratuita mínima antes de implantarla. Un
+  Forgejo/Gitea autohospedado soporta técnicamente rama protegida, aprobación
+  CODEOWNER, checks requeridos y cumplimiento por administradores. GitLab Free
+  y Bitbucket Free se descartaron como no equivalentes: sus protecciones
+  gratuitas no hacen obligatorios todos esos controles.
+- Evidencia de alternativas y medición NAS de solo lectura:
+  [`2026-10-14-dt144-free-protection-feasibility.json`](../audits/2026-10-14-dt144-free-protection-feasibility.json).
+  El NAS es compatible (`amd64`, Docker 27.1.2, 426,1 GiB disponibles), pero
+  tiene 2 CPU, carga observada 12–14 y 24 contenedores. No se desplegará otro
+  runner: la alternativa mínima debe reutilizar el CI GitHub existente y
+  exigir una aprobación humana distinta del autor automatizado.
+- No se instaló software, no se creó ninguna cuenta o repositorio y no cambió
+  producción. El siguiente paso es diseñar y validar el gate Forgejo mínimo
+  antes de autorizar su despliegue reversible.
 
 **Prohibición de cierre parcial:** DT-144 no se cierra porque exista un adaptador,
 un scope o una ruta denominada `core_primary`. Solo se cierra cuando no queden
