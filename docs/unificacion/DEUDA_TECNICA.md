@@ -169,6 +169,31 @@ continuar sin rediseñarlo.
 - No cambió ningún estado, scope, productor o despliegue. La puerta de Fase -1
   continúa **NO SUPERADA** a la espera de protección administrativa de ramas.
 
+### Checkpoint 2026-10-14 · inventario verificable de fuentes retiradas
+
+- Se contrastaron las 16 entradas `retired` con los módulos, los registros
+  efectivos y la instantánea productiva: Authentic Jobs, Careerjet, DailyRemote,
+  Glassdoor partner, ILO Jobs, Impactpool, Indeed partner, JobCloud partner,
+  Jooble, LinkedIn autorizado, MedJobs, ReliefWeb, TranslatorsCafe, UNDP Jobs,
+  UN Talent y XING partner.
+- Ninguna tiene publicador, trigger ni scope Core activo. Las fichas distinguen
+  módulos fuera del registro, tres fuentes con errores históricos sin éxito,
+  MedJobs bloqueada por el challenge de Cloudflare y conectores partner que no
+  realizan tráfico sin una ruta autorizada implementada.
+- Las siete credenciales aplicables —Careerjet, Jooble y los cinco partners—
+  estaban ausentes en producción en la captura del 2026-10-14. Solo se guardan
+  sus nombres y el booleano de presencia; no se leyó ni documentó ningún valor.
+- La identidad registrada es la que realmente implementa el código legado:
+  MD5 de título, empresa y URL —con GUID como fallback donde corresponde—,
+  seguida por el dedup difuso común de SwissJob. Documentarla no convierte esas
+  fuentes en candidatas de migración ni las reactiva.
+- El ratchet de fichas completas avanza de 17 a 33. El control cruzado sigue
+  dando 58 fuentes, 16 Core y 26 pendientes; las 16 retiradas están verificadas
+  y quedan 25 fichas activas locales por completar.
+- No cambió ningún estado, registro, credencial, conexión, scope o despliegue.
+  La puerta de Fase -1 continúa **NO SUPERADA**: la sesión gráfica de GitHub
+  comprobada muestra `Sign in` y el host sigue sin CLI, token API ni helper.
+
 **Prohibición de cierre parcial:** DT-144 no se cierra porque exista un adaptador,
 un scope o una ruta denominada `core_primary`. Solo se cierra cuando no queden
 productores, credenciales, conexiones ni persistencia de ofertas locales y las
