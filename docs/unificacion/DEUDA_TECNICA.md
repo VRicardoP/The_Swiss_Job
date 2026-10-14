@@ -52,20 +52,18 @@ continuar sin rediseñarlo.
    también está centralizado en rama. Todos sus scopes productivos permanecen
    deshabilitados y ambos `main` intactos: el corte vivo continúa agrupado con
    la fusión final aprobada por el propietario.
-5. El último portal cerrado es JSearch: Core/SwissJob está publicado en
-   `ac819f5` con CI `38599397880` verde 9/9; ReactPortfolio está publicado en
-   `855f243`, con productor local desconectado, paridad exacta sobre las 95
-   filas productivas y CI `38599401464` verde. Adzuna permanece cerrado en los
-   commits y CI indicados en su checkpoint. No se ha desplegado ninguno de esos
-   commits.
-6. Quedan 17 portales por implementar en las ramas: 15 de SwissJob y 2 de
-   ReactPortfolio. La Fase 4 de APIs autenticadas queda completada en ramas y
-   el siguiente paso es el preflight verificable de DynamiteJobs, primera
-   candidata de la Fase 5; no escribir adaptador antes de contrastar código,
-   runtime, disponibilidad y línea base real.
+5. El último portal cerrado es DynamiteJobs: Core/SwissJob está publicado en
+   `9ec6901` con CI `38607230379` verde; ReactPortfolio está publicado en
+   `1a0db8d`, con el productor local desconectado en rama y CI `38607229742`
+   verde. JSearch y Adzuna permanecen cerrados en los commits y CI indicados en
+   sus checkpoints. No se ha desplegado ninguno de esos commits.
+6. Quedan 16 portales por implementar en las ramas: 15 de SwissJob y 1 de
+   ReactPortfolio. La Fase 5 continúa con el preflight verificable de
+   JobScout24, último cosechador local de ReactPortfolio; no escribir adaptador
+   antes de contrastar código, runtime, disponibilidad y línea base real.
 7. **Relevo operativo verificado el 2026-10-14:** SwissJob/Core continúa en
-   `feat/fase-a-core`, cabeza `ac819f5`; ReactPortfolio continúa en
-   `feat/dt144-free-gate`, cabeza `855f243`. Los remotos `main` siguen
+   `feat/fase-a-core`, cabeza funcional `9ec6901`; ReactPortfolio continúa en
+   `feat/dt144-free-gate`, cabeza `1a0db8d`. Los remotos `main` siguen
    exactamente en `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
    `5bf457afbde5b44a995acce4ef241324f066f836`.
 8. El worktree ReactPortfolio estaba limpio. En SwissJob/Core ya existían
@@ -1371,6 +1369,73 @@ Core y apagado local; suites/CI; checkpoint antes de avanzar.
   Después adaptar las seis rutas BFF de ReactPortfolio, retirar sus registros y
   triggers locales, ejecutar suites y CI, y sólo entonces bajar el recuento de
   17 a 16. No tocar producción, `main` ni activar el scope.
+
+#### Avance verificable · DynamiteJobs centralizado en ramas
+
+- Core/SwissJob quedó versionado y publicado en `9ec6901` sobre
+  `feat/fase-a-core`; ReactPortfolio quedó publicado en `1a0db8d` sobre
+  `feat/dt144-free-gate`. Los CI funcionales `38607230379` y `38607229742`
+  terminaron globalmente en `success`. Los `main` remotos se revalidaron
+  intactos en `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
+  `5bf457afbde5b44a995acce4ef241324f066f836`.
+- `native_dynamitejobs` ejecuta un único barrido secuencial de las 20 categorías
+  públicas, con pausas, reintentos, límites de bytes, deduplicación global por
+  id y la selección legacy de las primeras 300 filas antes de ordenarlas por
+  fecha. El provisionador define exactamente un scope `{}` deshabilitado. El
+  sink, dispatcher, scheduler, admisión, registro y agregado existentes se
+  reutilizan; no se añadió dependencia, cola, caché ni scheduler.
+- El cursor conserva y poda las descripciones de las 300 filas servibles y
+  solicita como máximo 20 ausentes por ciclo. No reproduce la petición legacy
+  desperdiciada para filas posteriores a 300, porque esas descripciones nunca
+  entraban en la caché pública. Salarios, tipos, ubicaciones y tags mantienen el
+  contrato; la oferta con componente de ubicación `null` se conserva de forma
+  deliberada y probada. El límite existente `top_n` se amplió sólo hasta 1.000
+  para transportar los 590 tags reales sin endpoint ni abstracción específica.
+- La reproducción sobre la captura saneada cerró dos ciclos PostgreSQL `ok`,
+  hizo 80 respuestas simuladas, persistió 322 identidades y sirvió 300 recientes
+  con 112 descripciones, 39 ubicaciones y 590 tags. Las 288 filas comunes con la
+  caché legacy no presentan ninguna diferencia; no se proclama igualdad del
+  conjunto completo porque las capturas fueron tomadas con 81 s de separación.
+  La salida Core reciente tiene SHA-256
+  `7ed45702858e31362391e51cc7fe5bc1842e072788483286872bfa958f3f9869`.
+- ReactPortfolio conserva las seis rutas públicas bajo sus mismos paths y DTO,
+  pero todas leen el agregado autenticado de Core. Se retiraron de la rama el
+  montaje del router local, el provider, los registros de caché/actualización y
+  sus disparadores; backend y worker añaden DynamiteJobs a
+  `LEGACY_DISABLED_SOURCES`. El frontend público no requirió cambios porque ya
+  consume `/recent`. El ratchet deja únicamente `jobscout24` como cosechador
+  local de ReactPortfolio.
+- Validación local final: Core 1.689 aprobadas y dos avisos; ReactPortfolio
+  2.220 aprobadas y una omitida; SwissJob 1.916 aprobadas y cuatro `xfail`.
+  El CI repitió 1.689 Core, 1.916 SwissJob, 57 frontend SwissJob y 2.220
+  ReactPortfolio; lint/formato, ownership, Compose y build quedaron verdes.
+  Las pruebas focales y de integración cubren respuesta hostil, cursor corrupto,
+  límite de detalles, doble ciclo, agregado de 590 tags, scope opt-in y las seis
+  rutas BFF.
+- Incidencias cerradas antes de publicar: dos intentos host de integración
+  carecían de `psycopg2`/`pgvector` y se sustituyeron por la imagen oficial; la
+  primera suite Core no montaba `scripts/` y `backend/`, por lo que se relanzó
+  con ambos en sólo lectura; la primera suite completa ReactPortfolio detectó
+  que importar el módulo legacy aún registraba caché/actualizador y que dos
+  censos esperaban el provider. Se eliminaron esos efectos de importación y se
+  actualizaron los censos; las suites completas posteriores y ambos CI fueron
+  verdes. Ningún intento tocó producción.
+- El inventario conserva correctamente `state=local_pending`: el adaptador y el
+  handover existen sólo en ramas, pero producción aún no tiene fuente/scope
+  DynamiteJobs y continúa ejecutando el productor ReactPortfolio hasta la
+  fusión y corte agrupados aprobados. No se creó scope, no se activó cosecha y
+  no se cambió credencial alguna.
+- **Rollback:** revertir `1a0db8d` reconecta router, provider, caché,
+  actualizador y manifiestos ReactPortfolio; revertir `9ec6901` elimina
+  adaptador, registro, admisión, agregado y provisionador Core. Como no existe
+  estado productivo nuevo, no hay scope, cola ni datos vivos que drenar.
+- Tras DynamiteJobs quedan **16 proveedores** por implementar en ramas: 15 de
+  SwissJob y uno de ReactPortfolio. La cifra productiva continúa en 26
+  identidades locales hasta el corte final coordinado.
+- **Siguiente paso exacto si hay relevo:** iniciar el preflight de JobScout24,
+  último cosechador ReactPortfolio. Revalidar productor, scheduler, rutas,
+  caché, persistencia, disponibilidad, autorización y línea base real antes de
+  diseñar el adaptador. No tocar producción, `main` ni activar scopes.
 
 ### Registro cerrado · Forgejo no forma parte de DT-144
 

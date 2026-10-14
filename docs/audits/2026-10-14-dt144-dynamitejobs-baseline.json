@@ -75,5 +75,53 @@
     "description_state": "cursor-backed and pruned to active identities",
     "deliberate_fix": "Ignore null/non-string location components and preserve the otherwise valid offer instead of dropping it.",
     "production_change": false
+  },
+  "implementation_validation": {
+    "core_commit": "9ec690141cb8b3e0e6444fa3439a48e040556eaa",
+    "reactportfolio_commit": "1a0db8d06bd35c4d4bbeac1803582aefcae4d67d",
+    "github_ci": {
+      "core_swissjob": {
+        "run_id": 38607230379,
+        "conclusion": "success",
+        "core_tests": "1689 passed, 1 warning",
+        "swissjob_tests": "1916 passed, 4 xfailed, 6 warnings",
+        "frontend_tests": "57 passed"
+      },
+      "reactportfolio": {
+        "run_id": 38607229742,
+        "conclusion": "success",
+        "tests": "2220 passed, 1 skipped, 4 warnings",
+        "local_harvesters": 1
+      }
+    },
+    "local_full_suites": {
+      "core": "1689 passed, 2 warnings in 535.69s",
+      "swissjob": "1916 passed, 4 xfailed, 7 warnings in 296.05s",
+      "reactportfolio": "2220 passed, 1 skipped in 250.79s"
+    },
+    "real_capture_double_cycle": {
+      "first_run": "ok",
+      "second_run": "ok",
+      "requests": 80,
+      "stored": 322,
+      "recent": 300,
+      "descriptions": 112,
+      "locations": 39,
+      "tags": 590,
+      "common_with_legacy_cache": 288,
+      "differing_common_rows": 0,
+      "null_location_job_preserved": true,
+      "core_recent_sha256": "7ed45702858e31362391e51cc7fe5bc1842e072788483286872bfa958f3f9869"
+    },
+    "consumer_handover": {
+      "legacy_router_mounted": false,
+      "legacy_provider_registered": false,
+      "legacy_cache_registered": false,
+      "legacy_update_registered": false,
+      "disabled_in_candidate_backend_and_worker": true,
+      "public_routes_preserved": 6,
+      "remaining_reactportfolio_local_harvesters": ["jobscout24"]
+    },
+    "production_change": false
   }
 }
