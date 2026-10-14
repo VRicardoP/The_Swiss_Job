@@ -431,7 +431,7 @@
       "last_success": [{"product": "reactportfolio", "at": "2026-10-13T16:22:30.193723+00:00", "evidence": "successful persisted snapshot with 300 cached entries and zero normalization errors"}],
       "production_metrics": {"cached_entries": 300, "reported_total": 300, "normalization_errors": 0, "duplicate_stable_keys": 0, "duplicate_exact_hashes": 32, "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/jobroom/field_presence"},
       "core_scope_ids": [],
-      "blocker": "Core has no adapter or production scope; Phase -1 branch protection with required CI and CODEOWNER review is not yet verified.",
+      "blocker": "The branch adapter and consumer handover are validated, but production has no Job-Room source or scope until the final owner-approved merge and coordinated cutover.",
       "inventory_verified": true,
       "core_adapter": true,
       "state": "local_pending",

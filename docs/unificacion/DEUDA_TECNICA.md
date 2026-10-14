@@ -47,23 +47,23 @@ continuar sin rediseñarlo.
 3. Los despliegues reales deben fallar mientras HEAD no sea exactamente el SHA
    de `github/main`. Esta guarda evita publicar una rama incompleta, pero no se
    presenta como una protección de rama inexistente en GitHub Free privado.
-4. Jobicy, RemoteOK, Himalayas y SwissTechJobs están centralizados en las ramas.
-   Los cuatro tienen CI verde. Mantener todos los scopes productivos
-   deshabilitados y `main` intacta; el corte vivo queda agrupado con la fusión
-   final aprobada por el propietario.
-5. ICTJobs Core está publicado en `f273a24` con CI `38560944461` verde 9/9.
-   El consumidor ReactPortfolio está publicado en `fda24a9` con apagado local,
-   paridad 100/100, suites y CI `38563293589` verdes. El siguiente portal es
-   SwissDevJobs.
-6. Añadir aquí un checkpoint después de cada fuente u oleada con estados,
-   pruebas, SHA, evidencia viva, rollback y siguiente paso exacto.
+4. La Fase 3 de APIs/feeds públicos está implementada en las ramas para
+   RemoteOK, Himalayas, SwissTechJobs, ICTJobs, SwissDevJobs y Job-Room; Jobicy
+   también está centralizado en rama. Todos sus scopes productivos permanecen
+   deshabilitados y ambos `main` intactos: el corte vivo continúa agrupado con
+   la fusión final aprobada por el propietario.
+5. El último portal cerrado es Job-Room: Core está publicado en `14b613a` con
+   CI `38574880608` verde 9/9; ReactPortfolio está publicado en `edf1b12`, con
+   productor local desconectado, paridad exacta sobre 300 ofertas y CI
+   `38576264319` verde. No se ha desplegado ninguno de esos commits.
+6. Quedan 19 portales por implementar en las ramas: 15 de SwissJob y 4 de
+   ReactPortfolio. El siguiente paso es la Fase 4, empezando el preflight de
+   Adzuna y comprobando credencial, runtime y contrato vivo antes de decidir.
 7. **Relevo operativo verificado el 2026-10-14:** SwissJob/Core continúa en
-   `feat/fase-a-core`, cabeza documental `12fabdc` (capacidad ICTJobs en
-   `f273a24`); ReactPortfolio continúa en `feat/dt144-free-gate`, cabeza
-   `fda24a9`. La CI SwissJob/Core `38564269161` de `12fabdc` tenía siete
-   trabajos verdes y las suites `backend-test`/`core-test` aún en ejecución al
-   cerrar esta anotación; el siguiente agente debe consultar ese run y registrar
-   su conclusión antes de modificar SwissDevJobs.
+   `feat/fase-a-core`, cabeza funcional `14b613a`; ReactPortfolio continúa en
+   `feat/dt144-free-gate`, cabeza `edf1b12`. Los remotos `main` siguen
+   exactamente en `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
+   `5bf457afbde5b44a995acce4ef241324f066f836`.
 8. El worktree ReactPortfolio estaba limpio. En SwissJob/Core ya existían
    cambios ajenos a DT-144 en `CLAUDE.md`, documentación histórica y de
    unificación, además de documentos/auditorías sin seguimiento. No añadirlos,
@@ -912,6 +912,87 @@ Core y apagado local; suites/CI; checkpoint antes de avanzar.
   filas parciales, cuerpo/parámetros exactos y doble ciclo PostgreSQL. Comparar
   luego la proyección completa contra las cuatro huellas antes de modificar el
   consumidor ReactPortfolio.
+
+#### Avance verificable · Job-Room centralizado en ramas
+
+- Core quedó versionado y publicado en `14b613a` sobre `feat/fase-a-core`; su
+  CI `38574880608` terminó verde en los nueve trabajos. El adaptador ejecuta un
+  único POST con los parámetros, ventana y cinco profesiones verificados,
+  mantiene el límite histórico de 300 aunque el portal anuncie más páginas,
+  conserva el id upstream y registra `publication.startDate`. El provisionador
+  crea un único scope `{}` deshabilitado; no se creó ni activó ningún scope
+  productivo.
+- La normalización anidada conserva anonimato de empresa, ubicación, jornada,
+  `HOME_WORK`, idiomas visibles y límites de palabra. El raw añade sólo la lista
+  completa `_core_statistics_tags`: los idiomas no contaminan estadísticas y
+  los skills posteriores al décimo siguen contándose. Core conserva la
+  descripción completa para su contenido canónico y el agregado limita a 500
+  caracteres la respuesta compatible, por lo que la API pública reproduce el
+  legado sin perder texto útil dentro de Core.
+- Sobre la captura pública de 300 ofertas, la proyección Core y después el
+  consumidor real ReactPortfolio reproducen exactamente las cuatro huellas del
+  productor retirado: tarjetas
+  `0fec95a5f3cbdc81253bdd27d2c9678a831e4c233eb8f6c075527f8eb627b7f4`,
+  normalizadas
+  `71e44326befd4d09ccdd0109c2d61abdce01168160910d22e2061806cf1deb2b`,
+  ubicaciones
+  `a8583e223a130ffc02b27ec2d4600f0ff0f2f385128c5415138a48bb82d9cb86`
+  y tags
+  `4e0663d77a90f849b211ed5deb2926163463c407e0fb4331dc907a717d2562f6`.
+  Permanecen 300 ids, 104 ubicaciones, 59 tags y los 19 hashes duplicados que no
+  deben deduplicarse.
+- Validación Core: 72 pruebas unitarias focales, dos integraciones de doble
+  ciclo/provisionado y suite completa con 1.620 aprobadas, una omitida y dos
+  avisos conocidos en 7 min 53 s. Ruff, formato, compilación, `diff --check`,
+  JSON y ratchet
+  `{"core_owned":16,"local_pending":26,"sources":58}` quedaron verdes. Los
+  dos ciclos PostgreSQL mantuvieron una revisión raw y conservaron por separado
+  diez tags visibles y todos los tags estadísticos.
+- ReactPortfolio quedó versionado y publicado en `edf1b12` sobre
+  `feat/dt144-free-gate`; su CI `38576264319` terminó verde. Las seis rutas
+  históricas las sirve ahora `core_source_compat`, con ventana completa de 300
+  antes de ordenar, tarjeta sin salarios, top 10 por frecuencia, conteos
+  completos y salud/refresh Core. `main.py`, `get_all_providers()` y los
+  registros cache/update ya no conectan el productor local; backend y worker
+  incluyen Job-Room en `LEGACY_DISABLED_SOURCES` y el ratchet baja de cinco a
+  cuatro productores locales.
+- Validación ReactPortfolio: 233 pruebas focales de consumidor/apagado/provider,
+  otras 159 de rutas/caché/registro/fidelidad, la repetición específica final
+  203/203 y suite completa con 2.194 aprobadas, una omitida y 115 avisos
+  conocidos en 3 min 20 s. Ruff focal quedó verde ignorando únicamente los 39
+  E402 históricos de `main.py`; `ruff format --check` sigue proponiendo
+  reformatear los mismos ocho ficheros completos y no se aplicó. El hook avisó
+  que `black` no está instalado, pero compilación, diff, pruebas y CI sí
+  concluyeron correctamente.
+- Incidencias contenidas y corregidas antes de versionar: dos parches iniciales
+  del inventario asociaron `core_adapter` a entradas equivocadas por usar un
+  contexto no único; se corrigió con contexto de nombre y el diff final toca
+  sólo Job-Room. Al cerrar el ledger, el blocker común coincidió primero con
+  Adzuna; el diff previo al staging lo detectó y se reaplicó usando las métricas
+  únicas de Job-Room. Una ejecución unitaria apuntó dos veces a nombres de test no
+  existentes; se localizaron y ejecutaron los tres módulos reales. La primera
+  integración quedó omitida por faltar `CORE_ADMIN_DATABASE_URL` y se repitió
+  con ambos DSN aislados. Los primeros verificadores de paridad carecían de
+  `PYTHONPATH`/Settings; se relanzaron con configuración SQLite de prueba. Un
+  import `httpx` sin uso y una línea final sobrante fueron eliminados por los
+  gates. Ninguno de estos intentos tocó producción.
+- Los artefactos y cabeceras de captura siguen sólo en `/tmp`; la cookie efímera
+  nunca se versionó. Los cambios ajenos del worktree SwissJob/Core siguen sin
+  staging ni alteración. Los remotos `main` se revalidaron intactos en
+  `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
+  `5bf457afbde5b44a995acce4ef241324f066f836`.
+- **Rollback:** revertir `edf1b12` reconecta router, provider, registros y
+  manifiestos locales; revertir `14b613a` elimina la capacidad Core. Al no haber
+  scope ni despliegue productivo, no existe estado vivo que drenar en este
+  checkpoint.
+- Tras Job-Room quedan 19 portales por implementar en ramas: 15 de SwissJob y
+  cuatro de ReactPortfolio. Producción conserva 26 portales únicos/27
+  productores hasta el corte final coordinado.
+- **Siguiente paso exacto si hay relevo:** comenzar Adzuna, primera candidata de
+  la Fase 4. Revalidar rama/main/worktrees, productor y scheduler en ambos
+  proyectos, presencia real de credenciales sin exponerlas, contrato vivo,
+  límites/paginación y baseline saneado antes de escribir el adaptador Core. No
+  tocar producción, no activar scopes y no rehacer Job-Room.
 
 ### Registro cerrado · Forgejo no forma parte de DT-144
 
