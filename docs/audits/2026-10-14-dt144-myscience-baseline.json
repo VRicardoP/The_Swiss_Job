@@ -1,0 +1,155 @@
+{
+  "source": "myscience",
+  "captured_at_utc": {
+    "public_listing_pages": "2026-10-14T19:02:14+00:00",
+    "public_detail_pages": "2026-10-14T19:05:09+00:00"
+  },
+  "method": "Both the retiring SwissJob scraper and the new Core adapter were replayed offline against this SAME sealed capture, so the parity below is byte-level and not two independent samples.",
+  "transport_contract": {
+    "listing_url": "https://www.myscience.ch/jobs?p={page}",
+    "detail_url": "the listing card's own href, absolute",
+    "credentials": null,
+    "pages": 5,
+    "page_size": 20,
+    "rate_limit_seconds": 2.0,
+    "fetch_details": true
+  },
+  "listing_capture": {
+    "pages": 5,
+    "all_status_200": true,
+    "bytes_total": 1083100,
+    "per_page": [
+      {
+        "page": 1,
+        "bytes": 212838,
+        "sha256": "9ab0ee2277b958fb1ef43df8de8c3177d7b70c68f1acd97a225be957a95edde6"
+      },
+      {
+        "page": 2,
+        "bytes": 217490,
+        "sha256": "59acb871d764261992f119f3a52cd9ea39435a7110f37a88dccb264f1255390b"
+      },
+      {
+        "page": 3,
+        "bytes": 217490,
+        "sha256": "d2e89746e9529a0f6971e52f24b59c3c21e447dd3b3b973ff0a8bf4f5d90d8c1"
+      },
+      {
+        "page": 4,
+        "bytes": 217483,
+        "sha256": "2a93e96bc962d11273cf264ebdef57112be6d08cbe3042e29d3ec3e0e8e5a6b0"
+      },
+      {
+        "page": 5,
+        "bytes": 217799,
+        "sha256": "4c44068000180a4d317e2b632d3cf987e25176b92ce200b51f8cf5bb516c3d3a"
+      }
+    ]
+  },
+  "pagination_finding": {
+    "stub_reads": 97,
+    "unique_offers": 26,
+    "new_per_page": {
+      "1": 17,
+      "2": 5,
+      "3": 0,
+      "4": 0,
+      "5": 4
+    },
+    "note": "`?p=` barely paginates: page 3 repeats page 2 exactly and pages 3-4 add nothing. The scraper's cursor early-stop fires on the first fully-known page, so on a cold run it stops at page 3 and NEVER sees the four offers that only appear on page 5. Core sweeps the declared five pages instead of early-stopping, so those four are harvested; the request cost is bounded by the same five pages."
+  },
+  "detail_capture": {
+    "pages": 26,
+    "all_status_200": true,
+    "bytes_total": 3519145
+  },
+  "legacy_replay": {
+    "offers": 26,
+    "with_description": 26,
+    "with_logo": 26,
+    "with_employment_type": 0,
+    "unique_hashes": 26,
+    "cantons": [
+      "BS",
+      "FR",
+      "GE",
+      "ZG",
+      "ZH"
+    ],
+    "distinct_locations": 9,
+    "max_tags_on_an_offer": 2,
+    "description_chars_total": 58789,
+    "normalized_sha256": "4a4eefc1516c0b426c5a5a75c505621d8e47ff824b3fb5a2b439ef9cb4dcecf7"
+  },
+  "core_replay": {
+    "listings": 26,
+    "requests": 31,
+    "listing_requests": 5,
+    "detail_requests": 26,
+    "unique_external_ids": 26,
+    "with_published_date": 26,
+    "complete": true,
+    "error": null,
+    "cursor": {
+      "pages": 5,
+      "items_seen": 97,
+      "identities": 26,
+      "details_fetched": 26
+    }
+  },
+  "parity": {
+    "listing_parser_differences_over_97_records": 0,
+    "detail_parser_differences_over_26_pages": 0,
+    "compared_fields": [
+      "title",
+      "company",
+      "location",
+      "canton",
+      "description",
+      "url",
+      "remote",
+      "tags",
+      "logo"
+    ],
+    "rows_compared": 26,
+    "field_differences": 0,
+    "projection_sha256": "d3705cb43ad26244e7a5fe210effb7bd2cae5c7616d02c99a9a3199f9c8ba10b",
+    "legacy_projection_sha256": "d3705cb43ad26244e7a5fe210effb7bd2cae5c7616d02c99a9a3199f9c8ba10b",
+    "identical": true
+  },
+  "deliberate_improvements": [
+    {
+      "what": "published_at now carries the portal's own date",
+      "evidence": "97 of 97 listing records expose <time datetime>; the detail page repeats it as schema.org datePosted. All 115 production rows have no date because the scraper never read it.",
+      "effect": "Core resolves currency and recency from the portal's date instead of having none. A record without a usable ISO date omits the field entirely, so absent still means UNKNOWN."
+    },
+    {
+      "what": "identity is the portal's numeric id, not the URL",
+      "evidence": "26 of 26 URLs match /jobs/id<digits>-<slug>, and the slug carries the job title.",
+      "effect": "A retitled offer keeps one identity. The scraper keyed on the URL, so a retitle produced a second offer."
+    },
+    {
+      "what": "the declared five pages are always swept",
+      "evidence": "the pagination finding above: four offers of 26 live only on page 5, behind a fully-known page 3.",
+      "effect": "Those offers enter the corpus. Cost stays at five listing pages per run."
+    }
+  ],
+  "reported_not_changed": [
+    {
+      "what": "the detail page's Arbeitsort / Funktion / Pensum metadata",
+      "evidence": ".descriptor labels exist (Arbeitsort 26, Funktion 26, Pensum 8 of 26) but never inside the same .long_value_row as a .long_value, so the scraper's loop skips every row — which is why employment_type is empty for all 115 production rows.",
+      "why_not_changed": "Reading them would change what the corpus contains for every offer, and Funktion is not an employment type. It is a finding, not a migration step."
+    }
+  ],
+  "traffic": {
+    "core_per_run": "5 listing pages + 26 detail pages = 31 requests, paced at the portal's own 2 s",
+    "scraper_cold_run": "5 listing pages + 97 detail pages",
+    "scraper_warm_run": "~2 listing pages + ~8 detail pages (cursor early-stop)",
+    "note": "Core has no description cursor on purpose: the descriptions run to 9.866 characters and truncating them to fit a scope cursor would alter five of 26 offers on every cycle."
+  },
+  "notes": [
+    "No credential exists for this source and none was created; the sweep is anonymous HTTPS.",
+    "The artifact carries no personal data: only byte counts, hashes and aggregate counters.",
+    "The scraper module and its tests stay in SwissJob as the branch rollback path; only its registry entry is gone."
+  ]
+}

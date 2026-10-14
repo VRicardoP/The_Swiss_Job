@@ -16,7 +16,6 @@ import asyncio
 import logging
 import random
 import re
-from html.parser import HTMLParser
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
@@ -31,6 +30,7 @@ from jobhunt_core.harvest.provider import (
 )
 from jobhunt_core.harvest.providers.browser_headers import BROWSER_HEADERS
 from jobhunt_core.harvest.providers.html_response import (
+    TagStackParser,
     job_posting_description,
     looks_like_soft_block,
 )
@@ -66,25 +66,6 @@ _RELATIVE_DATE_RE = re.compile(r"(\d+)\s*\+?\s*([hdwm])", re.IGNORECASE)
 _RELATIVE_DATE_UNITS = {"h": "hours", "d": "days", "w": "weeks", "m": "minutes"}
 # Workload badges ("100%", "80% - 100%") are the employment type, not a tag.
 _WORKLOAD_TAG_RE = re.compile(r"^\d+\s*%(?:\s*-\s*\d+\s*%)?$")
-_VOID_TAGS = frozenset(
-    {
-        "area",
-        "base",
-        "br",
-        "col",
-        "embed",
-        "hr",
-        "img",
-        "input",
-        "link",
-        "meta",
-        "param",
-        "source",
-        "track",
-        "wbr",
-    }
-)
-
 logger = logging.getLogger(__name__)
 
 
@@ -112,7 +93,7 @@ def relative_date_to_iso(text: str, now: datetime | None = None) -> str:
     return (reference - timedelta(**{unit: int(match.group(1))})).date().isoformat()
 
 
-class _Cards(HTMLParser):
+class _Cards(TagStackParser):
     """`li.job-list-item` cards, one dict each, in document order.
 
     Reproduces the retiring producer's selectors: `a.job-link-detail` for the
@@ -122,78 +103,55 @@ class _Cards(HTMLParser):
     """
 
     def __init__(self):
-        super().__init__(convert_charrefs=True)
+        super().__init__()
         self.cards: list[dict] = []
-        self._open: list[tuple[str, list[str]]] = []
         self._card: dict | None = None
         self._card_depth = 0
         self._field: tuple[str, int] | None = None
         self._chunks: list[str] = []
 
-    # -- parsing ---------------------------------------------------------
-    def handle_starttag(self, tag, attrs):
-        if tag in _VOID_TAGS:
-            return
-        mapping = dict(attrs)
-        classes = (mapping.get("class") or "").split()
-        self._open.append((tag, classes))
+    def on_open(self, tag, classes, attrs, depth):
         if self._card is None:
             if tag == "li" and CARD_CLASS in classes:
                 self._card = {
-                    "id": mapping.get("data-job-id", ""),
+                    "id": attrs.get("data-job-id", ""),
                     "title": "",
                     "company": "",
                     "location": "",
-                    "detail_path": mapping.get("data-job-detail-url", ""),
+                    "detail_path": attrs.get("data-job-detail-url", ""),
                     "badges": [],
                     "date": "",
                 }
-                self._card_depth = len(self._open)
+                self._card_depth = depth
             return
         if self._field is None:
             field = self._field_for(tag, classes)
             if field is not None:
-                self._field = (field, len(self._open))
+                self._field = (field, depth)
                 self._chunks = []
 
-    def handle_endtag(self, tag):
-        if tag in _VOID_TAGS or not self._open:
-            return
-        depth = len(self._open)
-        if self._field is not None and self._field[1] == depth:
+    def on_close(self, tag, depth):
+        if self._field is not None and self._field[1] >= depth:
             self._store(self._field[0], "".join(self._chunks))
             self._field = None
-        if self._card is not None and self._card_depth == depth:
+        if self._card is not None and self._card_depth >= depth:
             self.cards.append(self._card)
             self._card = None
-        self._open.pop()
 
-    def handle_data(self, data):
+    def on_text(self, data):
         if self._field is not None and data.strip():
             self._chunks.append(data.strip())
 
-    def close(self):
-        super().close()
-        # An unclosed card still has everything its selectors matched.
-        if self._card is not None:
-            self.cards.append(self._card)
-            self._card = None
-
     # -- selectors -------------------------------------------------------
-    def _ancestor(self, tag: str, class_name: str) -> bool:
-        return any(
-            name == tag and class_name in classes for name, classes in self._open[:-1]
-        )
-
     def _field_for(self, tag: str, classes: list[str]) -> str | None:
         if tag == "a" and "job-link-detail" in classes:
             return "title"
         if tag == "p" and "job-date" in classes:
             return "date"
         if tag == "span":
-            if self._ancestor("p", "job-attributes"):
+            if self.has_ancestor_class("job-attributes"):
                 return "attribute"
-            if "tag" in classes and self._ancestor("div", "job-tags"):
+            if "tag" in classes and self.has_ancestor_class("job-tags"):
                 return "badge"
         return None
 
