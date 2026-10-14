@@ -433,6 +433,7 @@
       "core_scope_ids": [],
       "blocker": "Core has no adapter or production scope; Phase -1 branch protection with required CI and CODEOWNER review is not yet verified.",
       "inventory_verified": true,
+      "core_adapter": true,
       "state": "local_pending",
       "target_owner": "core",
       "active_publishers": ["reactportfolio"],

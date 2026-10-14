@@ -1,5 +1,8 @@
 """Jobicy metadata that was part of ReactPortfolio's public responses."""
 
+from functools import lru_cache
+import re
+
 TECH_TAGS = (
     "developer",
     "software engineer",
@@ -152,6 +155,13 @@ def normalize_location(value):
     return COUNTRIES.get(folded, location.title())
 
 
-def extract_tech_skills(title, description):
+@lru_cache(maxsize=None)
+def _word_pattern(tag):
+    return re.compile(rf"(?<![\w+#&]){re.escape(tag)}(?![\w+#&])")
+
+
+def extract_tech_skills(title, description, *, word_boundaries=False):
     text = f"{title or ''} {description or ''}".lower()
+    if word_boundaries:
+        return [tag for tag in TECH_TAGS if _word_pattern(tag).search(text)]
     return [tag for tag in TECH_TAGS if tag in text]

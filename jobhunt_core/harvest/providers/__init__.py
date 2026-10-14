@@ -18,6 +18,7 @@ from jobhunt_core.harvest.providers.native_jobgether import JobgetherProvider
 from jobhunt_core.harvest.providers.native_financejobs import FinancejobsProvider
 from jobhunt_core.harvest.providers.native_irishjobs import IrishJobsProvider
 from jobhunt_core.harvest.providers.native_swissdevjobs import SwissDevJobsProvider
+from jobhunt_core.harvest.providers.native_jobroom import JobRoomProvider
 
 _PROVIDERS: dict[str, BaseProvider] = {
     ArbeitnowProvider.name: ArbeitnowProvider(),
@@ -31,6 +32,7 @@ _PROVIDERS: dict[str, BaseProvider] = {
     FinancejobsProvider.name: FinancejobsProvider(),
     IrishJobsProvider.name: IrishJobsProvider(),
     SwissDevJobsProvider.name: SwissDevJobsProvider(),
+    JobRoomProvider.name: JobRoomProvider(),
 }
 
 
