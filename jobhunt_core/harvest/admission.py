@@ -30,6 +30,7 @@ DATE_FIELDS = {
     "himalayas": "pubDate",
     "swisstechjobs": "date",
     "ictjobs": "date",
+    "swissdevjobs": "activeFrom",
     "weworkremotely": "pubDate",
     "euremotejobs": "pubDate",
     "jobspresso": "pubDate",

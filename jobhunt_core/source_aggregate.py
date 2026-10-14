@@ -24,7 +24,7 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                   THEN o.content->'tags' ELSE '[]'::jsonb END AS tags,
              o.content->>'canton' AS canton,
              o.content->>'prof_group' AS prof_group,
-             latest.category, latest.categories_raw,
+             latest.category, latest.categories_raw, latest.technologies_raw,
              COALESCE(o.content->>'employment_type', latest.job_type) AS job_type,
              latest.job_types_raw,
              latest.published_at
@@ -62,6 +62,9 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                    THEN r.raw->'jobType'
                  ELSE '[]'::jsonb
                END AS job_types_raw,
+               CASE WHEN jsonb_typeof(r.raw->'technologies')='array'
+                    THEN r.raw->'technologies' ELSE '[]'::jsonb
+               END AS technologies_raw,
                COALESCE(
                  CASE WHEN jsonb_typeof(r.raw->'publication_date')='string'
                       THEN r.raw->'publication_date' END,
@@ -72,7 +75,9 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                  CASE WHEN jsonb_typeof(r.raw->'date') IN ('string', 'number')
                       THEN r.raw->'date' END,
                  CASE WHEN jsonb_typeof(r.raw->'pubDate') IN ('string', 'number')
-                      THEN r.raw->'pubDate' END
+                      THEN r.raw->'pubDate' END,
+                 CASE WHEN jsonb_typeof(r.raw->'activeFrom')='string'
+                       THEN r.raw->'activeFrom' END
                ) AS published_at
         FROM source_listing_revisions r
         WHERE r.incarnation_id=i.id
@@ -138,9 +143,13 @@ _SOURCE_AGGREGATE_SQL = sa.text(
     ),
     tag_counts AS (
       SELECT tag.value, count(*)::int AS n FROM source_rows
-      CROSS JOIN LATERAL jsonb_array_elements_text(
-        tags
-      ) AS tag(value)
+      CROSS JOIN LATERAL (
+        SELECT item #>> '{}' AS value
+        FROM jsonb_array_elements(
+          CASE WHEN :source='swissdevjobs' THEN technologies_raw ELSE tags END
+        ) AS entry(item)
+        WHERE jsonb_typeof(item)='string'
+      ) AS tag
       WHERE btrim(tag.value)<>''
       GROUP BY tag.value ORDER BY n DESC, tag.value LIMIT :top_n
     ),
