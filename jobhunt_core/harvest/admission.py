@@ -32,6 +32,7 @@ DATE_FIELDS = {
     "ictjobs": "date",
     "swissdevjobs": "activeFrom",
     "jobroom": ("jobAdvertisement", "publication", "startDate"),
+    "adzuna": "created",
     "weworkremotely": "pubDate",
     "euremotejobs": "pubDate",
     "jobspresso": "pubDate",

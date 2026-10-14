@@ -9,7 +9,6 @@ from providers import (
 from services.job_service import BaseJobProvider
 
 EXPECTED = {
-    "adzuna",
     "careerjet",
     "jooble",
     "jsearch",

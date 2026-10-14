@@ -3,7 +3,6 @@
 import logging
 
 from config import settings
-from providers.adzuna import AdzunaProvider
 from providers.careerjet import CareerjetProvider
 from providers.jooble import JoobleProvider
 from providers.jsearch import JSearchProvider
@@ -21,7 +20,6 @@ from services.job_service import BaseJobProvider
 logger = logging.getLogger(__name__)
 
 _PROVIDER_CLASSES: dict[str, type[BaseJobProvider]] = {
-    "adzuna": AdzunaProvider,
     "careerjet": CareerjetProvider,
     "jooble": JoobleProvider,
     "jsearch": JSearchProvider,
@@ -35,7 +33,6 @@ _PROVIDER_CLASSES: dict[str, type[BaseJobProvider]] = {
 }
 
 _KEY_REQUIREMENTS: dict[str, str] = {
-    "adzuna": "ADZUNA_APP_ID",
     "careerjet": "CAREERJET_AFFID",
     "jooble": "JOOBLE_API_KEY",
     "jsearch": "JSEARCH_RAPIDAPI_KEY",

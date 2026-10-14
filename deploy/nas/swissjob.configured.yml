@@ -30,13 +30,11 @@ services:
       CAREERJET_AFFID: ''
       SMTP_FROM: ${SMTP_FROM}
       GROQ_API_KEY: ${GROQ_API_KEY}
-      ADZUNA_APP_KEY: ${ADZUNA_APP_KEY}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
       TEACHER_ALERT_EMAIL: ${TEACHER_ALERT_EMAIL}
       SCHEDULER_DAILY_HARVEST_ENABLED: 'True'
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       POSTGRES_USER: swissjob
-      ADZUNA_APP_ID: ''
       CORE_CONSUMER_KEY: ${CORE_CONSUMER_KEY}
       PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       LANG: C.UTF-8
@@ -106,7 +104,6 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       CAREERJET_AFFID: ''
-      ADZUNA_APP_KEY: ${ADZUNA_APP_KEY}
       SCHEDULER_DAILY_HARVEST_ENABLED: 'True'
       BACKEND_CORS_ORIGINS: '["http://capsule.tailebc81d.ts.net:4000"]'
       GROQ_API_KEY: ${GROQ_API_KEY}
@@ -120,7 +117,6 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       JOOBLE_API_KEY: ${JOOBLE_API_KEY}
       CELERY_BROKER_URL: ${CELERY_BROKER_URL}
-      ADZUNA_APP_ID: ''
       REDIS_URL: ${REDIS_URL}
       SECRET_KEY: ${SECRET_KEY}
       SMTP_FROM: ${SMTP_FROM}

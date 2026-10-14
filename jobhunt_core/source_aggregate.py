@@ -28,7 +28,7 @@ _SOURCE_AGGREGATE_SQL = sa.text(
              latest.statistics_tags_raw,
              COALESCE(o.content->>'employment_type', latest.job_type) AS job_type,
              latest.job_types_raw,
-             latest.published_at
+             latest.published_at, latest.source_order
       FROM sources s
       JOIN source_listings sl ON sl.source_id=s.id
       JOIN source_listing_incarnations i
@@ -40,6 +40,8 @@ _SOURCE_AGGREGATE_SQL = sa.text(
         SELECT COALESCE(
                  CASE WHEN jsonb_typeof(r.raw->'category')='string'
                       THEN r.raw->>'category' END,
+                 CASE WHEN jsonb_typeof(r.raw->'_core_category')='string'
+                      THEN r.raw->>'_core_category' END,
                  CASE WHEN jsonb_typeof(r.raw->'jobIndustry')='string'
                       THEN r.raw->>'jobIndustry' END
                ) AS category,
@@ -69,11 +71,15 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                CASE WHEN jsonb_typeof(r.raw->'_core_statistics_tags')='array'
                     THEN r.raw->'_core_statistics_tags' ELSE '[]'::jsonb
                END AS statistics_tags_raw,
+               CASE WHEN jsonb_typeof(r.raw->'_core_order')='number'
+                    THEN (r.raw->>'_core_order')::int END AS source_order,
                COALESCE(
                  CASE WHEN jsonb_typeof(r.raw->'publication_date')='string'
                       THEN r.raw->'publication_date' END,
                  CASE WHEN jsonb_typeof(r.raw->'created_at')='string'
                       THEN r.raw->'created_at' END,
+                 CASE WHEN jsonb_typeof(r.raw->'created')='string'
+                      THEN r.raw->'created' END,
                  CASE WHEN jsonb_typeof(r.raw->'dateFirstPublished')='string'
                       THEN r.raw->'dateFirstPublished' END,
                  CASE WHEN jsonb_typeof(r.raw->'date') IN ('string', 'number')
@@ -138,9 +144,12 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                ), '[]'::jsonb),
                'published_at', published_at
              ) AS item,
-             last_seen_at, incarnation_id
+             last_seen_at, incarnation_id, published_at, source_order
       FROM source_rows
-      ORDER BY last_seen_at DESC, incarnation_id
+      ORDER BY
+        CASE WHEN :source='adzuna' THEN published_at #>> '{}' END DESC NULLS LAST,
+        CASE WHEN :source='adzuna' THEN source_order END ASC NULLS LAST,
+        last_seen_at DESC, incarnation_id
       LIMIT :item_limit
     ),
     location_counts AS (
@@ -174,7 +183,8 @@ _SOURCE_AGGREGATE_SQL = sa.text(
     category_counts AS (
       SELECT category.value, count(*)::int AS n FROM source_rows
       CROSS JOIN LATERAL (
-        SELECT lower(replace(btrim(value), ' ', '-')) AS value
+        SELECT CASE WHEN :source='adzuna' THEN btrim(value)
+                    ELSE lower(replace(btrim(value), ' ', '-')) END AS value
         FROM (
           SELECT category AS value
           WHERE jsonb_array_length(categories_raw)=0
@@ -229,7 +239,10 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                AND COALESCE(shr.heartbeat_at, shr.started_at) >=
                    clock_timestamp()-make_interval(secs => :lease)
            ) AS update_in_progress,
-           COALESCE((SELECT jsonb_agg(item ORDER BY last_seen_at DESC, incarnation_id)
+           COALESCE((SELECT jsonb_agg(item ORDER BY
+                       CASE WHEN :source='adzuna' THEN published_at #>> '{}' END DESC NULLS LAST,
+                       CASE WHEN :source='adzuna' THEN source_order END ASC NULLS LAST,
+                       last_seen_at DESC, incarnation_id)
                      FROM recent), '[]'::jsonb) AS items,
            COALESCE((SELECT jsonb_object_agg(value, n) FROM location_counts),
                     '{}'::jsonb) AS locations,

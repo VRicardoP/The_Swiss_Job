@@ -262,6 +262,8 @@ services:
       - CORE_DATABASE_URL=postgresql+asyncpg://jobhunt_core:${CORE_DB_PASSWORD:-jobhunt_core_dev}@postgres:5432/${POSTGRES_DB:-swissjobhunter}
       - CORE_BROKER_URL=redis://:${CORE_REDIS_PASSWORD:-core_redis_dev}@redis-core:6379/0
       - CORE_RESULT_BACKEND=redis://:${CORE_REDIS_PASSWORD:-core_redis_dev}@redis-core:6379/1
+      - CORE_ADZUNA_APP_ID=${CORE_ADZUNA_APP_ID:-}
+      - CORE_ADZUNA_APP_KEY=${CORE_ADZUNA_APP_KEY:-}
     networks:
       - default
       - core-net
