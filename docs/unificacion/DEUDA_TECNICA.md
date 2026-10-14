@@ -42,15 +42,17 @@ continuar sin rediseñarlo.
    `The_Swiss_Job/main` ya tiene los nueve checks y la revisión CODEOWNER
    obligatorios. Comprobar el último checkpoint y el estado remoto antes de
    actuar, porque este bloque es solo el acceso rápido al ledger cronológico.
-2. Mantener `ReactPortfolioServer` privado y no contratar GitHub Pro ni ningún
-   servicio de pago. Para cerrar la Fase -1 falta verificar e implantar una
-   protección gratuita equivalente que haga obligatorios CI y revisión; no se
-   rebaja la puerta para sortear la limitación de GitHub Free.
-3. Verificar el CI del último SHA publicado y hacer entrar los checkpoints por
-   una ruta revisada. No empujar directamente a una rama protegida para
-   sortear la revisión.
-4. Solo cuando ambas protecciones sean operables, iniciar Jobicy como primer
-   corte de extremo a extremo. Su sombra Core debe conservar las ocho consultas
+2. Mantener `ReactPortfolioServer` privado y el coste en 0 €. Forgejo ya está
+   desplegado y protege ambos main; no repetir la evaluación de GitHub Pro,
+   GitLab o Bitbucket. El siguiente paso requiere al propietario: cambiar la
+   contraseña inicial, conservar los nuevos valores fuera del agente, publicar
+   los estados CI y aprobar las dos PR vigentes.
+3. Terminar primero la adopción protegida: fusionar en Forgejo, sincronizar los
+   SHA exactos a GitHub y comprobar que ambos deploys aceptan sólo esos main.
+   No empujar directamente a una rama protegida ni publicar un estado manual
+   sin que el verificador haya contrastado el run GitHub exacto.
+4. Solo cuando ambos repositorios hayan cruzado esa puerta, iniciar Jobicy como
+   primer corte de extremo a extremo. Su sombra Core debe conservar las ocho consultas
    inventariadas y resolver o clasificar con evidencia el síntoma SwissJob
    `69 descargadas / 0 persistidas / 17 ciclos` antes del corte.
 5. Añadir aquí un checkpoint después de cada fuente u oleada con estados,
@@ -336,6 +338,57 @@ continuar sin rediseñarlo.
   retiraron al terminar. No se instaló software en el NAS, no cambió producción
   y no se usó código real. El siguiente paso es diseñar el gate durable mínimo
   que reutilice el CI GitHub existente, sin desplegar otro runner.
+
+### Checkpoint 2026-10-14 · gate gratuito desplegado; adopción pendiente
+
+- Forgejo 16.0.5 quedó desplegado por digest y coste cero en el NAS, sin runner,
+  registro, hooks, webhooks, OpenID ni puerto SSH publicado. Responde pass en
+  base y caché, usa 131,3 MiB de 256 MiB, 0,25 CPU, no sufrió OOM y sólo publica
+  127.0.0.1:3001. Sus directorios 1000:100 tienen modo 700.
+- Se usa una sola instancia para los dos repositorios. GitHub sigue ejecutando
+  todo el CI; Forgejo es la autoridad de merge porque ReactPortfolioServer no
+  admite protección privada gratuita y la única cuenta GitHub no puede revisar
+  su propia PR de The_Swiss_Job. No se creó otra cuenta externa ni se contrató
+  ningún servicio.
+- ReactPortfolioServer y The_Swiss_Job son privados en Forgejo y parten
+  exactamente de 5bf457a y e59283b. Ambos main rechazan push directo incluso
+  para administradores, exigen un estado GitHub agregado, una aprobación fresca
+  de VRicardoP, CODEOWNER sin resolver, rama actualizada y aplican el control a
+  administradores. La lectura completa de ambas políticas coincidió.
+- Sólo quedan VRicardoP administrador y dt144-agent no administrador con write.
+  La cuenta administrativa de bootstrap fue eliminada y el único token
+  temporal conocido del propietario fue revocado. La contraseña inicial del
+  propietario sigue marcada para cambio obligatorio y debe sustituirla el
+  propietario sin revelar el nuevo valor.
+- La PR Forgejo 1 de ReactPortfolio está abierta en 72478d8. GitHub Actions run
+  38527933998 terminó verde con el job test; todavía no se publicó su estado
+  Forgejo ni se aprobó. La autoaprobación devolvió 422, el merge del autor 405
+  User not allowed to merge PR, el push directo fue rechazado por protected
+  branch y la guarda de despliegue rechazó el SHA de feature.
+- Los scripts de ambos repositorios consultan Forgejo mediante curl local sobre
+  ssh nas: el port-forward TCP de QNAP se comprobó y resetea conexiones. Los
+  deploys reales exigirán el SHA completo del main protegido y su estado verde.
+  ReactPortfolio elimina además el cargador antiguo de la etiqueta mutable
+  latest.
+- Un dump real de 8.317.326 bytes se restauró en un contenedor sin red: SQLite
+  reconstruyó dos usuarios, dos repositorios y dos protecciones; ambos
+  repositorios pasaron git fsck y conservaron los SHA. Todo el ensayo se borró.
+  El backup diario ya incluye el dump nativo y tiene 4/4 escenarios focales.
+- El primer backup completo falló cerrado antes de retención porque aún fijaba
+  la imagen retirada swissjob-core:d2a38e9. La causa se corrigió resolviendo y
+  validando la imagen exacta de core-api viva. El ciclo corregido terminó con
+  BACKUP_OK a las 2026-10-14T07:58:15Z: verificó las tres bases, registró el
+  dump Forgejo de 8.347.024 bytes, aplicó retención, escribió su marca de éxito
+  y liberó el lock. El lote daily-20261014T071731Z conserva además los tres TOC,
+  erasures.json y retention-result.json.
+- Evidencia estructurada:
+  [2026-10-14-dt144-forgejo-deployment.json](../audits/2026-10-14-dt144-forgejo-deployment.json)
+  y procedimiento:
+  [FORGEJO_GATE_RUNBOOK.md](FORGEJO_GATE_RUNBOOK.md).
+- No cambió ninguna fuente, scope, credencial de portal, productor ni runtime
+  de producto. La Fase -1 sigue **NO SUPERADA** hasta que el propietario cambie
+  su contraseña, publique los dos estados CI, apruebe ambas PR, se fusionen y
+  sincronicen ambos main y las guardas acepten sólo esos SHA protegidos.
 
 **Prohibición de cierre parcial:** DT-144 no se cierra porque exista un adaptador,
 un scope o una ruta denominada `core_primary`. Solo se cierra cuando no queden

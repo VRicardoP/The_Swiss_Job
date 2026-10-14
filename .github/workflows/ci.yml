@@ -98,6 +98,9 @@ jobs:
           alembic upgrade head
           alembic check
       - run: pytest
+      - name: Gate gratuito de rama protegida
+        working-directory: ${{ github.workspace }}
+        run: python -m pytest scripts/test_forgejo_gate.py -q
 
   frontend-lint:
     runs-on: ubuntu-latest
@@ -222,6 +225,8 @@ jobs:
           # T13 §7: la topologia REAL del NAS esta versionada en deploy/nas con los
           # secretos sustituidos por variables. Este paso impide que vuelvan.
           python3 scripts/check_no_secrets.py deploy/nas
+          python3 scripts/check_no_secrets.py deploy/forgejo
+          docker compose -f deploy/forgejo/compose.yml config -q
           # `qnap` y `rehearsal.qnap` NO se validan aqui: sus `env_file` son rutas
           # ABSOLUTAS del NAS (/share/Public/...) que no pueden existir en CI.
           # Verificado, no supuesto: fallan con "env file ... not found".

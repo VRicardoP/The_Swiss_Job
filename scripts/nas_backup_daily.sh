@@ -6,6 +6,8 @@ umask 077
 D=/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker
 R=/share/CACHEDEV1_DATA/Public/unification-e10.XXkEjw88
 OPS="$R/e13-erasure"
+RETENTION_IMAGE="$("$D" inspect swissjob-core-api-r5 --format '{{.Config.Image}}')"
+[[ "$RETENTION_IMAGE" =~ ^swissjob-core:point5-[a-f0-9]+$ ]]
 test -d "$OPS"
 # Cron must invoke this as Ricardo, not root; retain private user ownership.
 test "$(id -u)" = 1000
@@ -22,7 +24,7 @@ retention() {
   "$D" run --rm --network none --read-only --cap-drop ALL \
     --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
     -v "$R:$R" -v "$OPS/backup_retention.py:/tool.py:ro" \
-    --entrypoint python swissjob-core:d2a38e9 /tool.py "$OPS/retention.json" "$@"
+    --entrypoint python "$RETENTION_IMAGE" /tool.py "$OPS/retention.json" "$@"
 }
 backup() {
   container=$1 db=$2 role=$3
@@ -45,6 +47,18 @@ backup() {
 backup swissjob-postgres swissjobhunter swissjob
 backup swissjob-postgres swissjobhunter_r5_rehearsal swissjob
 backup portfolio_db proyecto lothar
+forgejo_archive="$batch/forgejo.tar.gz"
+forgejo_created=$(date +%s)
+if ! "$D" exec -u git dt144-forgejo forgejo dump --quiet --file - --type tar.gz --skip-log --skip-index --skip-repo-archives > "$forgejo_archive.partial"; then
+  retention --register "$forgejo_archive.partial" --kind temporary --database forgejo --created-at "$forgejo_created"
+  exit 1
+fi
+if ! tar -tzf "$forgejo_archive.partial" >/dev/null; then
+  retention --register "$forgejo_archive.partial" --kind temporary --database forgejo --created-at "$forgejo_created"
+  exit 1
+fi
+mv "$forgejo_archive.partial" "$forgejo_archive"
+retention --register "$forgejo_archive" --kind backup --database forgejo --created-at "$forgejo_created" --verified
 # Minimal suppression inventory is independent of old dumps, and regenerated
 # from the live authority. Keep snapshots: never expire them as ordinary backups.
 "$D" exec swissjob-core-api-r5 python -c \

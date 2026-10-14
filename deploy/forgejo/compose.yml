@@ -1,0 +1,28 @@
+services:
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:16.0.5@sha256:cf5f5ae6acf2ababca0ee3d255705b83a47f35b25e07fc931d694d60664053fe
+    container_name: dt144-forgejo
+    restart: unless-stopped
+    network_mode: bridge
+    cpus: 0.25
+    mem_limit: 256m
+    environment:
+      USER_UID: "1000"
+      USER_GID: "100"
+      FORGEJO__actions__ENABLED: "false"
+      FORGEJO__openid__ENABLE_OPENID_SIGNIN: "false"
+      FORGEJO__openid__ENABLE_OPENID_SIGNUP: "false"
+      FORGEJO__repository__DEFAULT_PRIVATE: private
+      FORGEJO__security__DISABLE_GIT_HOOKS: "true"
+      FORGEJO__security__DISABLE_WEBHOOKS: "true"
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__server__DISABLE_SSH: "true"
+      FORGEJO__server__DOMAIN: localhost
+      FORGEJO__server__OFFLINE_MODE: "true"
+      FORGEJO__server__ROOT_URL: http://localhost:3001/
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+    ports:
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - /share/Public/swissjob/dt144-forgejo/data:/data
+      - /etc/localtime:/etc/localtime:ro

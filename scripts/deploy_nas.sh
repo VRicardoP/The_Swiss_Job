@@ -69,7 +69,8 @@ if [[ -n "$(git status --short -- "$ARBOL")" ]]; then
   exit 1
 fi
 
-SHA="$(git rev-parse --short HEAD)"
+FULL_SHA="$(git rev-parse HEAD)"
+SHA="${FULL_SHA:0:7}"
 D=/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker
 C=/share/Public/swissjob/bin-docker-compose
 E=/share/CACHEDEV1_DATA/Public/unification-e15-20260914
@@ -122,6 +123,8 @@ if [[ "$MODO" == "--dry-run" ]]; then
   echo "(dry-run: no se construye ni se toca el NAS)"
   exit 0
 fi
+
+python3 scripts/forgejo_gate.py check-release "$FULL_SHA"
 
 if [[ "$MODO" != "--config-only" ]]; then
   echo "== construyendo"
