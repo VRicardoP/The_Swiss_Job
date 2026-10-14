@@ -810,6 +810,109 @@ Core y apagado local; suites/CI; checkpoint antes de avanzar.
   push y CI. Si la CI Core falla, resolver y documentar antes de tocar el
   consumidor.
 
+#### Avance verificable · SwissDevJobs centralizado en ramas
+
+- La CI Core `38568433424` terminó verde en sus 9 trabajos. ReactPortfolio se
+  mantiene en `feat/dt144-free-gate`, partiendo de `fda24a9`; su `main` remoto
+  continúa en `5bf457afbde5b44a995acce4ef241324f066f836` y producción no se ha
+  modificado.
+- `core_source_compat` sirve ya las seis rutas SwissDevJobs desde el agregado
+  Core. Conserva la forma pública histórica, identidad, orden, límite de 300,
+  ventana de 90 días, fechas desconocidas, salarios, logo, remoto, tipo, texto,
+  diez tags visibles y estadísticas sobre todos los tags. Reutiliza
+  `parse_job_posting_date` y `MAX_JOB_AGE_DAYS`; no añade dependencia ni una
+  segunda regla temporal.
+- El productor local queda desconectado en el worktree: `main.py` ya no importa
+  ni monta su router, `get_all_providers()` ya no lo devuelve y la importación
+  del módulo de rollback no registra caché ni actualización. Backend y worker
+  lo añaden al manifiesto de fuentes retiradas y el ratchet local baja de 6 a
+  5. El código antiguo no se borra aún para conservar el rollback de rama.
+- La comparación aislada sobre la captura viva, sin red y usando el adaptador
+  Core más el consumidor real, dio 210 filas de entrada, 157 visibles y cero
+  diferencias. Las huellas directa y consumidora coinciden en
+  `daa03fb296d2f3e2e07cc1f18cd0de67a67e3ed83200c7783adbb73d77696fac`.
+  La variante no incluye descripciones porque fuerza 404 en detalle; la paridad
+  completa con las 20 descripciones ya quedó probada en Core en el bloque
+  anterior.
+- Validación focal: batería amplia 345 pruebas, con un primer
+  fallo exclusivo de la aserción que comparaba `httpx.QueryParams` con `dict`;
+  tras convertirlo explícitamente pasó completa. La focal final del adaptador,
+  apagado y provider pasó 218/218; el ratchet informa cinco cosechadores. Una
+  primera ejecución temporal de paridad no importó por faltar el entorno
+  obligatorio de Settings y se repitió con los valores de prueba versionados,
+  sin acceder a base, Redis, portales ni producción. La suite completa terminó
+  con 2.181 aprobadas, una omitida y 115 avisos conocidos en 3 min 19 s.
+- Ruff semántico de los Python modificados, salvo los E402 históricos de
+  `main.py`, y `git diff --check` están verdes. El lint global enumera 107
+  incidencias preexistentes repartidas por el repositorio; no se mezclaron.
+  `ruff format --check` propone reformatear los ocho ficheros completos igual
+  que en el traspaso ICTJobs; tampoco se aplicó. El hook del commit avisó que
+  `black` no está instalado y omitió su comprobación; pruebas, diff y controles
+  posteriores sí se ejecutaron con el entorno aislado.
+- ReactPortfolio quedó versionado y publicado en `fe0c77d`; la CI
+  `38570851745` terminó verde. Core está en `63fe4e5` y su CI `38568433424`
+  también terminó verde 9/9. El checkpoint documental intermedio quedó
+  publicado en `b0af7e3`.
+- En las ramas quedan 20 portales por implementar: 15 de SwissJob y 5 de
+  ReactPortfolio. Producción sigue en 26 portales únicos/27 productores, porque
+  los `main`, scopes y despliegues reales permanecen intactos hasta el corte
+  final aprobado.
+- **Rollback:** ningún scope productivo existe y el módulo local continúa
+  disponible pero inerte. Revertir `fe0c77d` reconecta su router, provider,
+  registros y manifiestos; revertir `63fe4e5` retira la capacidad Core.
+- **Siguiente paso exacto si hay relevo:** continuar Job-Room desde el
+  preflight siguiente; no rehacer SwissDevJobs ni tocar producción.
+
+### Checkpoint de relevo 2026-10-14 · Job-Room EN CURSO, preflight cerrado
+
+- El trazado confirma un único productor activo:
+  `ReactPortfolio/services/jobroom_provider_impl.py`, conectado a caché,
+  worker, barrido circadiano, lecturas stale y refresco administrativo. Expone
+  seis rutas (`recent`, `stats`, `by-tag`, `by-location`, `refresh-cache` y
+  `health`). SwissJob no contiene provider o scraper Job-Room y Core no tiene
+  adaptador ni scope.
+- El contrato actual se comprobó con un POST público sin credencial a
+  `jobAdvertisements/_search`: `page=0`, `size=300`, `sort=date_desc`, ventana
+  `onlineSince=7` y los cinco códigos ICT CHISCO3 ya versionados. El servidor
+  informó 1.031 coincidencias y cuatro páginas, pero el productor vigente sólo
+  consume las primeras 300; ampliar la paginación cambiaría funcionalidad y no
+  forma parte de esta migración.
+- La captura saneada contiene 300 filas y 300 ids únicos, sin ids ni títulos
+  ausentes; ocupa 1.653.407 bytes y su SHA-256 es
+  `b9c4c07ef168ad1bf6f0f74f4b32be8e52367a97373928f5a50c04f49cc9efeb`.
+  Presenta 104 ubicaciones, 300 descripciones inline, 59 tags estadísticos,
+  cero ofertas `HOME_WORK`, cuatro códigos de idioma y cinco ofertas cuyo
+  conjunto completo supera los diez tags visibles.
+- La ejecución exacta del productor legado sobre esa captura procesó y mantuvo
+  300 ofertas, una petición correcta y cero fallos. Huellas: ofertas
+  `0fec95a5f3cbdc81253bdd27d2c9678a831e4c233eb8f6c075527f8eb627b7f4`,
+  normalizadas
+  `71e44326befd4d09ccdd0109c2d61abdce01168160910d22e2061806cf1deb2b`,
+  ubicaciones
+  `a8583e223a130ffc02b27ec2d4600f0ff0f2f385128c5415138a48bb82d9cb86`
+  y tags
+  `4e0663d77a90f849b211ed5deb2926163463c407e0fb4331dc907a717d2562f6`.
+  La captura actual produce 19 hashes title/empresa repetidos; la identidad
+  autoritativa sigue siendo el id upstream, por lo que no se deben deduplicar.
+- Se comprobó que las taxonomías técnicas de ReactPortfolio y Core contienen
+  exactamente los mismos 77 términos. El helper Core actual no aplica los
+  límites de palabra que Job-Room necesita; esa diferencia debe cerrarse sin
+  alterar el comportamiento por defecto de las fuentes existentes. Los idiomas
+  forman parte de los tags visibles pero no de sus contadores, y los contadores
+  incluyen skills más allá del límite visual: ambas reglas requieren prueba
+  explícita.
+- Artefactos temporales no versionados:
+  `/tmp/dt144-jobroom-feed.json`, `/tmp/dt144-jobroom-headers.txt` y
+  `/tmp/dt144_jobroom_legacy_baseline.py`. No contienen credenciales de portal;
+  las cabeceras temporales incluyen una cookie efímera del servidor y no deben
+  copiarse al repositorio.
+- **Siguiente paso exacto si hay relevo:** implementar en Core el POST acotado,
+  normalización anidada, identidad, fecha `publication.startDate`, tags visibles
+  frente a estadísticos y provisionador opt-in; cubrir respuesta inválida,
+  filas parciales, cuerpo/parámetros exactos y doble ciclo PostgreSQL. Comparar
+  luego la proyección completa contra las cuatro huellas antes de modificar el
+  consumidor ReactPortfolio.
+
 ### Registro cerrado · Forgejo no forma parte de DT-144
 
 La alternativa se evaluó temporalmente y se retiró por decisión expresa del
