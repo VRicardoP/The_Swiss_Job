@@ -33,7 +33,7 @@ CONTENT_FIELDS = (
 # salary/location text at the canonical boundary. TEXT_FIELDS stays unchanged.
 SEARCH_TEXT_FIELDS = ("canton", "language", "seniority", "contract_type")
 SEARCH_AMOUNT_FIELDS = ("salary_min_chf", "salary_max_chf")
-DISPLAY_TEXT_FIELDS = ("salary_currency", "employment_type")
+DISPLAY_TEXT_FIELDS = ("salary_currency", "employment_type", "prof_group")
 DISPLAY_AMOUNT_FIELDS = ("salary_min", "salary_max")
 # Campos que definen el TEXTO embebible (ADR-02): salario/location fuera.
 TEXT_FIELDS = ("title", "company", "description", "tags")

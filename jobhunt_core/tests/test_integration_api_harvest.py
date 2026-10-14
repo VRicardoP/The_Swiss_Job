@@ -352,6 +352,7 @@ def test_source_aggregate_is_bounded_and_uses_latest_raw(db):  # noqa: F811
         "categories": {"education": 1, "software-development": 1},
         "job_types": {"Contract": 1, "Full-time": 1},
         "cantons": {"ZH": 1},
+        "prof_groups": {},
         "remote": 1,
         "onsite": 1,
     }
@@ -439,6 +440,37 @@ def test_source_aggregate_preserves_himalayas_display_fields(db):  # noqa: F811
     assert item["salary_currency"] == "EUR"
     assert item["job_type"] == "Contract"
     assert item["logo"] == "https://cdn.example/logo.png"
+
+
+def test_source_aggregate_preserves_ictjobs_professional_groups(db):  # noqa: F811
+    factory, created = db
+    source, _scope_ids = _seed_source(factory, created, scopes=1)
+    _external_id, _incarnation = _seed_listing(
+        factory,
+        created,
+        source,
+        content={
+            "title": "System Engineer",
+            "company": "",
+            "location": "Bern",
+            "tags": ["Cloud"],
+            "prof_group": "System Engineering",
+        },
+        raw={"date": "2026-10-14T00:23:00"},
+    )
+    _client_id, _key_id, token = _issue(
+        factory, created, "ictjobs-reader", ["vacancies:read"]
+    )
+
+    response = _api(
+        factory,
+        f"/v1/harvest/sources/{source}/aggregate?item_limit=1&top_n=10",
+        token=token,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["counts"]["prof_groups"] == {"System Engineering": 1}
+    assert body["items"][0]["prof_group"] == "System Engineering"
 
 
 def test_source_aggregate_requires_read_scope_and_known_source(db):  # noqa: F811

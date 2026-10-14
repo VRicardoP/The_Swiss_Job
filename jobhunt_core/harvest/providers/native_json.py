@@ -3,7 +3,8 @@
 Each request refreshes the provider's published feed, not an invented complete
 historical archive. Remotive uses the existing 200-item feed; Jobicy uses a
 50-item feed PER tag/geo scope; RemoteOK has one global feed; Himalayas keeps
-the legacy three pages of 20; SwissTechJobs keeps the two-page WordPress loop.
+the legacy three pages of 20; SwissTechJobs keeps its two-page WordPress loop;
+ICTJobs keeps its five pages of 20 with embedded taxonomies.
 These adapters preserve the original object for the sink; parsing canonical
 content is separate. They do not import the BFF, access its DB, or enable any
 source.
@@ -44,6 +45,7 @@ ENDPOINTS = {
     "remoteok": "https://remoteok.com/api",
     "himalayas": "https://himalayas.app/jobs/api",
     "swisstechjobs": "https://www.swisstechjobs.com/wp-json/wp/v2/job-listings",
+    "ictjobs": "https://ictjobs.ch/wp-json/wp/v2/posts",
 }
 MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 HIMALAYAS_PAGE_SIZE = 20
@@ -52,6 +54,8 @@ HIMALAYAS_PAGE_DELAY_SECONDS = 0.5
 WORDPRESS_PAGE_SIZE = 100
 WORDPRESS_MAX_PAGES = 2
 WORDPRESS_PAGE_DELAY_SECONDS = 0.5
+ICTJOBS_PAGE_SIZE = 20
+ICTJOBS_MAX_PAGES = 5
 
 # Same title-only exclusions as the previous Working Nomads producer.
 WORKINGNOMADS_TECH_EXCLUDE = (
@@ -160,9 +164,69 @@ def _swisstechjobs_content(raw):
     }
 
 
+def _ictjobs_terms(raw):
+    terms = {"tags": [], "location": None, "prof_group": None, "employment_type": None}
+    embedded = raw.get("_embedded")
+    for group in embedded.get("wp:term", []) if isinstance(embedded, dict) else []:
+        if not isinstance(group, list):
+            continue
+        for term in group:
+            if not isinstance(term, dict):
+                continue
+            taxonomy, name = term.get("taxonomy"), term.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            if taxonomy == "post_tag":
+                terms["tags"].append(name)
+            elif taxonomy in {"ctx_work_location", "ctx_flake_location"}:
+                terms["location"] = terms["location"] or name
+            elif taxonomy == "ctx_prof_group":
+                terms["prof_group"] = terms["prof_group"] or name
+            elif taxonomy == "ctx_employment_type":
+                terms["employment_type"] = terms["employment_type"] or name
+    return terms
+
+
+def _ictjobs_content(raw):
+    title_value = raw.get("title")
+    title = (
+        _plain(title_value.get("rendered")) if isinstance(title_value, dict) else None
+    ) or ""
+    acf = raw.get("acf")
+    acf = acf if isinstance(acf, dict) else {}
+    intro = _plain(acf.get("intro")) or ""
+    description = _plain(acf.get("description")) or ""
+    full_text = f"{intro} {description}".strip()
+    terms = _ictjobs_terms(raw)
+    # Preserve the legacy producer's set-derived selection before its 10-tag cap.
+    tags = list(set([*terms["tags"], *extract_tech_skills(title, full_text)]))
+    salary_min, salary_max = acf.get("salary_min", "0"), acf.get("salary_max", "0")
+    try:
+        salary_min = int(salary_min) if salary_min and salary_min != "0" else None
+        salary_max = int(salary_max) if salary_max and salary_max != "0" else None
+    except (TypeError, ValueError):
+        salary_min = salary_max = None
+    return {
+        "title": title,
+        "company": "",
+        "description": full_text,
+        "location": acf.get("location") or terms["location"] or "Switzerland",
+        "tags": tags[:10],
+        "remote": acf.get("has_home_office", False),
+        "salary": None,
+        "salary_min": salary_min,
+        "salary_max": salary_max,
+        "salary_currency": "CHF" if salary_min or salary_max else None,
+        "employment_type": terms["employment_type"],
+        "prof_group": terms["prof_group"],
+    }
+
+
 def _content(name, raw):
     if name == "swisstechjobs":
         return _swisstechjobs_content(raw)
+    if name == "ictjobs":
+        return _ictjobs_content(raw)
     jobicy = name == "jobicy"
     remoteok = name == "remoteok"
     himalayas = name == "himalayas"
@@ -285,16 +349,20 @@ def register_handlers():
             if name == "himalayas"
             else ("title", "company_name")
         )
-        if name == "swisstechjobs":
+        if name in {"swisstechjobs", "ictjobs"}:
             register_extractor(
                 name,
-                lambda raw: (
+                lambda raw, source=name: (
                     _plain(raw.get("title", {}).get("rendered"))
                     if isinstance(raw.get("title"), dict)
                     else None,
-                    raw.get("meta", {}).get("_company_name")
-                    if isinstance(raw.get("meta"), dict)
-                    else None,
+                    (
+                        raw.get("meta", {}).get("_company_name")
+                        if isinstance(raw.get("meta"), dict)
+                        else None
+                    )
+                    if source == "swisstechjobs"
+                    else "",
                 ),
             )
         else:
@@ -325,6 +393,7 @@ def _listing(name, raw):
     if not isinstance(raw, dict):
         return None
     meta = raw.get("meta") if isinstance(raw.get("meta"), dict) else {}
+    acf = raw.get("acf") if isinstance(raw.get("acf"), dict) else {}
     apply_url = (
         _valid_url(raw.get("apply_url"))
         if name == "remoteok"
@@ -332,13 +401,15 @@ def _listing(name, raw):
         if name == "himalayas"
         else _valid_url(meta.get("_application"))
         if name == "swisstechjobs"
+        else _valid_url(acf.get("direct_link"))
+        if name == "ictjobs" and acf.get("use_direct_link")
         else None
     )
     url = _valid_url(
         raw.get("applicationLink")
         if name == "himalayas"
         else raw.get("link")
-        if name == "swisstechjobs"
+        if name in {"swisstechjobs", "ictjobs"}
         else raw.get("url")
     )
     if url is None and name == "remoteok" and raw.get("slug"):
@@ -397,7 +468,11 @@ async def _fetch_body(name, http, query):
         headers={"User-Agent": "SwissJobHunter/1.0"},
         follow_redirects=True,
     ) as response:
-        if name == "swisstechjobs" and response.status_code == 400:
+        if (
+            name in {"swisstechjobs", "ictjobs"}
+            and query.get("page", 1) > 1
+            and response.status_code == 400
+        ):
             try:
                 error = httpx.Response(200, content=await response.aread()).json()
             except (ValueError, UnicodeError):
@@ -432,7 +507,7 @@ def _rows_of(name, body):
     else:
         rows = (
             body
-            if name in {"workingnomads", "swisstechjobs"}
+            if name in {"workingnomads", "swisstechjobs", "ictjobs"}
             else body.get("jobs")
             if isinstance(body, dict)
             else None
@@ -481,6 +556,11 @@ class NativeJSONProvider(BaseProvider):
                 for page in range(1, WORDPRESS_MAX_PAGES + 1)
             )
             if self.name == "swisstechjobs"
+            else tuple(
+                {"page": page, "per_page": ICTJOBS_PAGE_SIZE, "_embed": ""}
+                for page in range(1, ICTJOBS_MAX_PAGES + 1)
+            )
+            if self.name == "ictjobs"
             else (_query_for(self.name, params),)
         )
         rows, pages, fetch_error = [], 0, None
@@ -501,7 +581,7 @@ class NativeJSONProvider(BaseProvider):
             if index < len(queries) - 1:
                 if self.name == "himalayas":
                     await asyncio.sleep(HIMALAYAS_PAGE_DELAY_SECONDS)
-                elif self.name == "swisstechjobs":
+                elif self.name in {"swisstechjobs", "ictjobs"}:
                     await asyncio.sleep(WORDPRESS_PAGE_DELAY_SECONDS)
         listings = tuple(
             item for row in rows if (item := _listing(self.name, row)) is not None

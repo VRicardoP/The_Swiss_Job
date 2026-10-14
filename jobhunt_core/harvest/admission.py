@@ -29,6 +29,7 @@ DATE_FIELDS = {
     "remoteok": "date",
     "himalayas": "pubDate",
     "swisstechjobs": "date",
+    "ictjobs": "date",
     "weworkremotely": "pubDate",
     "euremotejobs": "pubDate",
     "jobspresso": "pubDate",

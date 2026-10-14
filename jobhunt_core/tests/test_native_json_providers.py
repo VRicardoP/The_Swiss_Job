@@ -347,6 +347,102 @@ def test_swisstechjobs_rejects_unrelated_400_as_failure(monkeypatch):
     assert not result.complete and result.error == "page_fetch_failed"
 
 
+def test_ictjobs_five_page_contract_preserves_acf_and_taxonomies(monkeypatch):
+    from jobhunt_core.harvest.providers import native_json
+
+    monkeypatch.setattr(native_json, "WORDPRESS_PAGE_DELAY_SECONDS", 0)
+    raw = {
+        "id": 91527,
+        "date": "2026-10-14T00:23:00",
+        "link": "https://ictjobs.ch/devops-engineer/",
+        "title": {"rendered": "DevOps Engineer &#8211; 80–100%"},
+        "acf": {
+            "intro": "<p>Join our platform team.</p>",
+            "description": "<p>Build with <b>Docker</b> and Azure.</p>",
+            "location": "",
+            "has_home_office": True,
+            "direct_link": "https://apply.example/91527",
+            "use_direct_link": True,
+            "salary_min": "90000",
+            "salary_max": "110000",
+        },
+        "_embedded": {
+            "wp:term": [
+                [{"taxonomy": "post_tag", "name": "Cloud"}],
+                [{"taxonomy": "ctx_work_location", "name": "Bern"}],
+                [{"taxonomy": "ctx_prof_group", "name": "System Engineering"}],
+                [{"taxonomy": "ctx_employment_type", "name": "Festanstellung"}],
+            ]
+        },
+        "unknown_upstream_field": {"retained": True},
+    }
+    pages = [
+        [{**raw, "id": page, "link": f"https://ictjobs.ch/job-{page}/"}]
+        for page in range(1, 6)
+    ]
+
+    result, requests = fetch_pages("ictjobs", pages)
+    listing = result.listings[0]
+    content = normalize_offer("ictjobs", listing.payload)
+
+    assert [request.url.params.get("page") for request in requests] == [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+    ]
+    assert all(request.url.params.get("per_page") == "20" for request in requests)
+    assert all(request.url.params.get("_embed") == "" for request in requests)
+    assert result.complete and result.pages_fetched == 5
+    assert result.next_cursor == {"items_seen": 5, "filtered": 0}
+    assert listing.external_id == "id:1"
+    assert listing.url == "https://ictjobs.ch/job-1/"
+    assert listing.apply_url == raw["acf"]["direct_link"]
+    assert listing.payload["unknown_upstream_field"] == {"retained": True}
+    assert content["title"] == "DevOps Engineer &#8211; 80–100%"
+    # Canonical normalization stores an absent company as null; the
+    # compatibility response restores the legacy empty string.
+    assert content["company"] is None
+    assert (
+        content["description"] == "Join our platform team. Build with Docker and Azure."
+    )
+    assert content["location"] == "Bern"
+    assert content["remote"] is True
+    assert content["salary_min"] == 90000
+    assert content["salary_max"] == 110000
+    assert content["salary_currency"] == "CHF"
+    assert content["employment_type"] == "Festanstellung"
+    assert content["prof_group"] == "System Engineering"
+    assert {"Cloud", "devops", "docker", "azure"}.issubset(content["tags"])
+    assert len(content["tags"]) <= 10
+
+
+def test_ictjobs_preserves_joint_salary_parse_failure():
+    raw = {
+        "id": 1,
+        "link": "https://ictjobs.ch/job-1/",
+        "title": {"rendered": "Engineer"},
+        "acf": {"salary_min": "90000", "salary_max": "120'000"},
+    }
+    result, _requests = fetch_pages("ictjobs", [[raw], []])
+    content = normalize_offer("ictjobs", result.listings[0].payload)
+    assert content.get("salary_min") is content.get("salary_max") is None
+    assert content.get("salary_currency") is None
+
+
+def test_ictjobs_first_page_400_is_not_a_terminal_empty_page():
+    with pytest.raises(httpx.HTTPStatusError):
+        fetch(
+            "ictjobs",
+            {
+                "code": "rest_post_invalid_page_number",
+                "data": {"status": 400},
+            },
+            status=400,
+        )
+
+
 @pytest.mark.parametrize(
     "name,payload",
     [
@@ -362,6 +458,7 @@ def test_swisstechjobs_rejects_unrelated_400_as_failure(monkeypatch):
         ("himalayas", []),
         ("himalayas", {"jobs": "changed"}),
         ("swisstechjobs", {}),
+        ("ictjobs", {}),
     ],
 )
 def test_invalid_envelope_is_error_not_empty(name, payload):
@@ -378,6 +475,7 @@ def test_invalid_envelope_is_error_not_empty(name, payload):
         ("remoteok", [{"legal": "metadata"}]),
         ("himalayas", {"jobs": []}),
         ("swisstechjobs", []),
+        ("ictjobs", []),
     ],
 )
 def test_explicit_empty_is_success(name, payload):
@@ -484,6 +582,11 @@ def test_swisstechjobs_rejects_filters_before_network():
         fetch("swisstechjobs", [], {"query": "python"})
 
 
+def test_ictjobs_rejects_filters_before_network():
+    with pytest.raises(ProviderConfigError):
+        fetch("ictjobs", [], {"query": "python"})
+
+
 def test_remoteok_builds_url_from_slug_when_source_url_is_missing():
     result, _ = fetch(
         "remoteok",
@@ -531,6 +634,7 @@ def test_native_registry_does_not_require_legacy_modules():
         "remoteok",
         "himalayas",
         "swisstechjobs",
+        "ictjobs",
     ):
         assert get_provider(name).name == name
         assert ensure_handler(name)

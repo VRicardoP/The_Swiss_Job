@@ -23,6 +23,7 @@ _SOURCE_AGGREGATE_SQL = sa.text(
              CASE WHEN jsonb_typeof(o.content->'tags')='array'
                   THEN o.content->'tags' ELSE '[]'::jsonb END AS tags,
              o.content->>'canton' AS canton,
+             o.content->>'prof_group' AS prof_group,
              latest.category, latest.categories_raw,
              COALESCE(o.content->>'employment_type', latest.job_type) AS job_type,
              latest.job_types_raw,
@@ -109,6 +110,7 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                'remote', remote,
                'tags', tags,
                'canton', canton,
+               'prof_group', prof_group,
                'category', category,
                'categories', COALESCE((
                  SELECT jsonb_agg(value) FROM jsonb_array_elements(categories_raw)
@@ -185,6 +187,12 @@ _SOURCE_AGGREGATE_SQL = sa.text(
         SELECT canton AS value FROM source_rows
       ) values_ WHERE value IS NOT NULL AND btrim(value)<>''
       GROUP BY value ORDER BY n DESC, value LIMIT :top_n
+    ),
+    prof_group_counts AS (
+      SELECT value, count(*)::int AS n FROM (
+        SELECT prof_group AS value FROM source_rows
+      ) values_ WHERE value IS NOT NULL AND btrim(value)<>''
+      GROUP BY value ORDER BY n DESC, value LIMIT :top_n
     )
     SELECT EXISTS(SELECT 1 FROM sources WHERE name=:source) AS found,
            (SELECT count(*)::int FROM source_rows) AS total,
@@ -214,6 +222,8 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                     '{}'::jsonb) AS job_types,
            COALESCE((SELECT jsonb_object_agg(value, n) FROM canton_counts),
                     '{}'::jsonb) AS cantons,
+           COALESCE((SELECT jsonb_object_agg(value, n) FROM prof_group_counts),
+                    '{}'::jsonb) AS prof_groups,
            (SELECT count(*) FILTER (WHERE remote IS TRUE)::int
             FROM source_rows) AS remote,
            (SELECT count(*) FILTER (WHERE remote IS FALSE)::int
@@ -259,6 +269,7 @@ async def fetch_source_aggregate(
             "categories": row["categories"],
             "job_types": row["job_types"],
             "cantons": row["cantons"],
+            "prof_groups": row["prof_groups"],
             "remote": row["remote"],
             "onsite": row["onsite"],
         },

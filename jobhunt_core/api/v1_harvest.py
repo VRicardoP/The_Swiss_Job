@@ -42,6 +42,7 @@ class SourceAggregateItemDTO(BaseModel):
     remote: bool | None = None
     tags: list[str] = []
     canton: str | None = None
+    prof_group: str | None = None
     category: str | None = None
     categories: list[str] = []
     job_type: str | None = None
@@ -56,6 +57,7 @@ class SourceAggregateCountsDTO(BaseModel):
     categories: dict[str, int]
     job_types: dict[str, int]
     cantons: dict[str, int]
+    prof_groups: dict[str, int]
     remote: int = Field(ge=0)
     onsite: int = Field(ge=0)
 

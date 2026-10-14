@@ -1,0 +1,93 @@
+{
+  "source": "ictjobs",
+  "status": "core_validated_consumer_pending",
+  "production_changed": false,
+  "capture": {
+    "endpoint": "https://ictjobs.ch/wp-json/wp/v2/posts",
+    "query": {"per_page": 20, "_embed": ""},
+    "pages_consumed_by_legacy": 5,
+    "rows": 100,
+    "unique_ids": 100,
+    "unique_links": 100,
+    "upstream_total": 185,
+    "upstream_total_pages": 10,
+    "page_6_verified_but_outside_legacy_window": true,
+    "sha256": {
+      "page1": "ffe93d6cc4a789802ed25ad3f8bbdfa4d89fca663593ed2962306ab45ea116cb",
+      "page2": "4500bf032eec498909c28a244c4e5ac23ca8afdd2a77e27cd99653a554cdca0b",
+      "page3": "c252b7fb188159c225f2f674a3d51a960e1041f73ace04464126e28a9fc9f925",
+      "page4": "49fb4a9a45a82b74b17a8efff5c4ba175b895fb4d17ad72ba21bc7d7a834d5b9",
+      "page5": "c250c4c51a59cb8397cb1ab59001d72bc272aa6c9016d6e992f1fa4afbde9419",
+      "page6": "fbf5c482b4b096af8d7f669d7394185ae872e0153d63a197219a45ec4644b552"
+    },
+    "live_shape": {
+      "acf_objects": 0,
+      "acf_arrays": 100,
+      "company_nonempty": 0,
+      "description_nonempty": 0,
+      "remote_true": 0,
+      "salary_present": 0
+    }
+  },
+  "field_parity": {
+    "rows": 100,
+    "matched": 100,
+    "mismatches": [],
+    "counts_match": true,
+    "legacy_sha256": "8fffc8d059bc63788695d5c6360640903a7c7eb8414ca84214774427633ca72a",
+    "projected_sha256": "8fffc8d059bc63788695d5c6360640903a7c7eb8414ca84214774427633ca72a",
+    "tag_counts": 42,
+    "location_counts": 9,
+    "professional_group_counts": 9,
+    "preserved_quirks": [
+      "the five-page 100-row cap remains even though the portal currently reports 185 rows",
+      "tag selection remains set-derived before the 10-tag cap",
+      "one invalid Swiss-formatted salary bound clears both salary bounds"
+    ]
+  },
+  "shadow": {
+    "cycles": [
+      {"status": "ok", "listings_received": 100, "pages": 5},
+      {"status": "ok", "listings_received": 100, "pages": 5}
+    ],
+    "stored": {
+      "external_ids": 100,
+      "listings": 100,
+      "raw_revisions": 100,
+      "offer_revisions": 100
+    },
+    "aggregate": {
+      "total": 100,
+      "enabled_scopes": 1,
+      "observed_scopes": 1,
+      "max_consecutive_failures": 0,
+      "published_dates": 100,
+      "locations": 9,
+      "tags_case_sensitive": 43,
+      "tags_legacy_case_folded": 42,
+      "professional_groups": 9,
+      "companies": 0,
+      "descriptions": 0,
+      "remote_true": 0,
+      "salary_bounds": 0,
+      "apply_urls": 0
+    },
+    "purged_after_validation": true
+  },
+  "validation": {
+    "core_unit_focused": "79 passed",
+    "core_integration_focused": "3 passed, 6 deselected",
+    "core_full": "1587 passed, 1 skipped, 1 warning",
+    "ruff_core": "passed",
+    "source_ownership": {"core_owned": 16, "local_pending": 26, "sources": 58},
+    "core_commit": null,
+    "core_ci": "not_started"
+  },
+  "incident_log": [
+    "An initial uncommitted manifest patch matched the Adzuna block instead of ICTJobs. The ownership ratchet failed with missing adzuna and unexpected ictjobs; Adzuna was restored, ICTJobs was updated with source-specific context, and the ratchet then passed.",
+    "The first full suite exposed an exact-counts fixture missing the new empty prof_groups counter; the fixture was corrected and its complete file passed 8/8.",
+    "A second full-suite attempt was stopped and restarted after tightening WordPress 400 handling so only pages after the first can signal a normal terminal page."
+  ],
+  "rollback": "Production and both main branches are unchanged. No production source or scope was created; the isolated shadow scope and all test data were purged.",
+  "next_step": "Commit Core and obtain green CI, then move the five existing ReactPortfolio ICTJobs routes to the shared Core compatibility adapter and disable every local trigger."
+}

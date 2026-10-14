@@ -248,14 +248,15 @@
       "last_success": [{"product": "reactportfolio", "at": "2026-10-13T16:22:58.038316+00:00", "evidence": "successful persisted snapshot with 100 cached entries and zero normalization errors"}],
       "production_metrics": {"cached_entries": 100, "reported_total": 100, "normalization_errors": 0, "duplicate_stable_keys": 0, "duplicate_exact_hashes": 1, "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/ictjobs/field_presence"},
       "core_scope_ids": [],
-      "blocker": "Core has no adapter or production scope; Phase -1 branch protection with required CI and CODEOWNER review is not yet verified.",
+      "blocker": "The branch adapter and one-scope five-page shadow are validated, but production has no ICTJobs source or scope until the final owner-approved merge and coordinated cutover.",
       "inventory_verified": true,
+      "core_adapter": true,
       "state": "local_pending",
       "target_owner": "core",
       "active_publishers": ["reactportfolio"],
       "swissjob_module": true,
       "reactportfolio_source_name": "ictjobs",
-      "evidence": "Portfolio production cache healthy with 100 current entries; SwissJob module is dormant."
+      "evidence": "Portfolio production remains the sole live publisher with 100 audited rows; the branch shadow stored the same 100 WordPress ids across five pages and preserved locations, tags and professional groups. SwissJob's module remains dormant."
     },
     {
       "name": "ilojobs",

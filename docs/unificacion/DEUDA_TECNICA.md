@@ -51,7 +51,10 @@ continuar sin rediseñarlo.
    Los cuatro tienen CI verde. Mantener todos los scopes productivos
    deshabilitados y `main` intacta; el corte vivo queda agrupado con la fusión
    final aprobada por el propietario.
-5. Añadir aquí un checkpoint después de cada fuente u oleada con estados,
+5. ICTJobs tiene adaptador, paridad 100/100, doble sombra y suite Core completa
+   verdes; falta versionar/publicar este checkpoint, obtener su CI verde y
+   transferir el consumidor ReactPortfolio. No iniciar SwissDevJobs antes.
+6. Añadir aquí un checkpoint después de cada fuente u oleada con estados,
    pruebas, SHA, evidencia viva, rollback y siguiente paso exacto.
 
 ### Checkpoint 2026-10-14 · Fase -1 parcialmente completada
@@ -597,6 +600,67 @@ Core y apagado local; suites/CI; checkpoint antes de avanzar.
   pública de Fase 3. Trazar primero sus diferencias ACF/enlaces respecto a
   SwissTechJobs y capturar su API viva antes de generalizar código. No tocar
   `main`, producción ni crear/activar scopes reales.
+
+### Checkpoint de relevo 2026-10-14 · ICTJobs Core validado, consumidor pendiente
+
+- El preflight parte de SwissJob/Core `7f28e71` y ReactPortfolio `f3baba8`.
+  Los cuatro portales anteriores tienen CI verde; ambos `main` remotos y
+  producción permanecen intactos.
+- El trazado comprobó un único productor activo:
+  `ReactPortfolio/routers/ictjobs_jobs.py`, con caché/worker, cinco páginas
+  WordPress de 20 y cinco rutas públicas (`recent`, `stats`, `health`,
+  `refresh-cache` y `by-location`). El provider homónimo de SwissJob está
+  probado pero ausente de `_PROVIDER_CLASSES`, por lo que es código dormido.
+- La API viva informó `X-WP-Total=185` y `X-WP-TotalPages=10`, pero el
+  productor vigente sólo consume las páginas 1–5: 100 filas, 100 ids y 100 URL
+  únicas. Se comprobó también la página 6 para confirmar que ampliar hasta 185
+  cambiaría funcionalidad; se conserva deliberadamente la ventana 5×20.
+  Las seis huellas están en
+  [`2026-10-14-dt144-ictjobs-shadow.json`](../audits/2026-10-14-dt144-ictjobs-shadow.json).
+- En las 100 filas actuales `acf` es un array vacío, no un objeto: producción
+  presenta cero compañías, descripciones, remotos y salarios, aunque sí obtiene
+  ubicación, tags, tipo y grupo profesional desde `_embedded.wp:term`. Core
+  degrada defensivamente ese `acf` y conserva el soporte ya existente para
+  cuando el portal vuelva a exponer un objeto ACF.
+- La extensión mínima reutiliza `NativeJSONProvider`: identidad WordPress por
+  `id`, raw intacto, `_embed=`, cinco páginas de 20, fecha del portal, enlace
+  directo sólo bajo su flag, taxonomías, salario CHF y la regla histórica por
+  la que un límite inválido anula ambos límites. Se añadió `prof_group` al
+  contenido/agregado común porque la ruta de estadísticas pública lo exige; no
+  se creó una capa o proveedor paralelo.
+- La comparación reproducible, con la misma semilla de hash necesaria por el
+  `list(set(...))` legado, dio 100/100 filas, todos los contadores y cero
+  diferencias de campo. Las huellas legado y proyectada coinciden:
+  `8fffc8d059bc63788695d5c6360640903a7c7eb8414ca84214774427633ca72a`.
+- Dos ciclos sombra aislados terminaron `ok` con 100 ofertas y cinco páginas;
+  estabilizaron 100 ids, listings, raws y revisiones canónicas. El agregado
+  observó 1/1 scope, cero fallos, 100 fechas, 9 ubicaciones, 9 grupos
+  profesionales y 42 tags tras el plegado a minúsculas legado. No aparecieron
+  compañías, descripciones, remotos, salarios ni enlaces de candidatura, en
+  paridad con la captura. Scope y datos de prueba se purgaron.
+- Validación hasta este punto: unidad focal 79/79, integración focal 3/3 y
+  agregado completo 8/8; Ruff completo de Core, formato, `diff --check` y
+  ratchet de propiedad verdes. La primera suite completa detectó que la prueba
+  del DTO enumeraba los contadores exactos sin `prof_groups: {}`; se actualizó
+  el contrato. Una segunda ejecución se reinició antes de terminar al endurecer
+  la semántica WordPress: un 400 sólo es fin normal desde la página 2; un 400 en
+  la primera sigue siendo fallo, igual que en el productor legado. La ejecución
+  definitiva terminó con 1.587 aprobadas, una omitida y una advertencia conocida
+  en 7 min 08 s.
+- Incidencia documental contenida: un parche aún no versionado coincidió primero
+  con la ficha Adzuna. El ratchet falló con `missing=['adzuna']` y
+  `unexpected=['ictjobs']`; se restauró Adzuna, se aplicó el cambio con
+  contexto específico de ICTJobs y el ratchet volvió a
+  `{"core_owned":16,"local_pending":26,"sources":58}`.
+- **Rollback:** no se ha creado ni activado ningún scope productivo, no se ha
+  desplegado y ambos `main` siguen intactos. Revertir el futuro commit Core
+  elimina toda la capacidad nueva sin tocar al productor local vigente.
+- **Siguiente paso exacto:** versionar/publicar Core y exigir CI verde. Después
+  añadir ICTJobs al adaptador
+  compartido de ReactPortfolio, conservar exactamente sus cinco rutas y
+  contadores, retirar import/router/provider/efectos de registro locales, bajar
+  el ratchet de 7 a 6 y ejecutar suites completas. No avanzar a SwissDevJobs
+  hasta cerrar y versionar ese checkpoint.
 
 ### Registro cerrado · Forgejo no forma parte de DT-144
 
