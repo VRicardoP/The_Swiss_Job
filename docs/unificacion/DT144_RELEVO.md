@@ -9,7 +9,8 @@
 > está haciendo**, qué trampas ya se pisaron y qué queda, para que no haya que
 > reconstruirlo leyendo veinte checkpoints.
 >
-> Última actualización: **2026-10-15**.
+> Última actualización: **2026-10-15** (cuatro residuos cerrados; 13 portales
+> pendientes, todos de SwissJob).
 
 ---
 
@@ -209,14 +210,34 @@ que incumple los invariantes 1 y 5 del contrato y por eso cuentan como pendiente
 9. **`int()` lanza con más de 4.300 dígitos.** Un contador patológico que pasa un
    `[0-9]+` revienta igual; hay que capturarlo.
 
-## 8. Lo que bloquea la definición de terminado y no es de ningún portal
+## 8. Los cuatro residuos estructurales (CERRADOS el 2026-10-15)
 
-Ver el punto 8 del «Punto de reanudación» de DEUDA_TECNICA para el estado vivo.
-En el momento de escribir esto quedaban cuatro residuos estructurales abiertos
-(registros de caché de `jobicy`/`remoteok`, los barridos de fidelidad G7/G8 sin
-parámetros, el `CompositeCatalog` Core + local y la ausencia en Core del portero
-de compliance del motor legacy). Si este párrafo sigue aquí, comprobar su estado
-antes de darlos por cerrados.
+No eran de ningún portal y los cuatro bloqueaban la definición de terminado.
+Evidencia completa en su checkpoint de DEUDA_TECNICA; resumen:
+
+1. `jobicy` y `remoteok` ya no registran caché ni actualizador al importarse, y
+   el censo vacío de los dos registros está fijado por una prueba.
+2. Los barridos de fidelidad G7/G8 saltaban con «got empty parameter set» al
+   quedarse sin cachés locales. Ahora saltan **con motivo**, y su garantía se
+   prueba donde el dato vive: un agregado hostil del núcleo (número no finito,
+   surrogate, NUL también como CLAVE de contador) contra TODAS las rutas
+   públicas de las 18 fuentes del adaptador.
+3. La costura ya no construye un catálogo Core + local: sin fuente local propia
+   devuelve `CoreCatalog()` directamente. El compuesto se queda SÓLO como vía de
+   rollback y su borrado pertenece al corte final.
+4. **Core tiene su propio portero de bloqueo** (`core0055`): `BLOCK_STATUSES =
+   {403, 429, 503}` —la lista exacta del legacy—, tres bloqueos seguidos apagan
+   el scope, sellan `disabled_by_blocks_at` y gritan; una cosecha COMPLETA borra
+   el contador; re-encender es manual a propósito; y el censo de salud publica
+   `apagados_por_bloqueo` en cada pasada para que el apagado no se lea como
+   silencio. La clasificación recorre la cadena de excepciones, así que no hubo
+   que tocar ningún adaptador.
+
+**Para quien migre un scraper a partir de ahora:** ya existe el kill-switch, así
+que un portal que empiece a bloquear apaga su scope en tres barridos. Si tu
+adaptador traga el error del transporte sin dejar rastro (`raise X` sin cadena),
+el clasificador no lo verá: deja que `__context__` o `__cause__` lleve el
+`httpx.HTTPStatusError`.
 
 ## 9. Lo que NO se ha hecho a propósito
 

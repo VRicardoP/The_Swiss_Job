@@ -83,12 +83,30 @@ async def check_harvest_health(
     ).all()
     censo = await _censo(session)
     _report_blind_spot(censo, len(rows))
+    _report_blocked_off(censo)
     alertas: list[dict] = []
     for row in rows:
         alertas += _scope_alerts(row, moment, max_failures, days, ratio_max)
     for alerta in alertas:
         logger.error("harvest_health: %s", alerta["msg"])
     return {"alertas": alertas, "scopes": len(rows), "censo": censo}
+
+
+def _report_blocked_off(censo: dict) -> None:
+    """Los scopes que el kill-switch apagó, dichos en cada pasada.
+
+    No es un aviso de una vez: mientras sigan apagados, la cosecha de esas
+    fuentes NO está ocurriendo y nadie más lo va a decir.
+    """
+    apagados = censo.get("apagados_por_bloqueo", 0)
+    if apagados:
+        logger.error(
+            "harvest_health: %d scope(s) DESHABILITADOS por bloqueo del portal "
+            "(kill-switch de DT-144). No cosechan y no aparecen en `alertas` "
+            "porque la vigilancia sólo mira los habilitados: re-habilitarlos es "
+            "una decisión manual",
+            apagados,
+        )
 
 
 def _report_blind_spot(censo: dict, observados: int) -> None:
@@ -131,7 +149,13 @@ async def _censo(session: AsyncSession) -> dict:
             sa.text(
                 "SELECT count(*) AS scopes, "
                 "  count(*) FILTER (WHERE hs.enabled) AS habilitados, "
-                "  count(sss.scope_id) FILTER (WHERE hs.enabled) AS con_estado "
+                "  count(sss.scope_id) FILTER (WHERE hs.enabled) AS con_estado, "
+                # Un scope apagado por el kill-switch de bloqueos sale de las
+                # alertas (sólo miran habilitados): si no se cuenta aquí, el
+                # apagado se lee como silencio sano.
+                "  count(*) FILTER (WHERE NOT hs.enabled "
+                "    AND sss.disabled_by_blocks_at IS NOT NULL) "
+                "    AS apagados_por_bloqueo "
                 "FROM harvest_scopes hs "
                 "LEFT JOIN source_scope_state sss ON sss.scope_id = hs.id"
             )
@@ -141,6 +165,7 @@ async def _censo(session: AsyncSession) -> dict:
         "scopes": int(censo.scopes),
         "habilitados": int(censo.habilitados),
         "con_estado": int(censo.con_estado),
+        "apagados_por_bloqueo": int(censo.apagados_por_bloqueo),
     }
 
 

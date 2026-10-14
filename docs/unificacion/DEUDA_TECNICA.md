@@ -77,15 +77,16 @@ continuar sin rediseñarlo.
    `feat/dt144-free-gate`, cabeza `ffcc0ba`. Los remotos `main` siguen
    exactamente en `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
    `5bf457afbde5b44a995acce4ef241324f066f836`.
-8. **Cuatro residuos bloquean la definición de terminado y no son de ningún
-   portal concreto** (detalle y evidencia en los checkpoints de JobScout24 y
-   myScience): `jobicy` y `remoteok` todavía registran caché y actualizador al
-   importarse; los barridos de fidelidad G7 y G8 se quedaron sin parámetros y
-   hoy se saltan; `services/catalog/seam.py` sigue construyendo un
-   `CompositeCatalog` Core + local; y **Core no tiene el portero de compliance
-   del motor legacy** (`is_allowed`/`robots_txt_ok` y apagado tras tres
-   bloqueos), que es el que protege a las fuentes de scraping. Resolverlos en la
-   limpieza final, antes de la fusión.
+8. **Los cuatro residuos estructurales están CERRADOS** (checkpoint del
+   2026-10-15): `jobicy` y `remoteok` ya no registran caché ni actualizador y el
+   censo vacío está fijado; los barridos G7/G8 saltan con motivo y su garantía
+   se prueba ahora sobre las 18 rutas servidas desde Core con un agregado
+   hostil; la costura sirve `CoreCatalog()` directamente cuando no hay fuente
+   local; y Core tiene su propio kill-switch de bloqueo (`core0055`, tres
+   bloqueos 403/429/503 apagan el scope, con censo que lo canta). Lo único
+   diferido a propósito al corte final es el BORRADO de `CompositeCatalog` y
+   `FallbackCatalog`: son la vía de rollback mientras producción cosecha en
+   local.
 9. El worktree ReactPortfolio estaba limpio. En SwissJob/Core ya existían
    cambios ajenos a DT-144 en `CLAUDE.md`, documentación histórica y de
    unificación, además de documentos/auditorías sin seguimiento. No añadirlos,
@@ -1853,6 +1854,109 @@ Core y apagado local; suites/CI; checkpoint antes de avanzar.
   Chromium); `proz` y `remoteco` llevan 46 y 54 errores seguidos SIN ninguna
   cosecha correcta —el inventario pide decidir transporte o retirarlas— y
   `schuljobs` tiene un intento sin desenlace y el cursor sin bootstrap completo.
+
+### Checkpoint de relevo 2026-10-15 · los cuatro residuos estructurales, cerrados
+
+Ninguno era de un portal concreto: los cuatro salieron de migrar portales y los
+cuatro bloqueaban la definición de terminado del contrato (§10).
+
+#### 1. `jobicy` y `remoteok` ya no registran caché ni actualizador
+
+- Seguían llamando a `register_cache`/`register_update` al importarse mucho
+  después de su traspaso (`services/jobicy_provider_impl.py:55,294` y
+  `services/remoteok_provider_impl.py:51,197`). Producción no los importaba, pero
+  **el registro es la vía por la que un productor vuelve a la vida sin tocar su
+  registro de providers**: lo único que los frenaba era la bandera
+  `LEGACY_DISABLED_SOURCES`.
+- Se retiran las cuatro llamadas y se añade el censo COMPLETO, no fuente a
+  fuente: `test_no_module_registers_a_local_cache_or_updater` importa la
+  aplicación y exige que los dos registros queden **vacíos**. Con él, las veinte
+  fuentes transferidas tienen su prueba de «sin efectos de registro».
+
+#### 2. Los barridos de fidelidad G7 y G8 vuelven a cubrir algo
+
+- Al quedar el registro vacío, sus `parametrize` se quedaron sin fuentes y
+  pytest los saltaba con «got empty parameter set» — un salto que nadie entiende
+  **se lee como cobertura**. Ahora saltan con un motivo que NOMBRA lo que los
+  sustituye.
+- Y lo que los sustituye existe:
+  `test_ninguna_ruta_servida_desde_core_se_tumba_con_un_agregado_hostil` mete la
+  misma oferta hostil —número no finito, surrogate suelto y NUL, **también como
+  CLAVE de los contadores**, que fue el hallazgo propio de G8— por el agregado
+  del núcleo y barre TODAS las rutas públicas de las **18 fuentes** del
+  adaptador: cada una debe responder 200 y conservar la oferta sana.
+- Resultado medido: las 18 pasan. La defensa ya existía repartida
+  (`finite_salary` del esquema y `pg_safe_tree` del router) pero **nadie la
+  probaba de extremo a extremo** en el camino servido desde Core.
+
+#### 3. La costura ya no construye un catálogo Core + local
+
+- `services/catalog/seam.py` montaba un `CompositeCatalog(CoreCatalog,
+  LocalCatalog)` siempre que `LEGACY_DISABLED_SOURCES` no estuviera vacío —es
+  decir, siempre en producción—, y un `FallbackCatalog` en modo `core_read`.
+- Con cero cosechadores locales **no hay nada que componer ni a lo que caer**, y
+  un lector no puede distinguir un camino inerte de uno vivo. Si no hay fuente
+  local propia, la costura devuelve `CoreCatalog()` **directamente**.
+- El compuesto SIGUE existiendo para el caso de rollback (una fuente que
+  vuelva), y eso lo cubre el mapeo modo→implementación de siempre. El ratchet
+  `check_local_harvest_ownership.py` haría fallar el CI antes de que ese caso
+  apareciera sin decisión explícita.
+- Fijado por `test_sin_cosechadores_locales_el_catalogo_es_core_A_SECAS` para
+  los tres modos no locales.
+
+#### 4. Core ya tiene el portero que el motor legacy tenía
+
+- **El hueco, medido:** el motor legacy pasa cada barrido por
+  `ComplianceEngine.can_scrape` y, tras tres bloqueos seguidos (403/429/503),
+  pone la fuente en `is_allowed = False` y **deja de pedir**. Core contaba
+  fallos y alertaba, pero nunca paraba: un portal que devuelve 403 cuatro veces
+  al día seguiría recibiendo las cuatro peticiones para siempre. Al traer los
+  scrapers al núcleo, ese portero se quedaba fuera — y ya afectaba a
+  financejobs, irishjobs, chmedia y publicjobs.
+- **Lo implementado:** `BLOCK_STATUSES = {403, 429, 503}` (la lista EXACTA del
+  legacy) y `blocking_status(exc)`, que **recorre la cadena de excepciones**:
+  los adaptadores envuelven el error del transporte y `raise … from None` sólo
+  lo oculta del traceback, así que `__context__` sigue llevándolo. Eso evita
+  tocar los ocho adaptadores: la clasificación vive en un único sitio.
+- Migración `core0055` (aditiva): `source_scope_state.consecutive_blocks`,
+  `last_blocked_at` y `disabled_by_blocks_at`. Los bloqueos se cuentan
+  **aparte** de `consecutive_failures` a propósito: una caída de red y un 429 no
+  son lo mismo y no deben apagar la misma fuente.
+- El runner cuenta el bloqueo en la misma transacción que ya contaba el fallo;
+  al llegar al umbral (`CORE_HARVEST_BLOCK_THRESHOLD=3`) pone
+  `harvest_scopes.enabled = false`, sella `disabled_by_blocks_at` y **grita** un
+  `logger.error`. Una cosecha COMPLETA —y sólo ella— devuelve el contador a cero.
+- **Re-encender es manual, a propósito:** sondear sola a una fuente que nos está
+  bloqueando es exactamente lo que no debe automatizarse.
+- **Y no se convierte en silencio:** la vigilancia de salud sólo mira scopes
+  HABILITADOS, así que un scope apagado por el kill-switch desaparecería de
+  `alertas` — el punto ciego que `harvest/health.py` ya documenta. El censo
+  publica ahora `apagados_por_bloqueo` y se canta en CADA pasada mientras siga
+  apagado.
+- Pruebas: 12 unitarias del clasificador (incluida una cadena envuelta dos veces
+  y una circular, que no debe colgar) y 4 de integración contra PostgreSQL real
+  —tres bloqueos apagan y el cuarto run ya no llama al provider; cuatro fallos
+  que no son bloqueo no apagan nada; un éxito borra el contador; y el censo de
+  salud canta el apagado—.
+
+#### Estado de este cierre
+
+- ReactPortfolio publicado en `5f03c68`; suite completa **2.256 aprobadas y 3
+  omitidas** (las dos de G7/G8, ahora con motivo, y la integración real opt-in),
+  ratchet local en 0 cosechadores y **cero hallazgos nuevos de black** respecto a
+  `HEAD` en los ocho ficheros tocados.
+- Core/SwissJob: suite del núcleo **1.807 aprobadas y ninguna omitida** (las
+  1.791 anteriores más 16: 12 unitarias y 4 de integración del kill-switch), la
+  migración `core0055` aplicada desde `core0054` sin incidencias, `ruff
+  check`/`format` del repo completo y `git diff --check` limpios.
+- `CLAUDE.md` describe la cadena del núcleo como `core0001..core0052` y ya
+  estaba desfasada antes de esto (el repo traía `core0053` y `core0054` de otro
+  trabajo); con `core0055` lo sigue estando. **No se corrige aquí** porque ese
+  fichero arrastra cambios ajenos sin versionar y mezclarlos sería peor.
+- Lo que NO se hace y queda explicado: **no se borran** `CompositeCatalog` ni
+  `FallbackCatalog`. Mientras producción siga cosechando en local, el código
+  antiguo es la vía de rollback que el propio contrato exige (§7.7); su borrado
+  pertenece al corte agrupado final, junto con el de los productores locales.
 
 ### Registro cerrado · Forgejo no forma parte de DT-144
 

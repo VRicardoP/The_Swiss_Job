@@ -92,6 +92,14 @@ class CoreSettings(BaseSettings):
     # STALE_ALERT=7 d avisa con MESES de margen sobre los 120 d a partir de los
     # cuales el archivado ADR-07 empieza a retirar vacantes todavía publicadas.
     CORE_HARVEST_MAX_CONSECUTIVE_FAILURES: int = 3
+    # DT-144: el portero que el motor legacy tenía y Core no. Tres bloqueos
+    # SEGUIDOS del portal (403/429/503) apagan el scope — el mismo umbral que
+    # `COMPLIANCE_BLOCK_THRESHOLD` del BFF. Se cuenta aparte de los fallos
+    # genéricos a propósito: una caída de red y un 429 no son lo mismo y no
+    # deben apagar la misma fuente. Volver a encenderlo es decisión de un
+    # operador: sondear sola a una fuente que nos está bloqueando es
+    # exactamente lo que no se debe automatizar.
+    CORE_HARVEST_BLOCK_THRESHOLD: int = 3
     CORE_HARVEST_STALE_ALERT_DAYS: int = 7
     # G-T11 §3: fracción de altas descartadas por falta de fecha a partir de
     # la cual la fuente se considera rota. 0.5 = pierde más de la mitad.
