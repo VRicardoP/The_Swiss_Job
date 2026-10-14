@@ -1,0 +1,154 @@
+{
+  "captured_at": "2026-10-14T05:35:17.544699+00:00",
+  "scope": "DT-144 Phase 0 read-only ReactPortfolio Redis snapshot metrics",
+  "production_image": "portfolio-backend:board-444f072",
+  "code_equivalence": {
+    "audited_commit": "5bf457a",
+    "production_commit": "444f072",
+    "relevant_file_diff": "empty"
+  },
+  "privacy": "Only aggregate counts, timestamps and field names were emitted; no offer values, URLs, titles, companies, personal data or credentials were captured.",
+  "mutations": false,
+  "sources": {
+    "adzuna": {
+      "snapshot_at_utc": "2026-10-13T16:22:38.918879+00:00",
+      "cached_entries": 6,
+      "reported_total": 7,
+      "normalized_entries": 6,
+      "normalization_errors": 0,
+      "duplicate_stable_keys": 0,
+      "duplicate_exact_hashes": 1,
+      "field_presence": {
+        "id": 6, "title": 6, "company": 6, "location": 6,
+        "country": 0, "url": 6, "date": 6, "remote": 6,
+        "tags": 6, "source": 6, "description": 6
+      }
+    },
+    "dynamitejobs": {
+      "snapshot_at_utc": "2026-10-13T16:24:07.457096+00:00",
+      "cached_entries": 300,
+      "reported_total": 314,
+      "normalized_entries": 300,
+      "normalization_errors": 0,
+      "duplicate_stable_keys": 0,
+      "duplicate_exact_hashes": 3,
+      "field_presence": {
+        "id": 300, "title": 300, "company": 300, "location": 300,
+        "country": 300, "url": 300, "date": 300, "remote": 300,
+        "tags": 300, "source": 300, "description": 155
+      }
+    },
+    "himalayas": {
+      "snapshot_at_utc": "2026-10-13T16:22:03.064238+00:00",
+      "cached_entries": 60,
+      "reported_total": 60,
+      "normalized_entries": 60,
+      "normalization_errors": 0,
+      "duplicate_stable_keys": 0,
+      "duplicate_exact_hashes": 0,
+      "field_presence": {
+        "id": 60, "title": 60, "company": 60, "location": 60,
+        "country": 60, "url": 60, "date": 60, "remote": 60,
+        "tags": 60, "source": 60, "description": 60
+      }
+    },
+    "ictjobs": {
+      "snapshot_at_utc": "2026-10-13T16:22:58.038316+00:00",
+      "cached_entries": 100,
+      "reported_total": 100,
+      "normalized_entries": 100,
+      "normalization_errors": 0,
+      "duplicate_stable_keys": 0,
+      "duplicate_exact_hashes": 1,
+      "field_presence": {
+        "id": 100, "title": 100, "company": 0, "location": 100,
+        "country": 100, "url": 100, "date": 100, "remote": 100,
+        "tags": 100, "source": 100, "description": 0
+      }
+    },
+    "jobroom": {
+      "snapshot_at_utc": "2026-10-13T16:22:30.193723+00:00",
+      "cached_entries": 300,
+      "reported_total": 300,
+      "normalized_entries": 300,
+      "normalization_errors": 0,
+      "duplicate_stable_keys": 0,
+      "duplicate_exact_hashes": 32,
+      "field_presence": {
+        "id": 300, "title": 300, "company": 300, "location": 300,
+        "country": 300, "url": 300, "date": 300, "remote": 300,
+        "tags": 174, "source": 300, "description": 300
+      }
+    },
+    "jobscout24": {
+      "snapshot_at_utc": "2026-10-13T16:23:24.937717+00:00",
+      "cached_entries": 187,
+      "reported_total": 187,
+      "normalized_entries": 187,
+      "normalization_errors": 0,
+      "duplicate_stable_keys": 0,
+      "duplicate_exact_hashes": 3,
+      "field_presence": {
+        "id": 187, "title": 187, "company": 187, "location": 187,
+        "country": 187, "url": 187, "date": 187, "remote": 187,
+        "tags": 187, "source": 187, "description": 49
+      }
+    },
+    "jsearch": {
+      "snapshot_at_utc": "2026-10-13T09:46:36.895599+00:00",
+      "cached_entries": 95,
+      "reported_total": 95,
+      "normalized_entries": 95,
+      "normalization_errors": 0,
+      "duplicate_stable_keys": 1,
+      "duplicate_exact_hashes": 3,
+      "field_presence": {
+        "id": 95, "title": 95, "company": 95, "location": 91,
+        "country": 89, "url": 95, "date": 95, "remote": 95,
+        "tags": 0, "source": 95, "description": 95
+      }
+    },
+    "remoteok": {
+      "snapshot_at_utc": "2026-10-13T16:22:00.221190+00:00",
+      "cached_entries": 97,
+      "reported_total": 99,
+      "normalized_entries": 97,
+      "normalization_errors": 0,
+      "duplicate_stable_keys": 0,
+      "duplicate_exact_hashes": 0,
+      "field_presence": {
+        "id": 97, "title": 97, "company": 97, "location": 97,
+        "country": 97, "url": 97, "date": 97, "remote": 97,
+        "tags": 95, "source": 97, "description": 97
+      }
+    },
+    "swissdevjobs": {
+      "snapshot_at_utc": "2026-10-13T16:22:57.056090+00:00",
+      "cached_entries": 155,
+      "reported_total": 207,
+      "normalized_entries": 155,
+      "normalization_errors": 0,
+      "duplicate_stable_keys": 0,
+      "duplicate_exact_hashes": 0,
+      "field_presence": {
+        "id": 155, "title": 155, "company": 155, "location": 155,
+        "country": 155, "url": 155, "date": 155, "remote": 155,
+        "tags": 136, "source": 155, "description": 147
+      }
+    },
+    "swisstechjobs": {
+      "snapshot_at_utc": "2026-10-13T16:22:03.018648+00:00",
+      "cached_entries": 11,
+      "reported_total": 11,
+      "normalized_entries": 11,
+      "normalization_errors": 0,
+      "duplicate_stable_keys": 0,
+      "duplicate_exact_hashes": 0,
+      "field_presence": {
+        "id": 11, "title": 11, "company": 11, "location": 11,
+        "country": 11, "url": 11, "date": 11, "remote": 11,
+        "tags": 11, "source": 11, "description": 11
+      }
+    }
+  }
+}

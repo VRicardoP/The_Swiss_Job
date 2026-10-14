@@ -194,6 +194,38 @@ continuar sin rediseñarlo.
   La puerta de Fase -1 continúa **NO SUPERADA**: la sesión gráfica de GitHub
   comprobada muestra `Sign in` y el host sigue sin CLI, token API ni helper.
 
+### Checkpoint 2026-10-14 · inventario medido de ReactPortfolio
+
+- Se completaron las diez fuentes locales activas exclusivas de ReactPortfolio:
+  Adzuna, DynamiteJobs, Himalayas, ICTjobs, Job-Room, JobScout24, JSearch,
+  RemoteOK, SwissDevJobs y SwissTechJobs. Jobicy permanece en su ficha separada
+  porque es el único productor duplicado entre los dos productos.
+- Registro, módulos, triggers, endpoints, credenciales, identidad y dedup se
+  trazaron hasta el productor y el worker efectivos. Las diez se ejecutan al
+  arranque del worker, en la cadena diaria 12:00 hora del contenedor con ±4 h,
+  por lecturas públicas con caché vencida y por refresco manual autenticado.
+- La imagen viva `portfolio-backend:board-444f072` y el commit auditado
+  `5bf457a` no difieren en ninguno de los productores, normalizadores, registros
+  o reglas comunes usados por esta medición.
+- Sonda productiva de solo lectura:
+  [`2026-10-14-dt144-reactportfolio-metrics.json`](../audits/2026-10-14-dt144-reactportfolio-metrics.json).
+  Leyó exclusivamente los snapshots Redis y emitió contadores, timestamps y
+  nombres de campos: cero valores de ofertas, URLs, títulos, empresas, datos
+  personales o secretos; cero mutaciones.
+- Volumen medido: 1.311 entradas cacheadas, exactamente el total productivo
+  anterior menos las 40 de Jobicy; las diez fuentes normalizaron todas sus
+  entradas con cero errores. La identidad URL estable dejó una sola colisión
+  —JSearch— y el hash exacto título/empresa 43, de las cuales 32 son Job-Room.
+- La completitud de campos no se oculta: ICTjobs entrega 0/100 empresas y
+  descripciones; Adzuna, 0/6 países; JSearch, 0/95 tags y algunos países y
+  ubicaciones ausentes; DynamiteJobs, JobScout24 y SwissDevJobs tienen
+  descripciones parciales, y Job-Room, RemoteOK y SwissDevJobs tags parciales.
+  Son datos de paridad para sus futuros adaptadores Core, no una excusa para
+  rellenar valores inventados.
+- El ratchet avanza de 33 a 43 fichas completas. Quedan exactamente las 15
+  fuentes locales activas de SwissJob. No cambió ningún estado, publicador,
+  credencial, conexión, scope ni despliegue; la puerta -1 sigue sin superar.
+
 **Prohibición de cierre parcial:** DT-144 no se cierra porque exista un adaptador,
 un scope o una ruta denominada `core_primary`. Solo se cierra cuando no queden
 productores, credenciales, conexiones ni persistencia de ofertas locales y las
