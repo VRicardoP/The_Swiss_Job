@@ -226,6 +226,39 @@ continuar sin rediseñarlo.
   fuentes locales activas de SwissJob. No cambió ningún estado, publicador,
   credencial, conexión, scope ni despliegue; la puerta -1 sigue sin superar.
 
+### Checkpoint 2026-10-14 · inventario medido de SwissJob
+
+- Se completaron las 15 fuentes locales activas restantes: Gastrojob,
+  MyScience, ProZ, Remote.co, SchulJobs, Stelle Bund, las ocho fuentes
+  escolares y TES. Cada ficha traza módulo, trigger diario, transporte,
+  identidad, deduplicación, último resultado y bloqueo real; ninguna requiere
+  credenciales.
+- Sonda productiva de solo lectura:
+  [`2026-10-14-dt144-swissjob-metrics.json`](../audits/2026-10-14-dt144-swissjob-metrics.json).
+  Leyó agregados de ofertas, salud, cursores y cumplimiento desde la imagen
+  viva `swissjob-backend:point5-4017081`; no emitió valores de ofertas,
+  detalles de errores, datos personales ni secretos y no realizó mutaciones.
+- Volumen medido: 498 entradas almacenadas, 312 activas, 9 marcadas como
+  duplicadas y 10 excedentes por el hash difuso de título/empresa. La presencia
+  de campos queda guardada en el orden empresa, ubicación, descripción, URL,
+  fecha de publicación y tags, sin rellenar ausencias.
+- ProZ y Remote.co no se consideran funcionales: acumulan respectivamente 46
+  y 54 errores consecutivos, sin éxito ni fila persistida. Antes de migrarlas
+  se debe verificar un transporte conforme que funcione o retirarlas de forma
+  explícita. SchulJobs conserva 160 filas, pero su último intento no tiene
+  resultado terminal, su último éxito es del 29-08 y el cursor no completó el
+  bootstrap; exige resolver esa paridad antes de cualquier corte.
+- Inspired, ISB y ZIS son resultados vacíos verificados, no fallos: terminaron
+  sin errores, con cursor y cumplimiento correctos. El futuro adaptador Core
+  debe conservar esa semántica. Las fuentes escolares carecen en general de
+  descripción y fecha; Stelle Bund carece además de ubicación, descripción,
+  fecha y tags. Son datos de paridad, no valores que deban inventarse.
+- El ratchet avanza de 43 a 58 fichas completas: todo el inventario descubierto
+  tiene ya propietario verificable. No cambió ningún estado, productor,
+  credencial, conexión, scope ni despliegue. La puerta de Fase -1 sigue
+  **NO SUPERADA** porque no existe una sesión administrativa GitHub autenticada
+  con la que demostrar y fijar los checks obligatorios y la revisión CODEOWNER.
+
 **Prohibición de cierre parcial:** DT-144 no se cierra porque exista un adaptador,
 un scope o una ruta denominada `core_primary`. Solo se cierra cuando no queden
 productores, credenciales, conexiones ni persistencia de ofertas locales y las

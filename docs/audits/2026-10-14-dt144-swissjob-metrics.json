@@ -1,0 +1,61 @@
+{
+  "captured_at": "2026-10-14T05:41:59.693861+00:00",
+  "scope": "DT-144 Phase 0 read-only SwissJob aggregate metrics",
+  "production_image": "swissjob-backend:point5-4017081",
+  "privacy": "Only aggregate counts and operational timestamps were emitted; no offer values, URLs, titles, companies, personal data, error details or credentials were captured.",
+  "mutations": false,
+  "field_presence_definition": "Counts across stored entries for company, location, description, URL, published_at and non-empty tags.",
+  "sources": {
+    "gastrojob": {
+      "stored_entries": 73, "active_entries": 73, "last_seen_at": "2026-10-11T13:41:29.944490+00:00", "field_presence": [73, 73, 71, 73, 73, 10], "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0,
+      "health": {"last_attempt_at": "2026-10-11T13:41:27.083866+00:00", "last_outcome": "ok", "last_success_at": "2026-10-11T13:41:27.083866+00:00", "last_jobs_count": 10, "last_stored_count": 9, "consecutive_errors": 0, "consecutive_empty": 0, "consecutive_unstored": 0}, "cursor": {"bootstrap_complete": true, "recent_identity_count": 109, "last_success_at": "2026-10-11T13:41:30.018924+00:00"}, "compliance": {"is_allowed": true, "robots_txt_ok": true, "consecutive_blocks": 0}
+    },
+    "myscience": {
+      "stored_entries": 115, "active_entries": 97, "last_seen_at": "2026-10-11T13:42:23.360302+00:00", "field_presence": [115, 115, 112, 115, 0, 53], "marked_duplicate": 0, "duplicate_fuzzy_hashes": 5,
+      "health": {"last_attempt_at": "2026-10-11T13:42:22.477021+00:00", "last_outcome": "ok", "last_success_at": "2026-10-11T13:42:22.477021+00:00", "last_jobs_count": 8, "last_stored_count": 8, "consecutive_errors": 0, "consecutive_empty": 0, "consecutive_unstored": 0}, "cursor": {"bootstrap_complete": true, "recent_identity_count": 115, "last_success_at": "2026-10-11T13:42:23.428151+00:00"}, "compliance": {"is_allowed": true, "robots_txt_ok": true, "consecutive_blocks": 0}
+    },
+    "proz": {
+      "stored_entries": 0, "active_entries": 0, "last_seen_at": null, "field_presence": [0, 0, 0, 0, 0, 0], "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0,
+      "health": {"last_attempt_at": "2026-10-13T10:25:07.962809+00:00", "last_outcome": "error", "last_success_at": null, "last_jobs_count": 0, "last_stored_count": 0, "consecutive_errors": 46, "consecutive_empty": 0, "consecutive_unstored": 0}, "cursor": null, "compliance": null
+    },
+    "remoteco": {
+      "stored_entries": 0, "active_entries": 0, "last_seen_at": null, "field_presence": [0, 0, 0, 0, 0, 0], "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0,
+      "health": {"last_attempt_at": "2026-10-13T10:26:53.928274+00:00", "last_outcome": "error", "last_success_at": null, "last_jobs_count": 0, "last_stored_count": 0, "consecutive_errors": 54, "consecutive_empty": 0, "consecutive_unstored": 0}, "cursor": null, "compliance": null
+    },
+    "schuljobs": {
+      "stored_entries": 160, "active_entries": 19, "last_seen_at": "2026-08-25T10:41:32.923901+00:00", "field_presence": [160, 160, 85, 160, 22, 7], "marked_duplicate": 9, "duplicate_fuzzy_hashes": 2,
+      "health": {"last_attempt_at": "2026-10-13T10:28:43.405562+00:00", "last_outcome": null, "last_success_at": "2026-08-29T13:44:14.594729+00:00", "last_jobs_count": 520, "last_stored_count": 27, "consecutive_errors": 0, "consecutive_empty": 0, "consecutive_unstored": 0}, "cursor": {"bootstrap_complete": false, "recent_identity_count": 300, "last_success_at": "2026-08-25T10:41:33.048088+00:00"}, "compliance": {"is_allowed": true, "robots_txt_ok": true, "consecutive_blocks": 0}
+    },
+    "stelle_admin": {
+      "stored_entries": 43, "active_entries": 30, "last_seen_at": "2026-10-11T13:41:49.676729+00:00", "field_presence": [43, 0, 0, 43, 0, 0], "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0,
+      "health": {"last_attempt_at": "2026-10-11T13:41:49.030942+00:00", "last_outcome": "ok", "last_success_at": "2026-10-11T13:41:49.030942+00:00", "last_jobs_count": 7, "last_stored_count": 7, "consecutive_errors": 0, "consecutive_empty": 0, "consecutive_unstored": 0}, "cursor": {"bootstrap_complete": true, "recent_identity_count": 44, "last_success_at": "2026-10-11T13:41:49.732596+00:00"}, "compliance": {"is_allowed": true, "robots_txt_ok": true, "consecutive_blocks": 0}
+    },
+    "swiss_schools_ecolint": {
+      "stored_entries": 21, "active_entries": 14, "last_seen_at": "2026-10-13T10:28:32.024787+00:00", "field_presence": [21, 21, 0, 21, 0, 21], "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0, "health": {"last_attempt_at": "2026-10-13T10:28:31.974395+00:00", "last_outcome": "ok", "last_success_at": "2026-10-13T10:28:31.974395+00:00", "last_jobs_count": 1, "last_stored_count": 1, "consecutive_errors": 0}, "cursor": {"bootstrap_complete": true, "recent_identity_count": 16}, "compliance": {"is_allowed": true, "robots_txt_ok": true, "consecutive_blocks": 0}
+    },
+    "swiss_schools_hautlac": {
+      "stored_entries": 2, "active_entries": 2, "last_seen_at": "2026-10-13T10:28:37.191441+00:00", "field_presence": [2, 2, 0, 2, 0, 2], "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0, "health": {"last_attempt_at": "2026-10-13T10:28:37.121594+00:00", "last_outcome": "ok", "last_success_at": "2026-10-13T10:28:37.121594+00:00", "last_jobs_count": 1, "last_stored_count": 1, "consecutive_errors": 0}, "cursor": {"bootstrap_complete": true, "recent_identity_count": 2}, "compliance": {"is_allowed": true, "robots_txt_ok": true, "consecutive_blocks": 0}
+    },
+    "swiss_schools_inspired": {
+      "stored_entries": 5, "active_entries": 0, "last_seen_at": "2026-06-26T10:50:40.647311+00:00", "field_presence": [5, 5, 0, 5, 0, 5], "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0, "health": {"last_attempt_at": "2026-10-13T10:28:16.246546+00:00", "last_outcome": "empty", "last_success_at": null, "last_jobs_count": 0, "last_stored_count": 0, "consecutive_errors": 0, "consecutive_empty": 36}, "cursor": {"bootstrap_complete": true, "recent_identity_count": 0, "last_success_at": "2026-10-13T10:28:16.330013+00:00"}, "compliance": {"is_allowed": true, "robots_txt_ok": true, "consecutive_blocks": 0}
+    },
+    "swiss_schools_isb": {
+      "stored_entries": 0, "active_entries": 0, "last_seen_at": null, "field_presence": [0, 0, 0, 0, 0, 0], "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0, "health": {"last_attempt_at": "2026-10-13T10:28:27.925741+00:00", "last_outcome": "empty", "last_success_at": null, "last_jobs_count": 0, "last_stored_count": 0, "consecutive_errors": 0, "consecutive_empty": 36}, "cursor": {"bootstrap_complete": true, "recent_identity_count": 0, "last_success_at": "2026-10-13T10:28:27.968195+00:00"}, "compliance": {"is_allowed": true, "robots_txt_ok": true, "consecutive_blocks": 0}
+    },
+    "swiss_schools_iscs": {
+      "stored_entries": 3, "active_entries": 3, "last_seen_at": "2026-10-13T10:28:42.271645+00:00", "field_presence": [3, 3, 0, 3, 0, 3], "marked_duplicate": 0, "duplicate_fuzzy_hashes": 1, "health": {"last_attempt_at": "2026-10-13T10:28:41.866280+00:00", "last_outcome": "ok", "last_success_at": "2026-10-13T10:28:41.866280+00:00", "last_jobs_count": 2, "last_stored_count": 2, "consecutive_errors": 0}, "cursor": {"bootstrap_complete": true, "recent_identity_count": 3}, "compliance": {"is_allowed": true, "robots_txt_ok": true, "consecutive_blocks": 0}
+    },
+    "swiss_schools_isp": {
+      "stored_entries": 10, "active_entries": 10, "last_seen_at": "2026-10-13T10:28:05.939452+00:00", "field_presence": [10, 10, 0, 10, 0, 10], "marked_duplicate": 0, "duplicate_fuzzy_hashes": 1, "health": {"last_attempt_at": "2026-10-13T10:28:01.814194+00:00", "last_outcome": "ok", "last_success_at": "2026-10-13T10:28:01.814194+00:00", "last_jobs_count": 3, "last_stored_count": 3, "consecutive_errors": 0}, "cursor": {"bootstrap_complete": true, "recent_identity_count": 12}, "compliance": {"is_allowed": true, "robots_txt_ok": true, "consecutive_blocks": 0}
+    },
+    "swiss_schools_nae": {
+      "stored_entries": 22, "active_entries": 21, "last_seen_at": "2026-10-13T10:27:47.653525+00:00", "field_presence": [22, 22, 0, 22, 0, 22], "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0, "health": {"last_attempt_at": "2026-10-13T10:27:16.778380+00:00", "last_outcome": "ok", "last_success_at": "2026-10-13T10:27:16.778380+00:00", "last_jobs_count": 13, "last_stored_count": 13, "consecutive_errors": 0}, "cursor": {"bootstrap_complete": true, "recent_identity_count": 25}, "compliance": {"is_allowed": true, "robots_txt_ok": true, "consecutive_blocks": 0}
+    },
+    "swiss_schools_zis": {
+      "stored_entries": 1, "active_entries": 0, "last_seen_at": "2026-07-13T23:46:24.587431+00:00", "field_presence": [1, 1, 0, 1, 0, 1], "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0, "health": {"last_attempt_at": "2026-10-13T10:28:21.928708+00:00", "last_outcome": "empty", "last_success_at": null, "last_jobs_count": 0, "last_stored_count": 0, "consecutive_errors": 0, "consecutive_empty": 36}, "cursor": {"bootstrap_complete": true, "recent_identity_count": 0, "last_success_at": "2026-10-13T10:28:22.121046+00:00"}, "compliance": {"is_allowed": true, "robots_txt_ok": true, "consecutive_blocks": 0}
+    },
+    "tes": {
+      "stored_entries": 43, "active_entries": 43, "last_seen_at": "2026-10-11T13:41:52.726539+00:00", "field_presence": [43, 43, 43, 43, 39, 8], "marked_duplicate": 0, "duplicate_fuzzy_hashes": 1, "health": {"last_attempt_at": "2026-10-13T10:27:03.936383+00:00", "last_outcome": "empty", "last_success_at": "2026-10-11T13:41:51.344486+00:00", "last_jobs_count": 0, "last_stored_count": 0, "consecutive_errors": 0, "consecutive_empty": 1}, "cursor": {"bootstrap_complete": true, "recent_identity_count": 53}, "compliance": {"is_allowed": true, "robots_txt_ok": true, "consecutive_blocks": 0}
+    }
+  }
+}
