@@ -33,6 +33,7 @@ DATE_FIELDS = {
     "swissdevjobs": "activeFrom",
     "jobroom": ("jobAdvertisement", "publication", "startDate"),
     "adzuna": "created",
+    "jsearch": "job_posted_at_datetime_utc",
     "weworkremotely": "pubDate",
     "euremotejobs": "pubDate",
     "jobspresso": "pubDate",

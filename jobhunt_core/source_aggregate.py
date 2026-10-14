@@ -9,7 +9,9 @@ _SOURCE_AGGREGATE_SQL = sa.text(
              i.first_seen_at, i.last_seen_at,
              o.content->>'title' AS title,
              o.content->>'company' AS company,
-             left(o.content->>'description', 500) AS description,
+             CASE WHEN s.name='jsearch'
+                  THEN left(latest.provider_description, 500)
+                  ELSE left(o.content->>'description', 500) END AS description,
              o.content->>'location' AS location,
              o.content->>'salary' AS salary,
              CASE WHEN jsonb_typeof(o.content->'salary_min')='number'
@@ -18,6 +20,8 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                   THEN o.content->'salary_max' END AS salary_max,
              o.content->>'salary_currency' AS salary_currency,
              o.content->>'logo' AS logo,
+             latest.provider_id, latest.city, latest.state, latest.country,
+             latest.publisher,
              CASE WHEN jsonb_typeof(o.content->'remote')='boolean'
                   THEN (o.content->>'remote')::boolean END AS remote,
              CASE WHEN jsonb_typeof(o.content->'tags')='array'
@@ -73,6 +77,18 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                END AS statistics_tags_raw,
                CASE WHEN jsonb_typeof(r.raw->'_core_order')='number'
                     THEN (r.raw->>'_core_order')::int END AS source_order,
+               CASE WHEN jsonb_typeof(r.raw->'job_city')='string'
+                    THEN r.raw->>'job_city' END AS city,
+               CASE WHEN jsonb_typeof(r.raw->'job_state')='string'
+                    THEN r.raw->>'job_state' END AS state,
+               CASE WHEN jsonb_typeof(r.raw->'job_country')='string'
+                    THEN r.raw->>'job_country' END AS country,
+               CASE WHEN jsonb_typeof(r.raw->'job_publisher')='string'
+                    THEN r.raw->>'job_publisher' END AS publisher,
+               CASE WHEN jsonb_typeof(r.raw->'job_description')='string'
+                    THEN r.raw->>'job_description' END AS provider_description,
+               CASE WHEN jsonb_typeof(r.raw->'job_id') IN ('string','number')
+                    THEN r.raw->>'job_id' END AS provider_id,
                COALESCE(
                  CASE WHEN jsonb_typeof(r.raw->'publication_date')='string'
                       THEN r.raw->'publication_date' END,
@@ -80,6 +96,8 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                       THEN r.raw->'created_at' END,
                  CASE WHEN jsonb_typeof(r.raw->'created')='string'
                       THEN r.raw->'created' END,
+                 CASE WHEN jsonb_typeof(r.raw->'job_posted_at_datetime_utc')='string'
+                      THEN r.raw->'job_posted_at_datetime_utc' END,
                  CASE WHEN jsonb_typeof(r.raw->'dateFirstPublished')='string'
                       THEN r.raw->'dateFirstPublished' END,
                  CASE WHEN jsonb_typeof(r.raw->'date') IN ('string', 'number')
@@ -103,6 +121,7 @@ _SOURCE_AGGREGATE_SQL = sa.text(
       SELECT count(*) FILTER (WHERE hs.enabled)::int AS enabled_scopes,
              count(sss.scope_id) FILTER (WHERE hs.enabled)::int AS observed_scopes,
              max(sss.last_complete_at) FILTER (WHERE hs.enabled) AS last_complete_at,
+             max(sss.cursor->>'last_query') FILTER (WHERE hs.enabled) AS last_query,
              COALESCE(max(sss.consecutive_failures)
                       FILTER (WHERE hs.enabled), 0)::int AS max_failures
       FROM sources s
@@ -113,6 +132,7 @@ _SOURCE_AGGREGATE_SQL = sa.text(
     recent AS (
       SELECT jsonb_build_object(
                'external_id', external_id,
+               'provider_id', provider_id,
                'url', url,
                'apply_url', apply_url,
                'first_seen_at', first_seen_at,
@@ -126,6 +146,10 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                'salary_max', salary_max,
                'salary_currency', salary_currency,
                'logo', logo,
+               'city', city,
+               'state', state,
+               'country', country,
+               'publisher', publisher,
                'remote', remote,
                'tags', tags,
                'canton', canton,
@@ -147,8 +171,9 @@ _SOURCE_AGGREGATE_SQL = sa.text(
              last_seen_at, incarnation_id, published_at, source_order
       FROM source_rows
       ORDER BY
-        CASE WHEN :source='adzuna' THEN published_at #>> '{}' END DESC NULLS LAST,
-        CASE WHEN :source='adzuna' THEN source_order END ASC NULLS LAST,
+        CASE WHEN :source IN ('adzuna','jsearch')
+             THEN published_at #>> '{}' END DESC NULLS LAST,
+        CASE WHEN :source IN ('adzuna','jsearch') THEN source_order END ASC NULLS LAST,
         last_seen_at DESC, incarnation_id
       LIMIT :item_limit
     ),
@@ -177,6 +202,12 @@ _SOURCE_AGGREGATE_SQL = sa.text(
     company_counts AS (
       SELECT value, count(*)::int AS n FROM (
         SELECT company AS value FROM source_rows
+      ) values_ WHERE value IS NOT NULL AND btrim(value)<>''
+      GROUP BY value ORDER BY n DESC, value LIMIT :top_n
+    ),
+    publisher_counts AS (
+      SELECT value, count(*)::int AS n FROM (
+        SELECT publisher AS value FROM source_rows
       ) values_ WHERE value IS NOT NULL AND btrim(value)<>''
       GROUP BY value ORDER BY n DESC, value LIMIT :top_n
     ),
@@ -229,7 +260,7 @@ _SOURCE_AGGREGATE_SQL = sa.text(
            (SELECT count(*)::int FROM source_rows) AS total,
            (SELECT max(last_seen_at) FROM source_rows) AS corpus_updated_at,
            meta.enabled_scopes, meta.observed_scopes,
-           meta.last_complete_at, meta.max_failures,
+           meta.last_complete_at, meta.last_query, meta.max_failures,
            EXISTS(
              SELECT 1 FROM source_harvest_runs shr
              JOIN harvest_scopes hs ON hs.id=shr.scope_id
@@ -240,8 +271,10 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                    clock_timestamp()-make_interval(secs => :lease)
            ) AS update_in_progress,
            COALESCE((SELECT jsonb_agg(item ORDER BY
-                       CASE WHEN :source='adzuna' THEN published_at #>> '{}' END DESC NULLS LAST,
-                       CASE WHEN :source='adzuna' THEN source_order END ASC NULLS LAST,
+                       CASE WHEN :source IN ('adzuna','jsearch')
+                            THEN published_at #>> '{}' END DESC NULLS LAST,
+                       CASE WHEN :source IN ('adzuna','jsearch')
+                            THEN source_order END ASC NULLS LAST,
                        last_seen_at DESC, incarnation_id)
                      FROM recent), '[]'::jsonb) AS items,
            COALESCE((SELECT jsonb_object_agg(value, n) FROM location_counts),
@@ -250,6 +283,8 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                     '{}'::jsonb) AS tags,
            COALESCE((SELECT jsonb_object_agg(value, n) FROM company_counts),
                     '{}'::jsonb) AS companies,
+           COALESCE((SELECT jsonb_object_agg(value, n) FROM publisher_counts),
+                    '{}'::jsonb) AS publishers,
            COALESCE((SELECT jsonb_object_agg(value, n) FROM category_counts),
                     '{}'::jsonb) AS categories,
            COALESCE((SELECT jsonb_object_agg(value, n) FROM job_type_counts),
@@ -292,6 +327,7 @@ async def fetch_source_aggregate(
         "total": row["total"],
         "corpus_updated_at": row["corpus_updated_at"],
         "last_complete_at": row["last_complete_at"],
+        "last_query": row["last_query"],
         "enabled_scopes": row["enabled_scopes"],
         "observed_scopes": row["observed_scopes"],
         "max_consecutive_failures": row["max_failures"],
@@ -300,6 +336,7 @@ async def fetch_source_aggregate(
             "locations": row["locations"],
             "tags": row["tags"],
             "companies": row["companies"],
+            "publishers": row["publishers"],
             "categories": row["categories"],
             "job_types": row["job_types"],
             "cantons": row["cantons"],

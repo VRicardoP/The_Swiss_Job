@@ -47,11 +47,12 @@ class CoreSettings(BaseSettings):
     # Namespace propio de locks/coordinación (leader-lock separado del legacy).
     CORE_LOCK_PREFIX: str = "jobhunt:"
 
-    # Credenciales de proveedores: sólo el worker de cosecha las recibe. Una
-    # fuente sin scope habilitado no las usa; si falta alguna, Adzuna falla
-    # cerrado antes de construir una petición.
+    # Credenciales de proveedores. Adzuna sólo la necesita en el worker de
+    # cosecha; JSearch también la recibe en el API Core porque preserva la
+    # búsqueda en vivo de Portfolio sin devolver el secreto al BFF.
     CORE_ADZUNA_APP_ID: str = ""
     CORE_ADZUNA_APP_KEY: str = ""
+    CORE_JSEARCH_RAPIDAPI_KEY: str = ""
 
     # Embeddings (A-06, ADR-02): modelo multilingüe 384d.
     CORE_EMBEDDING_MODEL_NAME: str = "paraphrase-multilingual-MiniLM-L12-v2"

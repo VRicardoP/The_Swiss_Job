@@ -13,6 +13,7 @@ services:
       CORE_ENV: prod
       CORE_BROKER_URL: ${CORE_BROKER_URL}
       CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
+      CORE_JSEARCH_RAPIDAPI_KEY: ${CORE_JSEARCH_RAPIDAPI_KEY}
       PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       LANG: C.UTF-8
       GPG_KEY: ${GPG_KEY}
@@ -128,6 +129,7 @@ services:
     environment:
       CORE_ADZUNA_APP_ID: ${CORE_ADZUNA_APP_ID}
       CORE_ADZUNA_APP_KEY: ${CORE_ADZUNA_APP_KEY}
+      CORE_JSEARCH_RAPIDAPI_KEY: ${CORE_JSEARCH_RAPIDAPI_KEY}
       CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8000/api/v1/integration/inbox",
         "swissjob-shadow": "http://swissjob-backend:8000/api/v1/integration/events"}'
       CORE_ENV: prod

@@ -37,6 +37,7 @@ def _altas_exact_match() -> dict:
     from jobhunt_core.harvest.providers import native_swissdevjobs
     from jobhunt_core.harvest.providers import native_jobroom
     from jobhunt_core.harvest.providers import native_adzuna
+    from jobhunt_core.harvest.providers import native_jsearch
 
     return {
         arbeitnow.SOURCE_NAME: arbeitnow.register_handlers,
@@ -52,6 +53,7 @@ def _altas_exact_match() -> dict:
         native_swissdevjobs.SOURCE_NAME: native_swissdevjobs.register_handlers,
         native_jobroom.SOURCE_NAME: native_jobroom.register_handlers,
         native_adzuna.SOURCE_NAME: native_adzuna.register_handlers,
+        native_jsearch.SOURCE_NAME: native_jsearch.register_handlers,
     }
 
 

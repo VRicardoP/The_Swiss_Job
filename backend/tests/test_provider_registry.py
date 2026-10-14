@@ -11,7 +11,6 @@ from services.job_service import BaseJobProvider
 EXPECTED = {
     "careerjet",
     "jooble",
-    "jsearch",
     "remoteco",
     "proz",
     "jobcloud_partner",
@@ -34,7 +33,6 @@ def test_known_free_provider_is_constructed():
 
 def test_unknown_and_missing_key_are_not_constructed():
     assert get_provider("nonexistent") is None
-    assert get_provider("jsearch") is None
 
 
 def test_constructed_providers_are_unique_base_providers():
@@ -50,5 +48,4 @@ def test_status_reports_exact_registry_and_key_gates():
     status = log_provider_status()
     assert set(status) == EXPECTED
     assert status["proz"] == "enabled"
-    assert "disabled" in status["jsearch"]
     assert "disabled" in status["jobcloud_partner"]

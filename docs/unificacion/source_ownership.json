@@ -508,15 +508,16 @@
       "last_success": [{"product": "reactportfolio", "at": "2026-10-13T09:46:36.895599+00:00", "evidence": "successful persisted snapshot with 95 cached entries and zero normalization errors"}],
       "production_metrics": {"cached_entries": 95, "reported_total": 95, "normalization_errors": 0, "duplicate_stable_keys": 1, "duplicate_exact_hashes": 3, "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/jsearch/field_presence"},
       "core_scope_ids": [],
-      "blocker": "Verified preflight is complete, but Core still has no JSearch adapter, disabled scope or authenticated live-search seam; implementation and branch validation remain pending.",
+      "blocker": "The Core adapter, disabled scope, authenticated live-search seam and both consumer handovers are validated in the feature branches, but production still has no JSearch Core scope or credential until the final owner-approved merge and coordinated cutover.",
       "inventory_verified": true,
       "state": "local_pending",
       "target_owner": "core",
       "active_publishers": ["reactportfolio"],
       "swissjob_module": true,
-      "swissjob_registry": true,
+      "swissjob_registry": false,
+      "core_adapter": true,
       "reactportfolio_source_name": "jsearch",
-      "evidence": "Portfolio production API is configured with 95 healthy cached jobs; SwissJob credential is absent. The visible frontend also depends on the live-search route, so both scheduled harvest and on-demand outbound traffic must move to Core."
+      "evidence": "Portfolio production remains the active publisher until cutover. The branches move the exact 95-row daily corpus, custom manual refreshes and rate-limited live searches to one Core transport, while removing both local registries and BFF credentials."
     },
     {
       "name": "linkedin_authorized",

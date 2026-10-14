@@ -26,6 +26,7 @@ class HarvestRunAcceptedDTO(BaseModel):
 
 class SourceAggregateItemDTO(BaseModel):
     external_id: str
+    provider_id: str | None = None
     url: str
     apply_url: str | None = None
     first_seen_at: datetime
@@ -39,6 +40,10 @@ class SourceAggregateItemDTO(BaseModel):
     salary_max: int | float | None = None
     salary_currency: str | None = None
     logo: str | None = None
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
+    publisher: str | None = None
     remote: bool | None = None
     tags: list[str] = []
     canton: str | None = None
@@ -54,6 +59,7 @@ class SourceAggregateCountsDTO(BaseModel):
     locations: dict[str, int]
     tags: dict[str, int]
     companies: dict[str, int]
+    publishers: dict[str, int]
     categories: dict[str, int]
     job_types: dict[str, int]
     cantons: dict[str, int]
@@ -67,6 +73,7 @@ class SourceAggregateDTO(BaseModel):
     total: int = Field(ge=0)
     corpus_updated_at: datetime | None = None
     last_complete_at: datetime | None = None
+    last_query: str | None = None
     enabled_scopes: int = Field(ge=0)
     observed_scopes: int = Field(ge=0)
     max_consecutive_failures: int = Field(ge=0)
@@ -148,6 +155,7 @@ async def _has_live_run(session, scope_ids: list[str]) -> bool:
 async def dispatch_source_harvest(
     request: Request,
     source: str = Path(min_length=1, max_length=100),
+    query: str | None = Query(None, max_length=500),
     session=Depends(get_session),
     principal=Depends(require_scope("harvest:write")),
 ):
@@ -155,6 +163,12 @@ async def dispatch_source_harvest(
     source = source.strip().lower()
     if not source:
         raise ApiError(400, "invalid_source", "fuente vacía")
+    if query is not None and source != "jsearch":
+        raise ApiError(
+            400,
+            "unsupported_parameter",
+            "query sólo está disponible para JSearch",
+        )
     key = request.headers.get("idempotency-key")
     if key is None:
         raise ApiError(
@@ -177,11 +191,14 @@ async def dispatch_source_harvest(
 
         request_key = hashlib.sha256(key.strip().encode()).hexdigest()[:32]
         for scope_id in scope_ids:
+            task_kwargs = {
+                "scope_id": scope_id,
+                "run_key": f"api:{principal.consumer_id}:{request_key}:{scope_id}",
+            }
+            if query is not None:
+                task_kwargs["jsearch_query"] = query
             run_scope_task.apply_async(
-                kwargs={
-                    "scope_id": scope_id,
-                    "run_key": f"api:{principal.consumer_id}:{request_key}:{scope_id}",
-                },
+                kwargs=task_kwargs,
                 expires=21600,
             )
         return 202, {
@@ -195,7 +212,7 @@ async def dispatch_source_harvest(
         session,
         principal,
         f"POST /v1/harvest/sources/{source}/runs",
-        request_hash({"source": source}),
+        request_hash({"source": source, "query": query}),
         key,
         handler,
     )

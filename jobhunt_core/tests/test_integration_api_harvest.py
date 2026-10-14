@@ -17,8 +17,8 @@ from jobhunt_core.tests.test_integration_api import (  # noqa: F401
 )
 
 
-def _seed_source(factory, created, *, enabled=True, scopes=2):
-    source = "api_test_" + uuid.uuid4().hex[:12]
+def _seed_source(factory, created, *, enabled=True, scopes=2, source_name=None):
+    source = source_name or "api_test_" + uuid.uuid4().hex[:12]
 
     async def go():
         async with factory() as session:
@@ -208,6 +208,55 @@ def test_dispatch_rejects_missing_enabled_source(db):  # noqa: F811
     enqueue.assert_not_called()
 
 
+def test_dispatch_forwards_jsearch_manual_query(db):  # noqa: F811
+    factory, created = db
+    source, (scope_id,) = _seed_source(
+        factory, created, scopes=1, source_name="jsearch"
+    )
+    _cid, _kid, token = _issue(
+        factory, created, "jsearch-manual-writer", ["harvest:write"]
+    )
+
+    with patch("jobhunt_core.api.v1_harvest.run_scope_task.apply_async") as enqueue:
+        response = _api(
+            factory,
+            f"/v1/harvest/sources/{source}/runs?query=data%20scientist",
+            token=token,
+            method="POST",
+            headers={"Idempotency-Key": "jsearch-data-scientist"},
+        )
+
+    assert response.status_code == 202
+    assert enqueue.call_args.kwargs["kwargs"] == {
+        "scope_id": scope_id,
+        "run_key": enqueue.call_args.kwargs["kwargs"]["run_key"],
+        "jsearch_query": "data scientist",
+    }
+
+
+def test_dispatch_rejects_jsearch_query_for_other_sources(db):  # noqa: F811
+    factory, created = db
+    source, _scope_ids = _seed_source(factory, created, scopes=1)
+    _cid, _kid, token = _issue(
+        factory, created, "non-jsearch-query-writer", ["harvest:write"]
+    )
+
+    with patch("jobhunt_core.api.v1_harvest.run_scope_task.apply_async") as enqueue:
+        response = _api(
+            factory,
+            f"/v1/harvest/sources/{source}/runs?query=data%20scientist",
+            token=token,
+            method="POST",
+            headers={"Idempotency-Key": "non-jsearch-query"},
+        )
+
+    assert (response.status_code, response.json()["code"]) == (
+        400,
+        "unsupported_parameter",
+    )
+    enqueue.assert_not_called()
+
+
 def test_dispatch_reports_live_source_run_as_busy(db):  # noqa: F811
     factory, created = db
     source, (scope_id,) = _seed_source(factory, created, scopes=1)
@@ -349,6 +398,7 @@ def test_source_aggregate_is_bounded_and_uses_latest_raw(db):  # noqa: F811
         "locations": {"Berlin": 1, "Zurich": 1},
         "tags": {"API": 1, "Python": 2},
         "companies": {"ACME": 1, "Beta": 1},
+        "publishers": {},
         "categories": {"education": 1, "software-development": 1},
         "job_types": {"Contract": 1, "Full-time": 1},
         "cantons": {"ZH": 1},
@@ -471,6 +521,36 @@ def test_source_aggregate_preserves_ictjobs_professional_groups(db):  # noqa: F8
     body = response.json()
     assert body["counts"]["prof_groups"] == {"System Engineering": 1}
     assert body["items"][0]["prof_group"] == "System Engineering"
+
+
+def test_jsearch_aggregate_preserves_raw_description(db):  # noqa: F811
+    factory, created = db
+    source, _scope_ids = _seed_source(factory, created, scopes=1, source_name="jsearch")
+    _seed_listing(
+        factory,
+        created,
+        source,
+        content={
+            "title": "Teacher",
+            "company": "School",
+            "description": "provider spacing",
+            "location": "Remote",
+            "tags": [],
+        },
+        raw={"job_description": "  provider spacing  "},
+    )
+    _client_id, _key_id, token = _issue(
+        factory, created, "jsearch-aggregate-reader", ["vacancies:read"]
+    )
+
+    response = _api(
+        factory,
+        "/v1/harvest/sources/jsearch/aggregate?item_limit=1&top_n=1",
+        token=token,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["description"] == "  provider spacing  "
 
 
 def test_source_aggregate_requires_read_scope_and_known_source(db):  # noqa: F811

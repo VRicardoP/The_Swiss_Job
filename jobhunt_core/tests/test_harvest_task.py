@@ -33,6 +33,20 @@ def test_task_returns_result_dict():
     }
 
 
+def test_task_builds_manual_jsearch_provider():
+    async def fake_impl(scope_id, *, provider_override):
+        assert provider_override.name == "jsearch"
+        assert provider_override._search_params.query == "data scientist"
+        return ScopeRunResult(scope_id=scope_id, status="ok")
+
+    with patch.object(harvest_task, "_run_scope_impl", fake_impl):
+        result = harvest_task.run_scope_task.apply(
+            kwargs={"scope_id": "s1", "jsearch_query": "data scientist"}
+        )
+
+    assert result.successful()
+
+
 def test_task_result_distingue_un_partial_por_fallo_de_uno_por_tope():
     """REGRESIÓN auditoría G10 P3-3: `run_scope_task` descartaba `result.error`, así que
     en el resultado Celery un 'partial' por sobre roto a mitad de barrido era
