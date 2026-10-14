@@ -298,6 +298,7 @@ SOURCES_DECIDED_IN_ADVANCE: frozenset[str] = frozenset(
         # FULL inciertas, deshabilitadas hoy
         "myscience",
         "gastrojob",
+        "tes",
         "adzuna",
         "jsearch",
         "undpjobs",

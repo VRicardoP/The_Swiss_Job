@@ -10,12 +10,10 @@ from scrapers.swiss_schools_iscs import SwissSchoolsISCSScraper
 from scrapers.swiss_schools_isp import SwissSchoolsISPScraper
 from scrapers.swiss_schools_nae import SwissSchoolsNAEScraper
 from scrapers.swiss_schools_zis import SwissSchoolsZISScraper
-from scrapers.tes import TESScraper
 from services.job_service import BaseJobProvider
 
 _SCRAPER_CLASSES: dict[str, type[BaseJobProvider]] = {
     "stelle_admin": StelleAdminScraper,
-    "tes": TESScraper,
     "schuljobs": SchulJobsScraper,
     # medjobs (med-jobs.com) SIGUE deshabilitado: está tras un challenge duro de
     # Cloudflare (/cdn-cgi/challenge-platform) que el Playwright endurecido local

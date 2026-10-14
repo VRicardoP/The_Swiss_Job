@@ -38,6 +38,7 @@ DATE_FIELDS = {
     "jobscout24": "date",
     "myscience": "date",
     "gastrojob": "_core_published_at",
+    "tes": ("advert", "startDate"),
     "weworkremotely": "pubDate",
     "euremotejobs": "pubDate",
     "jobspresso": "pubDate",

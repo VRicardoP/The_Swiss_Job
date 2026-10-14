@@ -1,0 +1,121 @@
+{
+  "source": "tes",
+  "captured_at_utc": "2026-10-14T23:25:54+00:00",
+  "method": "Both the retiring SwissJob scraper and the new Core adapter were replayed offline against this SAME sealed capture, so the parity below is byte-level.",
+  "transport_contract": {
+    "listing_url": "https://www.tes.com/jobs/browse/switzerland?page={page}",
+    "payload": "props.pageProps.initialData inside __NEXT_DATA__ (identical to the tRPC query cache on page 1, verified)",
+    "credentials": null,
+    "rate_limit_seconds": 2.0
+  },
+  "portal_ceiling": {
+    "announced": 28,
+    "reachable": 20,
+    "shortfall": 8,
+    "cause": "?page=N is ignored server-side: page 2 renders page 1's data (currentPage: 1). The client fetches later pages through a route that is not exposed in the rendered payload.",
+    "producer_behaviour": "The scraper paginated against the same ignored parameter and lost the eight offers in silence; its PAGE_SIZE=1 comment ('server enforces limit=1') is stale — the portal serves twenty per page.",
+    "core_behaviour": "Asks for page 2 ONCE so that real pagination would be followed if the portal ever honours it; otherwise stops, logs the shortfall and publishes announced/harvested/shortfall in the cursor. The run stays COMPLETE: a permanent portal limitation must not freeze last_complete_at and turn the staleness alert into noise."
+  },
+  "capture": {
+    "pages": 4,
+    "all_status_200": true,
+    "bytes_total": 1317966,
+    "per_page": [
+      {
+        "page": 1,
+        "bytes": 518708,
+        "sha256": "bf92719b0a7cd9610bbdefb69695423a9cdf6f4f31878a7ac727dafd961c71cf"
+      },
+      {
+        "page": 2,
+        "bytes": 267305,
+        "sha256": "2e0642899a349df3072195bd1670d3794b026e5d005e777e628dc312407db969"
+      },
+      {
+        "page": 3,
+        "bytes": 267155,
+        "sha256": "802bec4fee4fc3533464e81805cf926d9a0d5100cedff7f6194eb76febd619f7"
+      },
+      {
+        "page": 4,
+        "bytes": 264798,
+        "sha256": "1e5dc01b9bd590207c565fcb28f4080d09a432872db77939b2616dfad30470ab"
+      }
+    ]
+  },
+  "legacy_replay": {
+    "offers": 20,
+    "with_description": 20,
+    "with_logo": 19,
+    "with_salary_original": 5,
+    "with_employment_type": 20,
+    "with_published_at": 20,
+    "cantons": [
+      "SG"
+    ],
+    "distinct_locations": 4,
+    "unique_hashes": 20,
+    "max_tags": 1,
+    "jobs_sha256": "a2c1aa186748afce37139701c89482173eb36f403825570f1857f8586079ab89"
+  },
+  "core_replay": {
+    "listings": 20,
+    "requests": [
+      1,
+      2
+    ],
+    "unique_external_ids": 20,
+    "complete": true,
+    "error": null,
+    "cursor": {
+      "pages": 2,
+      "announced": 28,
+      "harvested": 20,
+      "shortfall": 8,
+      "pagination_ignored": true
+    }
+  },
+  "parity": {
+    "compared_fields": [
+      "title",
+      "company",
+      "location",
+      "canton",
+      "description",
+      "url",
+      "remote",
+      "tags",
+      "employment_type",
+      "logo",
+      "salary_original",
+      "published_at"
+    ],
+    "rows_compared": 20,
+    "field_differences": 0,
+    "projection_sha256": "8748ff87cea0d33869ca627116f9edb7965bacf88436de3289d4934a43430d15",
+    "legacy_projection_sha256": "8748ff87cea0d33869ca627116f9edb7965bacf88436de3289d4934a43430d15",
+    "identical": true
+  },
+  "deliberate_improvements": [
+    {
+      "what": "identity is the portal's own numeric job id",
+      "evidence": "every row carries `id` and the canonical URL ends with it (20 of 20)",
+      "effect": "a retitled offer keeps one identity; the scraper hashed title|company|url"
+    },
+    {
+      "what": "the shortfall is counted and logged",
+      "evidence": "numFound 28 vs 20 reachable",
+      "effect": "a 29 % blind spot becomes visible instead of silent"
+    },
+    {
+      "what": "two requests instead of three",
+      "evidence": "the scraper paged until an empty page; the payload itself declares totalPages",
+      "effect": "less traffic for the same data"
+    }
+  ],
+  "notes": [
+    "No credential exists for this source and none was created.",
+    "The artifact carries no personal data: only byte counts, hashes and aggregate counters.",
+    "The free-text salary range travels as text; no amount is invented from it."
+  ]
+}

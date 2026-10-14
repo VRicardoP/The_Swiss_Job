@@ -25,6 +25,7 @@ from jobhunt_core.harvest.providers.native_dynamitejobs import DynamiteJobsProvi
 from jobhunt_core.harvest.providers.native_jobscout24 import JobScout24Provider
 from jobhunt_core.harvest.providers.native_myscience import MyScienceProvider
 from jobhunt_core.harvest.providers.native_gastrojob import GastrojobProvider
+from jobhunt_core.harvest.providers.native_tes import TESProvider
 
 _PROVIDERS: dict[str, BaseProvider] = {
     ArbeitnowProvider.name: ArbeitnowProvider(),
@@ -45,6 +46,7 @@ _PROVIDERS: dict[str, BaseProvider] = {
     JobScout24Provider.name: JobScout24Provider(),
     MyScienceProvider.name: MyScienceProvider(),
     GastrojobProvider.name: GastrojobProvider(),
+    TESProvider.name: TESProvider(),
 }
 
 

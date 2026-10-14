@@ -20,7 +20,6 @@ a validated enrichment maps currency and period, exactly as the JSON sources do.
 """
 
 import asyncio
-import json
 import re
 
 from jobhunt_core.harvest.identity import register_extractor
@@ -35,6 +34,7 @@ from jobhunt_core.harvest.providers.browser_headers import (
     MAX_PAGES_PARAM,
     page_budget,
 )
+from jobhunt_core.harvest.providers.next_data import next_data
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills, strip_html_tags
 from jobhunt_core.harvest.providers.search_metadata import swiss_canton
 from jobhunt_core.harvest.types import FetchResult, RawListing
@@ -50,7 +50,6 @@ SWEEP_BUDGET_S = 300
 
 # Known paths from `props` down to the jobsSSR block, newest first.
 _JOBS_SSR_PATHS = (("pageProps", "jobsSSR"), ("initialProps", "pageProps", "jobsSSR"))
-_NEXT_DATA = re.compile(r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S)
 # ASCII decimals only: \d would match unicode digits the portal never emits.
 _DECIMAL_ID = re.compile(r"^[0-9]+$")
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -147,16 +146,7 @@ async def _page(http, page):
             if size > MAX_RESPONSE_BYTES:
                 raise ProviderResponseError("financejobs response exceeds byte budget")
             chunks.append(chunk)
-    match = _NEXT_DATA.search(b"".join(chunks).decode("utf-8", "replace"))
-    if match is None:
-        raise ProviderResponseError("financejobs: no __NEXT_DATA__")
-    try:
-        data = json.loads(match.group(1))
-    except (ValueError, RecursionError) as exc:
-        # ValueError, not JSONDecodeError: a >4300-digit number raises the base.
-        raise ProviderResponseError("financejobs: unreadable __NEXT_DATA__") from exc
-    if not isinstance(data, dict):
-        raise ProviderResponseError("financejobs: __NEXT_DATA__ is not an object")
+    data = next_data(b"".join(chunks).decode("utf-8", "replace"), SOURCE_NAME)
     block = _jobs_ssr(data)
     if block is None:
         raise ProviderResponseError("financejobs: unknown __NEXT_DATA__ shape")
