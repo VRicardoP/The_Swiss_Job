@@ -37,6 +37,24 @@ def fetch(name, payload, params=None, status=200):
     return asyncio.run(run()), requests
 
 
+def fetch_pages(name, payloads, statuses=None):
+    requests = []
+    statuses = statuses or [200] * len(payloads)
+
+    async def run():
+        def transport(request):
+            index = len(requests)
+            requests.append(request)
+            return httpx.Response(statuses[index], json=payloads[index])
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(transport)
+        ) as client:
+            return await provider(name).fetch_new({}, {}, client)
+
+    return asyncio.run(run()), requests
+
+
 def envelope(name, rows):
     if name == "workingnomads":
         return rows
@@ -114,6 +132,154 @@ def test_remoteok_raw_identity_apply_url_and_normalization_are_preserved():
     }
 
 
+def test_himalayas_three_page_contract_preserves_public_fields(monkeypatch):
+    from jobhunt_core.harvest.providers import native_json
+
+    monkeypatch.setattr(native_json, "HIMALAYAS_PAGE_DELAY_SECONDS", 0)
+    raw = {
+        "guid": "job-1",
+        "title": "Backend Engineer",
+        "companyName": "Acme",
+        "companyLogo": "https://cdn.example/acme.png",
+        "applicationLink": "https://jobs.example/job-1",
+        "categories": ["Software Engineering", "Python", "Python"],
+        "locationRestrictions": ["Germany", "Austria"],
+        "employmentType": "Full Time",
+        "pubDate": 1791950000,
+        "minSalary": 70000.5,
+        "maxSalary": 95000,
+        "currency": "EUR",
+        "excerpt": "<p>Raw <strong>HTML</strong></p>",
+        "unknown_upstream_field": {"retained": True},
+    }
+    pages = [
+        {"jobs": [raw]},
+        {
+            "jobs": [
+                {
+                    **raw,
+                    "guid": "job-2",
+                    "applicationLink": "https://jobs.example/job-2",
+                }
+            ]
+        },
+        {
+            "jobs": [
+                {
+                    **raw,
+                    "guid": "job-3",
+                    "applicationLink": "https://jobs.example/job-3",
+                }
+            ]
+        },
+    ]
+
+    result, requests = fetch_pages("himalayas", pages)
+    listing = result.listings[0]
+    content = normalize_offer("himalayas", listing.payload)
+
+    assert [request.url.params.get("offset") for request in requests] == [
+        "0",
+        "20",
+        "40",
+    ]
+    assert all(request.url.params.get("limit") == "20" for request in requests)
+    assert result.complete and result.pages_fetched == 3
+    assert result.next_cursor == {"items_seen": 3, "filtered": 0}
+    assert [item.external_id for item in result.listings] == [
+        "id:job-1",
+        "id:job-2",
+        "id:job-3",
+    ]
+    assert listing.url == listing.apply_url == raw["applicationLink"]
+    assert listing.payload == raw
+    assert content == {
+        "title": "Backend Engineer",
+        "company": "Acme",
+        "description": "<p>Raw <strong>HTML</strong></p>",
+        "tags": ["Software Engineering", "Python", "Python"],
+        "salary": None,
+        "location": "Germany",
+        "remote": True,
+        "salary_currency": "EUR",
+        "employment_type": "Full Time",
+        "logo": "https://cdn.example/acme.png",
+        "salary_min": 70000.5,
+        "salary_max": 95000,
+    }
+
+
+def test_himalayas_stops_on_empty_page(monkeypatch):
+    from jobhunt_core.harvest.providers import native_json
+
+    monkeypatch.setattr(native_json, "HIMALAYAS_PAGE_DELAY_SECONDS", 0)
+    result, requests = fetch_pages(
+        "himalayas",
+        [
+            {
+                "jobs": [
+                    {
+                        "guid": "one",
+                        "title": "Editor",
+                        "applicationLink": "https://jobs.example/one",
+                    }
+                ]
+            },
+            {"jobs": []},
+        ],
+    )
+    assert result.complete and result.pages_fetched == len(requests) == 2
+    assert len(result.listings) == 1
+
+
+def test_himalayas_preserves_empty_logo_string(monkeypatch):
+    from jobhunt_core.harvest.providers import native_json
+
+    monkeypatch.setattr(native_json, "HIMALAYAS_PAGE_DELAY_SECONDS", 0)
+    result, _requests = fetch_pages(
+        "himalayas",
+        [
+            {
+                "jobs": [
+                    {
+                        "guid": "one",
+                        "title": "Editor",
+                        "applicationLink": "https://jobs.example/one",
+                        "companyLogo": "",
+                    }
+                ]
+            },
+            {"jobs": []},
+        ],
+    )
+    assert normalize_offer("himalayas", result.listings[0].payload)["logo"] == ""
+
+
+def test_himalayas_later_page_failure_is_partial(monkeypatch):
+    from jobhunt_core.harvest.providers import native_json
+
+    monkeypatch.setattr(native_json, "HIMALAYAS_PAGE_DELAY_SECONDS", 0)
+    result, requests = fetch_pages(
+        "himalayas",
+        [
+            {
+                "jobs": [
+                    {
+                        "guid": "one",
+                        "title": "Editor",
+                        "applicationLink": "https://jobs.example/one",
+                    }
+                ]
+            },
+            {"error": "busy"},
+        ],
+        statuses=[200, 503],
+    )
+    assert len(requests) == 2 and len(result.listings) == 1
+    assert result.pages_fetched == 1
+    assert not result.complete and result.error == "page_fetch_failed"
+
+
 @pytest.mark.parametrize(
     "name,payload",
     [
@@ -126,6 +292,8 @@ def test_remoteok_raw_identity_apply_url_and_normalization_are_preserved():
         ("remoteok", []),
         ("remoteok", {}),
         ("remoteok", ["metadata"]),
+        ("himalayas", []),
+        ("himalayas", {"jobs": "changed"}),
     ],
 )
 def test_invalid_envelope_is_error_not_empty(name, payload):
@@ -140,6 +308,7 @@ def test_invalid_envelope_is_error_not_empty(name, payload):
         ("workingnomads", []),
         ("jobicy", {"jobs": []}),
         ("remoteok", [{"legal": "metadata"}]),
+        ("himalayas", {"jobs": []}),
     ],
 )
 def test_explicit_empty_is_success(name, payload):
@@ -236,6 +405,11 @@ def test_remoteok_rejects_filters_before_network():
         fetch("remoteok", [{"legal": "metadata"}], {"query": "python"})
 
 
+def test_himalayas_rejects_filters_before_network():
+    with pytest.raises(ProviderConfigError):
+        fetch("himalayas", {"jobs": []}, {"query": "python"})
+
+
 def test_remoteok_builds_url_from_slug_when_source_url_is_missing():
     result, _ = fetch(
         "remoteok",
@@ -276,6 +450,6 @@ def test_native_registry_does_not_require_legacy_modules():
     from jobhunt_core.harvest.providers import get_provider
     from jobhunt_core.harvest.registry import ensure_handler
 
-    for name in ("remotive", "workingnomads", "jobicy", "remoteok"):
+    for name in ("remotive", "workingnomads", "jobicy", "remoteok", "himalayas"):
         assert get_provider(name).name == name
         assert ensure_handler(name)

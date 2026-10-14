@@ -227,14 +227,15 @@
       "last_success": [{"product": "reactportfolio", "at": "2026-10-13T16:22:03.064238+00:00", "evidence": "successful persisted snapshot with 60 cached entries and zero normalization errors"}],
       "production_metrics": {"cached_entries": 60, "reported_total": 60, "normalization_errors": 0, "duplicate_stable_keys": 0, "duplicate_exact_hashes": 0, "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/himalayas/field_presence"},
       "core_scope_ids": [],
-      "blocker": "Core has no adapter or production scope; Phase -1 branch protection with required CI and CODEOWNER review is not yet verified.",
+      "blocker": "The branch adapter and one-scope three-page shadow are validated, but production has no Himalayas source or scope until the final owner-approved merge and coordinated cutover.",
       "inventory_verified": true,
+      "core_adapter": true,
       "state": "local_pending",
       "target_owner": "core",
       "active_publishers": ["reactportfolio"],
       "swissjob_module": true,
       "reactportfolio_source_name": "himalayas",
-      "evidence": "Portfolio production cache healthy with 60 current entries; SwissJob module is dormant."
+      "evidence": "Portfolio production remains the sole live publisher with 60 audited rows; the branch shadow preserved all fields, collapsed three exact page-shift duplicates to 57 stable GUIDs, and the SwissJob module remains dormant."
     },
     {
       "name": "ictjobs",

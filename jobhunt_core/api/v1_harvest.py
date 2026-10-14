@@ -35,9 +35,10 @@ class SourceAggregateItemDTO(BaseModel):
     description: str | None = None
     location: str | None = None
     salary: str | None = None
-    salary_min: int | None = None
-    salary_max: int | None = None
+    salary_min: int | float | None = None
+    salary_max: int | float | None = None
     salary_currency: str | None = None
+    logo: str | None = None
     remote: bool | None = None
     tags: list[str] = []
     canton: str | None = None
@@ -45,7 +46,7 @@ class SourceAggregateItemDTO(BaseModel):
     categories: list[str] = []
     job_type: str | None = None
     job_types: list[str] = []
-    published_at: str | None = None
+    published_at: str | int | float | None = None
 
 
 class SourceAggregateCountsDTO(BaseModel):

@@ -390,6 +390,57 @@ def test_source_aggregate_is_bounded_and_uses_latest_raw(db):  # noqa: F811
     assert unchanged.status_code == 304
 
 
+def test_source_aggregate_preserves_himalayas_display_fields(db):  # noqa: F811
+    factory, created = db
+    source, _scope_ids = _seed_source(factory, created, scopes=1)
+    external_id, _incarnation = _seed_listing(
+        factory,
+        created,
+        source,
+        content={
+            "title": "Remote editor",
+            "company": "School",
+            "description": "<p>Raw HTML</p>",
+            "location": "Worldwide",
+            "remote": True,
+            "tags": ["Writing", "Writing"],
+            "salary_min": 10.5,
+            "salary_max": 20,
+            "salary_currency": "EUR",
+            "employment_type": "Contract",
+            "logo": "https://cdn.example/logo.png",
+        },
+        raw={
+            "categories": ["Content Writing", "Editing"],
+            "pubDate": 1791950000,
+        },
+    )
+    _client_id, _key_id, token = _issue(
+        factory, created, "himalayas-reader", ["vacancies:read"]
+    )
+
+    response = _api(
+        factory,
+        f"/v1/harvest/sources/{source}/aggregate?item_limit=1&top_n=10",
+        token=token,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["counts"]["categories"] == {
+        "content-writing": 1,
+        "editing": 1,
+    }
+    item = body["items"][0]
+    assert item["external_id"] == external_id
+    assert item["categories"] == ["Content Writing", "Editing"]
+    assert item["published_at"] == 1791950000
+    assert item["salary_min"] == 10.5
+    assert item["salary_max"] == 20
+    assert item["salary_currency"] == "EUR"
+    assert item["job_type"] == "Contract"
+    assert item["logo"] == "https://cdn.example/logo.png"
+
+
 def test_source_aggregate_requires_read_scope_and_known_source(db):  # noqa: F811
     factory, created = db
     source, _scope_ids = _seed_source(factory, created, scopes=1)

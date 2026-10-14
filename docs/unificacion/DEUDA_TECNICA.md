@@ -47,8 +47,9 @@ continuar sin rediseñarlo.
 3. Los despliegues reales deben fallar mientras HEAD no sea exactamente el SHA
    de `github/main`. Esta guarda evita publicar una rama incompleta, pero no se
    presenta como una protección de rama inexistente en GitHub Free privado.
-4. Jobicy ya conserva las ocho consultas en Core y completó dos ciclos sombra
-   aislados. Mantener sus scopes productivos deshabilitados y `main` intacta;
+4. Jobicy y RemoteOK están centralizados y con CI verde en las ramas. Himalayas
+   tiene Core y sombra ya validados, pero su adaptación ReactPortfolio sigue en
+   curso. Mantener todos los scopes productivos deshabilitados y `main` intacta;
    el corte vivo queda agrupado con la fusión final aprobada por el propietario.
 5. Añadir aquí un checkpoint después de cada fuente u oleada con estados,
    pruebas, SHA, evidencia viva, rollback y siguiente paso exacto.
@@ -448,6 +449,72 @@ continuar sin rediseñarlo.
 - Siguiente paso exacto: publicar los commits RemoteOK y confirmar sus CI.
   Después continuar con la siguiente fuente pública de Fase 3; no habilitar
   RemoteOK ni cambiar `main` antes de la fusión final aprobada.
+
+### Checkpoint de relevo 2026-10-14 · Himalayas Core validado, consumidor pendiente
+
+- Antes de empezar, RemoteOK quedó publicado y cerró CI: SwissJob/Core
+  `cdca8df`, run `38549699864`, con 9/9 jobs en `success`; ReactPortfolio
+  `5cb6737`, run `38549703279`, con su job en `success`. El commit documental
+  posterior `80e0b00` ratifica GitHub Free y la retirada de Forgejo. Los `main`
+  remotos siguen intactos: SwissJob `e59283b` y ReactPortfolioServer `5bf457a`.
+- Recuento comprobado del inventario productivo: 26 portales únicos y 27
+  productores locales —16 SwissJob y 11 ReactPortfolio—. En las ramas, tras
+  Jobicy y RemoteOK, faltan 24 portales: 15 SwissJob y 9 ReactPortfolio.
+  Himalayas está incluido en esos nueve; al completarlo quedarán 23.
+- Trazado Himalayas: el único productor activo es
+  `ReactPortfolio/routers/himalayas_jobs.py`, con worker, caché y seis rutas.
+  `SwissJob/backend/providers/himalayas.py` existe pero no está registrado ni
+  ejecutado. El contrato activo consulta tres páginas de 20, offsets 0/20/40,
+  conserva sólo la primera restricción de ubicación, categorías y excerpt raw,
+  y ordena recientes por `pubDate` descendente.
+- Línea base viva: tres páginas de 20, 60 filas y 57 GUID únicos; tres filas son
+  duplicados exactos causados por desplazamiento entre páginas. Huellas por
+  offset: `0=9d12d58e9f486acb6cad2aeff30a93d708b1f44eaec7c682eb22ba7e9c740bc9`,
+  `20=4cb4bd726fcdda567bfaf2439fac6af708109c4d7c670775a880661cd02ab96f`,
+  `40=e42501eb15fd1e411436663e24ac45d34f439f0025167fad6e423f0c2f7e482d`.
+- Core en este checkpoint incorpora Himalayas al provider JSON, fecha de
+  admisión, agregado, DTO y provisión opt-in. Conserva raw, GUID, candidatura,
+  `pubDate` numérico, HTML, orden y duplicados de tags, primer país, salarios
+  decimales y moneda, empleo y logo. La primera comparación encontró que 12
+  logos vacíos pasaban de `""` a `null`; se corrigió y la paridad final es
+  60/60 sin diferencias.
+- El doble ciclo sombra aislado recibió 60 filas y tres páginas por ciclo,
+  terminó dos veces en `ok`, observó 1/1 scope, registró cero fallos y estabilizó
+  57 identidades, 57 listings, 57 raws y 57 revisiones de oferta. El segundo
+  ciclo no creó revisiones. Las 57 fechas coinciden por GUID y el orden funcional
+  sigue siendo más reciente primero. Evidencia:
+  [`2026-10-14-dt144-himalayas-shadow.json`](../audits/2026-10-14-dt144-himalayas-shadow.json).
+- Validación ejecutada: Ruff focal verde; JSON unitario 47/47 antes del ajuste
+  de logo y 40/40 después; PostgreSQL focal 13/13; paridad viva 60/60; Core
+  completo 1.573 aprobadas, una omitida y una advertencia conocida. Dos
+  invocaciones descartadas fallaron por infraestructura del arnés —URL admin
+  con driver asíncrono y `PYTHONPATH` ausente en el contenedor— y pasaron al
+  repetirlas con la configuración correcta; no fueron fallos de producto.
+- Archivos DT-144 que forman el checkpoint Core de SwissJob:
+  `jobhunt_core/harvest/providers/native_json.py`, `normalize.py`,
+  `admission.py`, `source_aggregate.py`, `api/v1_harvest.py`,
+  `provision_himalayas.py` y sus pruebas focales/integrales. No incluir en
+  ningún commit los cambios preexistentes de `CLAUDE.md`, documentación histórica,
+  auditorías de viabilidad ni otros ficheros ajenos que muestra `git status`.
+  ReactPortfolio sigue limpio en `5cb6737`; su upstream ya es
+  `github/feat/dt144-free-gate`.
+- No se ha creado scope productivo, desplegado, fusionado ni cambiado ninguna
+  credencial. El rollback sigue siendo el productor Himalayas local intacto;
+  el inventario permanece `local_pending` porque describe producción.
+- **Siguiente paso exacto:** añadir Himalayas a `SOURCE_SPECS` y al DTO del
+  adaptador Core de ReactPortfolio; generar `by-category`, preservar el JSON
+  reciente —incluidos logo, fecha epoch y salarios condicionales— y ordenar la
+  ventana completa por `pubDate`; retirar su import/router y provider del
+  registro local; añadirlo a las dos listas `LEGACY_DISABLED_SOURCES`, al
+  conjunto Core y bajar el ratchet local de 9 a 8. Después ejecutar pruebas
+  focales y suites completas, versionar evidencia/checkpoint, crear commits
+  separados en ambos repositorios, publicar las ramas y comprobar CI. No tocar
+  `main`, producción ni el scope real.
+
+La metodología obligatoria usada en Jobicy, RemoteOK e Himalayas queda
+formalizada en la sección 7.1 del contrato: preflight; trazado completo; línea
+base con huellas; Core mínimo; pruebas por capas; doble ciclo y paridad; lectura
+Core y apagado local; suites/CI; checkpoint antes de avanzar.
 
 ### Registro cerrado · Forgejo no forma parte de DT-144
 

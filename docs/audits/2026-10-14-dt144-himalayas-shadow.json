@@ -1,0 +1,62 @@
+{
+  "source": "himalayas",
+  "status": "core_validated_reactportfolio_handover_pending",
+  "production_changed": false,
+  "capture": {
+    "parameters": [
+      {"limit": 20, "offset": 0},
+      {"limit": 20, "offset": 20},
+      {"limit": 20, "offset": 40}
+    ],
+    "sha256": {
+      "0": "9d12d58e9f486acb6cad2aeff30a93d708b1f44eaec7c682eb22ba7e9c740bc9",
+      "20": "4cb4bd726fcdda567bfaf2439fac6af708109c4d7c670775a880661cd02ab96f",
+      "40": "e42501eb15fd1e411436663e24ac45d34f439f0025167fad6e423f0c2f7e482d"
+    },
+    "rows": 60,
+    "unique_guids": 57,
+    "exact_duplicate_rows": 3
+  },
+  "field_parity": {
+    "rows": 60,
+    "matched": 60,
+    "mismatches": []
+  },
+  "shadow": {
+    "cycles": [
+      {"status": "ok", "listings_received": 60, "pages": 3, "complete": true},
+      {"status": "ok", "listings_received": 60, "pages": 3, "complete": true}
+    ],
+    "stored": {
+      "external_ids": 57,
+      "listings": 57,
+      "raw_revisions": 57,
+      "offer_revisions": 57
+    },
+    "aggregate": {
+      "total": 57,
+      "enabled_scopes": 1,
+      "observed_scopes": 1,
+      "max_consecutive_failures": 0,
+      "published_dates": 57,
+      "locations": 15,
+      "categories": 465,
+      "salary_min": 27,
+      "salary_max": 27,
+      "apply_urls": 57,
+      "truthy_logos": 46,
+      "employment_types": 57,
+      "legacy_recent_newest_first": true,
+      "published_date_by_stable_id_match": true
+    }
+  },
+  "validation": {
+    "native_json_unit_before_logo_fix": "47 passed",
+    "native_json_unit_after_logo_fix": "40 passed",
+    "postgresql_focused": "13 passed",
+    "ruff_focused": "passed",
+    "core_full": "1573 passed, 1 skipped, 1 warning"
+  },
+  "rollback": "ReactPortfolio local Himalayas producer remains intact and production-owned until the final approved cutover.",
+  "next_step": "Complete the ReactPortfolio Core compatibility adapter and local producer disconnection; then run full suites, commit both feature branches and verify GitHub CI."
+}

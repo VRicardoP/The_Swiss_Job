@@ -27,6 +27,7 @@ DATE_FIELDS = {
     "workingnomads": "pub_date",
     "jobicy": "pubDate",
     "remoteok": "date",
+    "himalayas": "pubDate",
     "weworkremotely": "pubDate",
     "euremotejobs": "pubDate",
     "jobspresso": "pubDate",

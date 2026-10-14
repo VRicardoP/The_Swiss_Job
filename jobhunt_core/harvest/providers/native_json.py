@@ -2,15 +2,17 @@
 
 Each request refreshes the provider's published feed, not an invented complete
 historical archive. Remotive uses the existing 200-item feed; Jobicy uses a
-50-item feed PER tag/geo scope; RemoteOK has one global feed. These
-adapters preserve the original object for the sink; parsing canonical content
-is separate. They do not import the BFF, access its DB, or enable any source.
+50-item feed PER tag/geo scope; RemoteOK has one global feed; Himalayas keeps
+the legacy three pages of 20. These adapters preserve the original object for
+the sink; parsing canonical content is separate. They do not import the BFF,
+access its DB, or enable any source.
 
 Identity prefers the upstream id; a URL fallback is explicitly weaker when a
 portal changes URLs and must be checked in that source's cutover parity test.
 No title/company hash and no early-stop on already seen items.
 """
 
+import asyncio
 import logging
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
@@ -39,8 +41,12 @@ ENDPOINTS = {
     "workingnomads": "https://www.workingnomads.com/api/exposed_jobs/",
     "jobicy": "https://jobicy.com/api/v2/remote-jobs",
     "remoteok": "https://remoteok.com/api",
+    "himalayas": "https://himalayas.app/jobs/api",
 }
 MAX_RESPONSE_BYTES = 32 * 1024 * 1024
+HIMALAYAS_PAGE_SIZE = 20
+HIMALAYAS_MAX_PAGES = 3
+HIMALAYAS_PAGE_DELAY_SECONDS = 0.5
 
 # Same title-only exclusions as the previous Working Nomads producer.
 WORKINGNOMADS_TECH_EXCLUDE = (
@@ -117,14 +123,25 @@ def _remoteok_salary(value):
     return int(value) if isinstance(value, float) and value.is_integer() else value
 
 
+def _positive_number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    return value
+
+
 def _content(name, raw):
     jobicy = name == "jobicy"
     remoteok = name == "remoteok"
+    himalayas = name == "himalayas"
     title = raw.get("jobTitle" if jobicy else "position" if remoteok else "title")
     if remoteok and not title:
         title = raw.get("title")
-    description = _plain(raw.get("jobDescription" if jobicy else "description"))
-    tags = raw.get("tags")
+    description = (
+        raw.get("excerpt")
+        if himalayas
+        else _plain(raw.get("jobDescription" if jobicy else "description"))
+    )
+    tags = raw.get("categories" if himalayas else "tags")
     if name == "workingnomads" and isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",") if t.strip()]
     tags = tags if isinstance(tags, list) and not jobicy else []
@@ -133,14 +150,14 @@ def _content(name, raw):
         tags = [category.strip(), *tags]
     extracted = (
         []
-        if remoteok
+        if remoteok or himalayas
         else extract_job_skills(
             title if isinstance(title, str) else "", description or ""
         )
     )
     if jobicy:
         extracted = [*extract_tech_skills(title, description), *extracted]
-    if remoteok:
+    if remoteok or himalayas:
         merged = tags
     else:
         merged, seen = [], set()
@@ -151,16 +168,22 @@ def _content(name, raw):
             if tag and tag.lower() not in seen:
                 seen.add(tag.lower())
                 merged.append(tag)
-    location = (
-        (raw.get("jobGeo") or raw.get("country"))
-        if jobicy
-        else raw.get(
-            "candidate_required_location" if name == "remotive" else "location"
+    if himalayas:
+        restrictions = raw.get("locationRestrictions")
+        location = (
+            restrictions[0] if isinstance(restrictions, list) and restrictions else None
         )
-    )
+    else:
+        location = (
+            (raw.get("jobGeo") or raw.get("country"))
+            if jobicy
+            else raw.get(
+                "candidate_required_location" if name == "remotive" else "location"
+            )
+        )
     if jobicy:
         location = normalize_location(location)
-    elif remoteok:
+    elif remoteok or himalayas:
         location = normalize_location(location) or "Worldwide"
     if name == "workingnomads" and (
         not isinstance(location, str) or not location.strip()
@@ -169,11 +192,15 @@ def _content(name, raw):
     content = {
         "title": title,
         "company": raw.get(
-            "companyName" if jobicy else "company" if remoteok else "company_name"
+            "companyName"
+            if jobicy or himalayas
+            else "company"
+            if remoteok
+            else "company_name"
         ),
         "description": description,
         "location": location,
-        "tags": merged if remoteok else merged[:15],
+        "tags": merged if remoteok or himalayas else merged[:15],
         "remote": True,
         # Preserve the existing canonical boundary; unverified portal salary
         # stays in raw. RemoteOK's USD amounts are mapped below from live parity.
@@ -196,6 +223,20 @@ def _content(name, raw):
             salary_max=salary_max,
             salary_currency="USD" if salary_min or salary_max else None,
         )
+    elif himalayas:
+        salary_min = _positive_number(raw.get("minSalary"))
+        salary_max = _positive_number(raw.get("maxSalary"))
+        content.update(
+            salary_min=salary_min,
+            salary_max=salary_max,
+            salary_currency=(
+                raw.get("currency")
+                if (salary_min or salary_max) and isinstance(raw.get("currency"), str)
+                else None
+            ),
+            employment_type=raw.get("employmentType"),
+            logo=raw.get("companyLogo"),
+        )
     return content
 
 
@@ -207,6 +248,8 @@ def register_handlers():
             if name == "jobicy"
             else ("position", "company")
             if name == "remoteok"
+            else ("title", "companyName")
+            if name == "himalayas"
             else ("title", "company_name")
         )
         register_extractor(
@@ -235,14 +278,22 @@ def _valid_url(value):
 def _listing(name, raw):
     if not isinstance(raw, dict):
         return None
-    apply_url = _valid_url(raw.get("apply_url")) if name == "remoteok" else None
-    url = _valid_url(raw.get("url"))
+    apply_url = (
+        _valid_url(raw.get("apply_url"))
+        if name == "remoteok"
+        else _valid_url(raw.get("applicationLink"))
+        if name == "himalayas"
+        else None
+    )
+    url = _valid_url(
+        raw.get("applicationLink") if name == "himalayas" else raw.get("url")
+    )
     if url is None and name == "remoteok" and raw.get("slug"):
         url = _valid_url(f"https://remoteok.com/remote-jobs/{raw['slug']}")
     url = url or apply_url
     if url is None:
         return None
-    identity = raw.get("id")
+    identity = raw.get("guid" if name == "himalayas" else "id")
     if (
         isinstance(identity, bool)
         or not isinstance(identity, (str, int))
@@ -354,8 +405,31 @@ class NativeJSONProvider(BaseProvider):
 
     async def fetch_new(self, params, cursor, http):
         _validate_params(self.name, params)
-        body = await _fetch_body(self.name, http, _query_for(self.name, params))
-        rows = _rows_of(self.name, body)
+        queries = (
+            tuple(
+                {"limit": HIMALAYAS_PAGE_SIZE, "offset": page * HIMALAYAS_PAGE_SIZE}
+                for page in range(HIMALAYAS_MAX_PAGES)
+            )
+            if self.name == "himalayas"
+            else (_query_for(self.name, params),)
+        )
+        rows, pages, fetch_error = [], 0, None
+        for index, query in enumerate(queries):
+            try:
+                body = await _fetch_body(self.name, http, query)
+                page_rows = _rows_of(self.name, body)
+            except Exception:
+                if not rows:
+                    raise
+                logger.warning("%s: page %d fetch failed", self.name, index + 1)
+                fetch_error = "page_fetch_failed"
+                break
+            pages += 1
+            rows.extend(page_rows)
+            if not page_rows:
+                break
+            if self.name == "himalayas" and index < len(queries) - 1:
+                await asyncio.sleep(HIMALAYAS_PAGE_DELAY_SECONDS)
         listings = tuple(
             item for row in rows if (item := _listing(self.name, row)) is not None
         )
@@ -373,9 +447,11 @@ class NativeJSONProvider(BaseProvider):
             listings, filtered = _workingnomads_filter(
                 self.name, listings, params.get("query", "").lower()
             )
+        error = fetch_error or ("invalid_json_items" if invalid else None)
         return FetchResult(
             listings,
             {"items_seen": len(rows), "filtered": filtered},
-            complete=not invalid,
-            error="invalid_json_items" if invalid else None,
+            pages_fetched=pages,
+            complete=not invalid and fetch_error is None,
+            error=error,
         )

@@ -13,17 +13,19 @@ _SOURCE_AGGREGATE_SQL = sa.text(
              o.content->>'location' AS location,
              o.content->>'salary' AS salary,
              CASE WHEN jsonb_typeof(o.content->'salary_min')='number'
-                  THEN (o.content->>'salary_min')::int END AS salary_min,
+                  THEN o.content->'salary_min' END AS salary_min,
              CASE WHEN jsonb_typeof(o.content->'salary_max')='number'
-                  THEN (o.content->>'salary_max')::int END AS salary_max,
+                  THEN o.content->'salary_max' END AS salary_max,
              o.content->>'salary_currency' AS salary_currency,
+             o.content->>'logo' AS logo,
              CASE WHEN jsonb_typeof(o.content->'remote')='boolean'
                   THEN (o.content->>'remote')::boolean END AS remote,
              CASE WHEN jsonb_typeof(o.content->'tags')='array'
                   THEN o.content->'tags' ELSE '[]'::jsonb END AS tags,
              o.content->>'canton' AS canton,
              latest.category, latest.categories_raw,
-             latest.job_type, latest.job_types_raw,
+             COALESCE(o.content->>'employment_type', latest.job_type) AS job_type,
+             latest.job_types_raw,
              latest.published_at
       FROM sources s
       JOIN source_listings sl ON sl.source_id=s.id
@@ -39,8 +41,13 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                  CASE WHEN jsonb_typeof(r.raw->'jobIndustry')='string'
                       THEN r.raw->>'jobIndustry' END
                ) AS category,
-               CASE WHEN jsonb_typeof(r.raw->'jobIndustry')='array'
-                    THEN r.raw->'jobIndustry' ELSE '[]'::jsonb END AS categories_raw,
+               CASE
+                 WHEN jsonb_typeof(r.raw->'jobIndustry')='array'
+                   THEN r.raw->'jobIndustry'
+                 WHEN jsonb_typeof(r.raw->'categories')='array'
+                   THEN r.raw->'categories'
+                 ELSE '[]'::jsonb
+               END AS categories_raw,
                COALESCE(
                  CASE WHEN jsonb_typeof(r.raw->'job_type')='string'
                       THEN r.raw->>'job_type' END,
@@ -56,15 +63,15 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                END AS job_types_raw,
                COALESCE(
                  CASE WHEN jsonb_typeof(r.raw->'publication_date')='string'
-                      THEN r.raw->>'publication_date' END,
+                      THEN r.raw->'publication_date' END,
                  CASE WHEN jsonb_typeof(r.raw->'created_at')='string'
-                      THEN r.raw->>'created_at' END,
+                      THEN r.raw->'created_at' END,
                  CASE WHEN jsonb_typeof(r.raw->'dateFirstPublished')='string'
-                      THEN r.raw->>'dateFirstPublished' END,
-                 CASE WHEN jsonb_typeof(r.raw->'date')='string'
-                      THEN r.raw->>'date' END,
-                 CASE WHEN jsonb_typeof(r.raw->'pubDate')='string'
-                      THEN r.raw->>'pubDate' END
+                      THEN r.raw->'dateFirstPublished' END,
+                 CASE WHEN jsonb_typeof(r.raw->'date') IN ('string', 'number')
+                      THEN r.raw->'date' END,
+                 CASE WHEN jsonb_typeof(r.raw->'pubDate') IN ('string', 'number')
+                      THEN r.raw->'pubDate' END
                ) AS published_at
         FROM source_listing_revisions r
         WHERE r.incarnation_id=i.id
@@ -98,6 +105,7 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                'salary_min', salary_min,
                'salary_max', salary_max,
                'salary_currency', salary_currency,
+               'logo', logo,
                'remote', remote,
                'tags', tags,
                'canton', canton,
