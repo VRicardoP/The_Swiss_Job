@@ -37,6 +37,7 @@ DATE_FIELDS = {
     "dynamitejobs": "_core_published_at",
     "jobscout24": "date",
     "myscience": "date",
+    "gastrojob": "_core_published_at",
     "weworkremotely": "pubDate",
     "euremotejobs": "pubDate",
     "jobspresso": "pubDate",

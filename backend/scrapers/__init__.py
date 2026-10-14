@@ -1,6 +1,5 @@
 """Scraper registry: discover and instantiate all HTML-scraping providers."""
 
-from scrapers.gastrojob import GastrojobScraper
 from scrapers.schuljobs import SchulJobsScraper
 from scrapers.stelle_admin import StelleAdminScraper
 from scrapers.swiss_schools_ecolint import SwissSchoolsEcolintScraper
@@ -15,7 +14,6 @@ from scrapers.tes import TESScraper
 from services.job_service import BaseJobProvider
 
 _SCRAPER_CLASSES: dict[str, type[BaseJobProvider]] = {
-    "gastrojob": GastrojobScraper,
     "stelle_admin": StelleAdminScraper,
     "tes": TESScraper,
     "schuljobs": SchulJobsScraper,

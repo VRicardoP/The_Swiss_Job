@@ -41,6 +41,7 @@ def _altas_exact_match() -> dict:
     from jobhunt_core.harvest.providers import native_dynamitejobs
     from jobhunt_core.harvest.providers import native_jobscout24
     from jobhunt_core.harvest.providers import native_myscience
+    from jobhunt_core.harvest.providers import native_gastrojob
 
     return {
         arbeitnow.SOURCE_NAME: arbeitnow.register_handlers,
@@ -60,6 +61,7 @@ def _altas_exact_match() -> dict:
         native_dynamitejobs.SOURCE_NAME: native_dynamitejobs.register_handlers,
         native_jobscout24.SOURCE_NAME: native_jobscout24.register_handlers,
         native_myscience.SOURCE_NAME: native_myscience.register_handlers,
+        native_gastrojob.SOURCE_NAME: native_gastrojob.register_handlers,
     }
 
 

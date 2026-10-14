@@ -1,0 +1,142 @@
+{
+  "source": "gastrojob",
+  "captured_at_utc": {
+    "ajax_listing_pages": "2026-10-14T20:28:03+00:00",
+    "detail_pages": "2026-10-14T20:30:37+00:00"
+  },
+  "method": "Both the retiring SwissJob scraper and the new Core adapter were replayed offline against this SAME sealed capture, so the parity below is byte-level.",
+  "transport_contract": {
+    "listing_endpoint": "https://www.gastrojob.ch/?type=5000&tx_mxngastrojob_ajax[action]=filteredAds&…[@widget_0][currentPage]={page}",
+    "why_not_the_public_listing": "/stellen builds its offers with JavaScript and answers 200 with zero offer links — the defect that killed this source (VD.4b).",
+    "required_header": "Referer: https://www.gastrojob.ch/stellen (the frontend sends it and the endpoint expects it)",
+    "credentials": null,
+    "pages": 5,
+    "page_size": 10,
+    "rate_limit_seconds": 2.0,
+    "own_ads_only": "/stellen/stelleninserat/<digits>; partner ads under /stellen/externe-partner/ are not harvested"
+  },
+  "listing_capture": {
+    "pages": 5,
+    "all_status_200": true,
+    "bytes_total": 45986,
+    "announced_offers": 1027,
+    "stubs_per_page": 10,
+    "unique_offers": 50,
+    "duplicates_across_pages": 0,
+    "partner_only_pages_in_range": 0,
+    "per_page": [
+      {
+        "page": 1,
+        "bytes": 8867,
+        "sha256": "b994192bee651953f3a92d4f9ccd4f8a466da5fd8b699861674a50af738211a7"
+      },
+      {
+        "page": 2,
+        "bytes": 9015,
+        "sha256": "799200b68b11d8c984ff14199ddd8da67f4fde6a048552639edc2f46bddd31e1"
+      },
+      {
+        "page": 3,
+        "bytes": 9391,
+        "sha256": "a8279ebfafbb7a52a61670e9a579a0fb9f3fb9e6567eea13c9f7bd630e69722f"
+      },
+      {
+        "page": 4,
+        "bytes": 9397,
+        "sha256": "4d580f9039481a224d4cb273dc7e4bf5887faf4c29234475c3fa321581f91d9b"
+      },
+      {
+        "page": 5,
+        "bytes": 9316,
+        "sha256": "9b29bc8dcf359582816281762b70826b402e033021800d498834f2b1f3f931c6"
+      }
+    ]
+  },
+  "detail_capture": {
+    "pages": 50,
+    "all_status_200": true,
+    "bytes_total": 1471686
+  },
+  "legacy_replay": {
+    "offers": 50,
+    "with_description": 48,
+    "with_locality": 50,
+    "with_detail_date": 50,
+    "unknown_company": 0,
+    "with_published_at": 50,
+    "with_employment_type": 48,
+    "cantons": [
+      "AG",
+      "BE",
+      "BS",
+      "GR",
+      "LU",
+      "SG",
+      "SH",
+      "SO",
+      "TI",
+      "ZG",
+      "ZH"
+    ],
+    "distinct_locations": 23,
+    "max_tags_on_an_offer": 2,
+    "description_chars_total": 98573,
+    "normalized_sha256": "797788fcb1b55b54ff0983035c4d7ad858036c6447a875ea794494aeb54a9c50"
+  },
+  "core_replay": {
+    "listings": 50,
+    "requests": 55,
+    "listing_requests": 5,
+    "detail_requests": 50,
+    "unique_external_ids": 50,
+    "with_published_at": 50,
+    "complete": true,
+    "error": null,
+    "cursor": {
+      "pages": 5,
+      "items_seen": 50,
+      "identities": 50,
+      "details_fetched": 50
+    }
+  },
+  "parity": {
+    "listing_parser_differences_over_50_stubs": 0,
+    "detail_parser_differences_over_50_pages": 0,
+    "compared_fields": [
+      "title",
+      "company",
+      "location",
+      "canton",
+      "description",
+      "url",
+      "remote",
+      "tags",
+      "employment_type",
+      "published_at"
+    ],
+    "rows_compared": 50,
+    "field_differences": 0,
+    "projection_sha256": "25c9b2044ce321041543a48228877f02eff871c696edbc5f8ada56a957b3e768",
+    "legacy_projection_sha256": "25c9b2044ce321041543a48228877f02eff871c696edbc5f8ada56a957b3e768",
+    "identical": true
+  },
+  "preserved_verdicts": [
+    "a fragment without the advertisement counter is a visible failure, not an empty page",
+    "an unreadable counter is a visible failure — including one of thousands of digits, which makes int() raise (the scraper's own r2/H4 fix, reproduced here with a test that bites)",
+    "own offer links of which none parses is a visible failure, decided BEFORE the page-range verdict",
+    "beyond the last page the counter covers is a legitimate end of pagination",
+    "a partner-only page inside the range is a legitimate empty page — the rehabilitation path",
+    "anything else inside the range is a visible failure, even mid-sweep after good pages"
+  ],
+  "identity_rules_preserved": [
+    "the stored URL is REBUILT from the canonical path: a tracking query, a port or a different case do not create a second row",
+    "the host is validated, so a protocol-relative, userinfo or cross-host href cannot move the stored URL",
+    "the company comes only from the listing, even when the detail microdata knows it: it is part of the legacy identity and only the listing is stable run to run"
+  ],
+  "notes": [
+    "No credential exists for this source and none was created.",
+    "The artifact carries no personal data: only byte counts, hashes and aggregate counters.",
+    "Today's capture has zero anonymised ads; the scraper's own probes measured between ~3 % and ~13 %, and those stay 'Unknown' by design.",
+    "Core does not reproduce the cursor early-stop: it sweeps the five declared pages, which is 55 requests per run at the portal's own two-second pace."
+  ]
+}
