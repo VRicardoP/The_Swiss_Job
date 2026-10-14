@@ -280,6 +280,73 @@ def test_himalayas_later_page_failure_is_partial(monkeypatch):
     assert not result.complete and result.error == "page_fetch_failed"
 
 
+def test_swisstechjobs_wordpress_contract_and_terminal_page(monkeypatch):
+    from jobhunt_core.harvest.providers import native_json
+
+    monkeypatch.setattr(native_json, "WORDPRESS_PAGE_DELAY_SECONDS", 0)
+    raw = {
+        "id": 48213,
+        "date": "2026-10-08T00:00:00",
+        "link": "https://www.swisstechjobs.com/job/python-engineer/",
+        "title": {"rendered": "Python Engineer &#8211; <strong>Zurich</strong>"},
+        "content": {"rendered": "<p>Build services with <b>Python</b> and AWS.</p>"},
+        "meta": {
+            "_company_name": "Alpine Cloud AG",
+            "_job_location": "Zürich",
+            "_remote_position": "0",
+            "_application": "https://apply.example/48213",
+            "_job_salary": "110000-130000",
+            "_job_salary_currency": "",
+        },
+        "unknown_upstream_field": {"retained": True},
+    }
+    terminal = {
+        "code": "rest_post_invalid_page_number",
+        "message": "end",
+        "data": {"status": 400},
+    }
+
+    result, requests = fetch_pages("swisstechjobs", [[raw], terminal], [200, 400])
+    listing = result.listings[0]
+    content = normalize_offer("swisstechjobs", listing.payload)
+
+    assert [request.url.params.get("page") for request in requests] == ["1", "2"]
+    assert all(request.url.params.get("per_page") == "100" for request in requests)
+    assert result.complete and result.pages_fetched == 2
+    assert result.next_cursor == {"items_seen": 1, "filtered": 0}
+    assert listing.external_id == "id:48213"
+    assert listing.url == raw["link"]
+    assert listing.apply_url == raw["meta"]["_application"]
+    assert listing.payload == raw
+    assert content == {
+        "title": "Python Engineer &#8211; Zurich",
+        "company": "Alpine Cloud AG",
+        "description": "Build services with Python and AWS.",
+        # Legacy substring matching also finds the one-letter R tag.
+        "tags": ["python", "r", "aws"],
+        "salary": "110000-130000",
+        "location": "Zürich",
+        "remote": True,
+        "salary_currency": "CHF",
+    }
+
+
+def test_swisstechjobs_rejects_unrelated_400_as_failure(monkeypatch):
+    from jobhunt_core.harvest.providers import native_json
+
+    monkeypatch.setattr(native_json, "WORDPRESS_PAGE_DELAY_SECONDS", 0)
+    result, requests = fetch_pages(
+        "swisstechjobs",
+        [
+            [{"id": 1, "link": "https://example.org/1", "title": {"rendered": "Dev"}}],
+            {"code": "other", "data": {"status": 400}},
+        ],
+        [200, 400],
+    )
+    assert len(requests) == 2 and len(result.listings) == 1
+    assert not result.complete and result.error == "page_fetch_failed"
+
+
 @pytest.mark.parametrize(
     "name,payload",
     [
@@ -294,6 +361,7 @@ def test_himalayas_later_page_failure_is_partial(monkeypatch):
         ("remoteok", ["metadata"]),
         ("himalayas", []),
         ("himalayas", {"jobs": "changed"}),
+        ("swisstechjobs", {}),
     ],
 )
 def test_invalid_envelope_is_error_not_empty(name, payload):
@@ -309,6 +377,7 @@ def test_invalid_envelope_is_error_not_empty(name, payload):
         ("jobicy", {"jobs": []}),
         ("remoteok", [{"legal": "metadata"}]),
         ("himalayas", {"jobs": []}),
+        ("swisstechjobs", []),
     ],
 )
 def test_explicit_empty_is_success(name, payload):
@@ -410,6 +479,11 @@ def test_himalayas_rejects_filters_before_network():
         fetch("himalayas", {"jobs": []}, {"query": "python"})
 
 
+def test_swisstechjobs_rejects_filters_before_network():
+    with pytest.raises(ProviderConfigError):
+        fetch("swisstechjobs", [], {"query": "python"})
+
+
 def test_remoteok_builds_url_from_slug_when_source_url_is_missing():
     result, _ = fetch(
         "remoteok",
@@ -450,6 +524,13 @@ def test_native_registry_does_not_require_legacy_modules():
     from jobhunt_core.harvest.providers import get_provider
     from jobhunt_core.harvest.registry import ensure_handler
 
-    for name in ("remotive", "workingnomads", "jobicy", "remoteok", "himalayas"):
+    for name in (
+        "remotive",
+        "workingnomads",
+        "jobicy",
+        "remoteok",
+        "himalayas",
+        "swisstechjobs",
+    ):
         assert get_provider(name).name == name
         assert ensure_handler(name)

@@ -535,6 +535,55 @@ formalizada en la sección 7.1 del contrato: preflight; trazado completo; línea
 base con huellas; Core mínimo; pruebas por capas; doble ciclo y paridad; lectura
 Core y apagado local; suites/CI; checkpoint antes de avanzar.
 
+### Checkpoint de relevo 2026-10-14 · SwissTechJobs Core validado, consumidor pendiente
+
+- El preflight parte de SwissJob/Core `f137f4f` y ReactPortfolio `e8ba714`, con
+  los CI de Himalayas verdes. Los `main` remotos siguen en `e59283b` y
+  `5bf457a`; no se desplegó ni se creó ningún scope productivo.
+- El único productor activo es
+  `ReactPortfolio/routers/swisstechjobs_jobs.py`: dos páginas WordPress de 100,
+  caché, worker, registro normalizador y cinco rutas públicas. El módulo
+  `backend/providers/swisstechjobs.py` de SwissJob está probado pero no figura en
+  `_PROVIDER_CLASSES`; no produce tráfico ni datos.
+- La captura pública comprobada devolvió 8 ofertas únicas en la página 1 y el
+  error terminal WordPress documentado en la página 2. `X-WP-Total=8` y
+  `X-WP-TotalPages=1`; huellas:
+  `page1=dd60e788a7d69df486dc3b32c56af2e486d16101657144ccdfbade568506f99d`
+  y `page2=b6714928c361e00376c3eda08eef1f4fcc3343bd71d9be2bde61ca1eee190c26`.
+- Core reutiliza `NativeJSONProvider` y añade sólo el contrato WordPress real:
+  identidad por `id`, URL pública y candidatura, raw intacto, dos peticiones con
+  fin 400 exacto, `date`, HTML sin tags pero entidades conservadas, meta de
+  empresa/ubicación/remoto/salario y moneda CHF por defecto. El scope único es
+  determinista, nace deshabilitado y sólo cambia con `--enable/--disable`.
+- La comparación viva dio 8/8 filas y contadores idénticos, con huella visible
+  `2738c0da2a666c257d1605428747438937bd0eff2f49331c39248b8ea5b55c07`.
+  Se preserva expresamente la coincidencia por subcadena del extractor local:
+  la etiqueta de una letra `r` puede aparecer dentro de palabras como
+  `engineer`; corregirla aquí habría sido una regresión de migración.
+- Dos ciclos sombra aislados terminaron en `ok`, dos páginas y 8 ofertas cada
+  uno; estabilizaron 8 identidades, 8 listings, 8 raws y 8 revisiones canónicas,
+  sin revisión adicional en el segundo ciclo. El agregado observó 1/1 scope,
+  cero fallos, 8 fechas, 7 ubicaciones, 17 tags, 8 empresas, 6 salarios raw y 8
+  URLs de candidatura. Los datos de prueba se purgaron. Evidencia:
+  [`2026-10-14-dt144-swisstechjobs-shadow.json`](../audits/2026-10-14-dt144-swisstechjobs-shadow.json).
+- Validación Core: batería focal 66/66; Ruff focal y `diff --check` verdes;
+  suite completa 1.579 aprobadas, una omitida y una advertencia conocida; el
+  ratchet sigue en `{"core_owned":16,"local_pending":26,"sources":58}` porque
+  esos estados describen producción, aunque la ficha ya declara el adaptador de
+  rama.
+- Archivos propios aún no versionados de este checkpoint:
+  `jobhunt_core/harvest/providers/native_json.py`, `harvest/admission.py`,
+  `provision_swisstechjobs.py`, sus dos pruebas, `source_ownership.json`, esta
+  deuda y la evidencia. No incluir ninguno de los cambios preexistentes ajenos
+  enumerados en el checkpoint Himalayas.
+- **Siguiente paso exacto:** en ReactPortfolio añadir `swisstechjobs` al adaptador
+  Core con sus cinco rutas históricas; preservar salario raw, CHF, fecha, orden,
+  tags/empresas y excluir `Switzerland` del contador de ubicación; no crear rutas
+  `by-tag/by-company`. Desconectar import/router, provider, caché/update y añadir
+  la fuente a ambos `LEGACY_DISABLED_SOURCES`; bajar el ratchet de 8 a 7. Después
+  ejecutar pruebas focales y suite completa, versionar ambos commits y comprobar
+  CI. Hasta entonces permanecen 23 portales pendientes en ramas.
+
 ### Registro cerrado · Forgejo no forma parte de DT-144
 
 La alternativa se evaluó temporalmente y se retiró por decisión expresa del

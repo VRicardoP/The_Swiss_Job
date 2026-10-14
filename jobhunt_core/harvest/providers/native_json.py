@@ -3,9 +3,10 @@
 Each request refreshes the provider's published feed, not an invented complete
 historical archive. Remotive uses the existing 200-item feed; Jobicy uses a
 50-item feed PER tag/geo scope; RemoteOK has one global feed; Himalayas keeps
-the legacy three pages of 20. These adapters preserve the original object for
-the sink; parsing canonical content is separate. They do not import the BFF,
-access its DB, or enable any source.
+the legacy three pages of 20; SwissTechJobs keeps the two-page WordPress loop.
+These adapters preserve the original object for the sink; parsing canonical
+content is separate. They do not import the BFF, access its DB, or enable any
+source.
 
 Identity prefers the upstream id; a URL fallback is explicitly weaker when a
 portal changes URLs and must be checked in that source's cutover parity test.
@@ -42,11 +43,15 @@ ENDPOINTS = {
     "jobicy": "https://jobicy.com/api/v2/remote-jobs",
     "remoteok": "https://remoteok.com/api",
     "himalayas": "https://himalayas.app/jobs/api",
+    "swisstechjobs": "https://www.swisstechjobs.com/wp-json/wp/v2/job-listings",
 }
 MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 HIMALAYAS_PAGE_SIZE = 20
 HIMALAYAS_MAX_PAGES = 3
 HIMALAYAS_PAGE_DELAY_SECONDS = 0.5
+WORDPRESS_PAGE_SIZE = 100
+WORDPRESS_MAX_PAGES = 2
+WORDPRESS_PAGE_DELAY_SECONDS = 0.5
 
 # Same title-only exclusions as the previous Working Nomads producer.
 WORKINGNOMADS_TECH_EXCLUDE = (
@@ -129,7 +134,35 @@ def _positive_number(value):
     return value
 
 
+def _swisstechjobs_content(raw):
+    title_value = raw.get("title")
+    content_value = raw.get("content")
+    meta = raw.get("meta")
+    meta = meta if isinstance(meta, dict) else {}
+    title = (
+        _plain(title_value.get("rendered")) if isinstance(title_value, dict) else None
+    )
+    description = (
+        _plain(content_value.get("rendered"))
+        if isinstance(content_value, dict)
+        else None
+    )
+    salary = meta.get("_job_salary")
+    return {
+        "title": title,
+        "company": meta.get("_company_name"),
+        "description": description,
+        "location": meta.get("_job_location") or "Switzerland",
+        "tags": extract_tech_skills(title, description)[:10],
+        "remote": bool(meta.get("_remote_position", 0)),
+        "salary": salary,
+        "salary_currency": meta.get("_job_salary_currency") or "CHF",
+    }
+
+
 def _content(name, raw):
+    if name == "swisstechjobs":
+        return _swisstechjobs_content(raw)
     jobicy = name == "jobicy"
     remoteok = name == "remoteok"
     himalayas = name == "himalayas"
@@ -252,9 +285,22 @@ def register_handlers():
             if name == "himalayas"
             else ("title", "company_name")
         )
-        register_extractor(
-            name, lambda raw, t=title, c=company: (raw.get(t), raw.get(c))
-        )
+        if name == "swisstechjobs":
+            register_extractor(
+                name,
+                lambda raw: (
+                    _plain(raw.get("title", {}).get("rendered"))
+                    if isinstance(raw.get("title"), dict)
+                    else None,
+                    raw.get("meta", {}).get("_company_name")
+                    if isinstance(raw.get("meta"), dict)
+                    else None,
+                ),
+            )
+        else:
+            register_extractor(
+                name, lambda raw, t=title, c=company: (raw.get(t), raw.get(c))
+            )
 
 
 def _valid_url(value):
@@ -278,15 +324,22 @@ def _valid_url(value):
 def _listing(name, raw):
     if not isinstance(raw, dict):
         return None
+    meta = raw.get("meta") if isinstance(raw.get("meta"), dict) else {}
     apply_url = (
         _valid_url(raw.get("apply_url"))
         if name == "remoteok"
         else _valid_url(raw.get("applicationLink"))
         if name == "himalayas"
+        else _valid_url(meta.get("_application"))
+        if name == "swisstechjobs"
         else None
     )
     url = _valid_url(
-        raw.get("applicationLink") if name == "himalayas" else raw.get("url")
+        raw.get("applicationLink")
+        if name == "himalayas"
+        else raw.get("link")
+        if name == "swisstechjobs"
+        else raw.get("url")
     )
     if url is None and name == "remoteok" and raw.get("slug"):
         url = _valid_url(f"https://remoteok.com/remote-jobs/{raw['slug']}")
@@ -344,6 +397,18 @@ async def _fetch_body(name, http, query):
         headers={"User-Agent": "SwissJobHunter/1.0"},
         follow_redirects=True,
     ) as response:
+        if name == "swisstechjobs" and response.status_code == 400:
+            try:
+                error = httpx.Response(200, content=await response.aread()).json()
+            except (ValueError, UnicodeError):
+                error = None
+            if (
+                isinstance(error, dict)
+                and error.get("code") == "rest_post_invalid_page_number"
+                and isinstance(error.get("data"), dict)
+                and error["data"].get("status") == 400
+            ):
+                return []
         response.raise_for_status()
         chunks, size = [], 0
         async for chunk in response.aiter_bytes():
@@ -367,7 +432,7 @@ def _rows_of(name, body):
     else:
         rows = (
             body
-            if name == "workingnomads"
+            if name in {"workingnomads", "swisstechjobs"}
             else body.get("jobs")
             if isinstance(body, dict)
             else None
@@ -411,6 +476,11 @@ class NativeJSONProvider(BaseProvider):
                 for page in range(HIMALAYAS_MAX_PAGES)
             )
             if self.name == "himalayas"
+            else tuple(
+                {"page": page, "per_page": WORDPRESS_PAGE_SIZE}
+                for page in range(1, WORDPRESS_MAX_PAGES + 1)
+            )
+            if self.name == "swisstechjobs"
             else (_query_for(self.name, params),)
         )
         rows, pages, fetch_error = [], 0, None
@@ -428,8 +498,11 @@ class NativeJSONProvider(BaseProvider):
             rows.extend(page_rows)
             if not page_rows:
                 break
-            if self.name == "himalayas" and index < len(queries) - 1:
-                await asyncio.sleep(HIMALAYAS_PAGE_DELAY_SECONDS)
+            if index < len(queries) - 1:
+                if self.name == "himalayas":
+                    await asyncio.sleep(HIMALAYAS_PAGE_DELAY_SECONDS)
+                elif self.name == "swisstechjobs":
+                    await asyncio.sleep(WORDPRESS_PAGE_DELAY_SECONDS)
         listings = tuple(
             item for row in rows if (item := _listing(self.name, row)) is not None
         )

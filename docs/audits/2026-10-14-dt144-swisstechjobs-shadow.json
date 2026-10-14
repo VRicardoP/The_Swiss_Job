@@ -1,0 +1,59 @@
+{
+  "source": "swisstechjobs",
+  "status": "core_validated_reactportfolio_handover_pending",
+  "production_changed": false,
+  "capture": {
+    "requests": [
+      {"page": 1, "per_page": 100, "status": 200},
+      {"page": 2, "per_page": 100, "status": 400, "terminal_code": "rest_post_invalid_page_number"}
+    ],
+    "sha256": {
+      "page1": "dd60e788a7d69df486dc3b32c56af2e486d16101657144ccdfbade568506f99d",
+      "page2": "b6714928c361e00376c3eda08eef1f4fcc3343bd71d9be2bde61ca1eee190c26"
+    },
+    "rows": 8,
+    "unique_ids": 8,
+    "x_wp_total": 8,
+    "x_wp_total_pages": 1
+  },
+  "field_parity": {
+    "rows": 8,
+    "matched": 8,
+    "mismatches": [],
+    "counts_match": true,
+    "visible_sha256": "2738c0da2a666c257d1605428747438937bd0eff2f49331c39248b8ea5b55c07",
+    "preserved_quirk": "legacy substring skill matching includes the one-letter r tag"
+  },
+  "shadow": {
+    "cycles": [
+      {"status": "ok", "listings_received": 8, "pages": 2},
+      {"status": "ok", "listings_received": 8, "pages": 2}
+    ],
+    "stored": {
+      "external_ids": 8,
+      "listings": 8,
+      "raw_revisions": 8,
+      "offer_revisions": 8
+    },
+    "aggregate": {
+      "total": 8,
+      "enabled_scopes": 1,
+      "observed_scopes": 1,
+      "max_consecutive_failures": 0,
+      "published_dates": 8,
+      "locations": 7,
+      "tags": 17,
+      "companies": 8,
+      "salary_strings": 6,
+      "apply_urls": 8
+    }
+  },
+  "validation": {
+    "core_focused": "66 passed",
+    "core_full": "1579 passed, 1 skipped, 1 warning",
+    "ruff_focused": "passed",
+    "source_ownership": {"core_owned": 16, "local_pending": 26, "sources": 58}
+  },
+  "rollback": "Production, both main branches and the active ReactPortfolio producer are unchanged. The new Core scope is opt-in and exists only in disposable test databases.",
+  "next_step": "Complete the ReactPortfolio Core compatibility adapter and disconnect every SwissTechJobs local registration, then run focused and full suites before committing."
+}
