@@ -1,6 +1,6 @@
 {
   "source": "himalayas",
-  "status": "core_validated_reactportfolio_handover_pending",
+  "status": "centralized_on_feature_branches_ci_green",
   "production_changed": false,
   "capture": {
     "parameters": [
@@ -55,8 +55,17 @@
     "native_json_unit_after_logo_fix": "40 passed",
     "postgresql_focused": "13 passed",
     "ruff_focused": "passed",
-    "core_full": "1573 passed, 1 skipped, 1 warning"
+    "core_full": "1573 passed, 1 skipped, 1 warning",
+    "core_commit": "d9b6859b1ebdacf7fb9330af3154b12a53b928c2",
+    "core_ci": "38552971276: success (9/9 jobs)",
+    "reactportfolio_focused": "323 passed",
+    "reactportfolio_side_effect_regression": "2 failures exposed legacy register_cache/register_update on import; removed those two registry effects and added an explicit guard",
+    "reactportfolio_regression_focused": "101 passed",
+    "reactportfolio_full": "2151 passed, 1 skipped, 115 warnings",
+    "reactportfolio_local_harvesters": 8,
+    "reactportfolio_commit": "e8ba71440b7fc4929c467bcbe34134614da1ad14",
+    "reactportfolio_ci": "38554552671: success (1/1 job, 4m31s)"
   },
-  "rollback": "ReactPortfolio local Himalayas producer remains intact and production-owned until the final approved cutover.",
-  "next_step": "Complete the ReactPortfolio Core compatibility adapter and local producer disconnection; then run full suites, commit both feature branches and verify GitHub CI."
+  "rollback": "Production and both main branches are unchanged. The ReactPortfolio legacy module remains in the feature branch without router, provider, cache or update registration and can be explicitly reconnected if branch rollback is required.",
+  "next_step": "Trace the active ReactPortfolio and dormant SwissJob SwissTechJobs implementations, preserve a hashed live WordPress baseline, and fix its observable contract before modifying Core."
 }

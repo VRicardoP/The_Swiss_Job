@@ -47,10 +47,10 @@ continuar sin rediseñarlo.
 3. Los despliegues reales deben fallar mientras HEAD no sea exactamente el SHA
    de `github/main`. Esta guarda evita publicar una rama incompleta, pero no se
    presenta como una protección de rama inexistente en GitHub Free privado.
-4. Jobicy y RemoteOK están centralizados y con CI verde en las ramas. Himalayas
-   tiene Core y sombra ya validados, pero su adaptación ReactPortfolio sigue en
-   curso. Mantener todos los scopes productivos deshabilitados y `main` intacta;
-   el corte vivo queda agrupado con la fusión final aprobada por el propietario.
+4. Jobicy, RemoteOK e Himalayas están centralizados en las ramas. Core y las
+   sombras de los tres están validados y sus CI están verdes. Mantener todos los
+   scopes productivos deshabilitados y `main` intacta; el corte vivo queda
+   agrupado con la fusión final aprobada por el propietario.
 5. Añadir aquí un checkpoint después de cada fuente u oleada con estados,
    pruebas, SHA, evidencia viva, rollback y siguiente paso exacto.
 
@@ -450,17 +450,22 @@ continuar sin rediseñarlo.
   Después continuar con la siguiente fuente pública de Fase 3; no habilitar
   RemoteOK ni cambiar `main` antes de la fusión final aprobada.
 
-### Checkpoint de relevo 2026-10-14 · Himalayas Core validado, consumidor pendiente
+### Checkpoint de relevo 2026-10-14 · Himalayas centralizado en ramas
 
 - Antes de empezar, RemoteOK quedó publicado y cerró CI: SwissJob/Core
   `cdca8df`, run `38549699864`, con 9/9 jobs en `success`; ReactPortfolio
   `5cb6737`, run `38549703279`, con su job en `success`. El commit documental
   posterior `80e0b00` ratifica GitHub Free y la retirada de Forgejo. Los `main`
   remotos siguen intactos: SwissJob `e59283b` y ReactPortfolioServer `5bf457a`.
+- El adaptador Core de Himalayas quedó publicado en `d9b6859`; el run CI
+  `38552971276` terminó sus 9/9 jobs en `success`. ReactPortfolio consume ese
+  agregado en `e8ba714`, publicado únicamente en `feat/dt144-free-gate`; el run
+  `38554552671` terminó su job en `success` en 4m31s. Ninguno de los dos commits
+  alcanzó `main`.
 - Recuento comprobado del inventario productivo: 26 portales únicos y 27
   productores locales —16 SwissJob y 11 ReactPortfolio—. En las ramas, tras
   Jobicy y RemoteOK, faltan 24 portales: 15 SwissJob y 9 ReactPortfolio.
-  Himalayas está incluido en esos nueve; al completarlo quedarán 23.
+  Tras completar Himalayas quedan 23: 15 SwissJob y 8 ReactPortfolio.
 - Trazado Himalayas: el único productor activo es
   `ReactPortfolio/routers/himalayas_jobs.py`, con worker, caché y seis rutas.
   `SwissJob/backend/providers/himalayas.py` existe pero no está registrado ni
@@ -496,20 +501,34 @@ continuar sin rediseñarlo.
   `provision_himalayas.py` y sus pruebas focales/integrales. No incluir en
   ningún commit los cambios preexistentes de `CLAUDE.md`, documentación histórica,
   auditorías de viabilidad ni otros ficheros ajenos que muestra `git status`.
-  ReactPortfolio sigue limpio en `5cb6737`; su upstream ya es
-  `github/feat/dt144-free-gate`.
-- No se ha creado scope productivo, desplegado, fusionado ni cambiado ninguna
-  credencial. El rollback sigue siendo el productor Himalayas local intacto;
-  el inventario permanece `local_pending` porque describe producción.
-- **Siguiente paso exacto:** añadir Himalayas a `SOURCE_SPECS` y al DTO del
-  adaptador Core de ReactPortfolio; generar `by-category`, preservar el JSON
-  reciente —incluidos logo, fecha epoch y salarios condicionales— y ordenar la
-  ventana completa por `pubDate`; retirar su import/router y provider del
-  registro local; añadirlo a las dos listas `LEGACY_DISABLED_SOURCES`, al
-  conjunto Core y bajar el ratchet local de 9 a 8. Después ejecutar pruebas
-  focales y suites completas, versionar evidencia/checkpoint, crear commits
-  separados en ambos repositorios, publicar las ramas y comprobar CI. No tocar
-  `main`, producción ni el scope real.
+- ReactPortfolio conserva las seis rutas históricas desde el adaptador Core
+  compartido: `by-category`, `by-location`, `recent`, `refresh-cache`, `stats` y
+  `health`. Mantiene GUID, candidatura, fecha epoch, HTML, primer país, categorías,
+  empleo, logo —incluido `""`— y salarios condicionales; solicita las 200 ofertas
+  antes de ordenar por `pubDate` y aplicar el límite del cliente.
+- El productor local se desconectó en todos sus puntos: ya no se importa ni se
+  monta su router, no figura en `get_all_providers()`, no registra caché ni función
+  de actualización aunque el módulo de rollback se importe, y backend/worker lo
+  incluyen en `LEGACY_DISABLED_SOURCES`. El ratchet local baja de 9 a 8.
+- La primera suite completa encontró dos fallos: las auditorías G7/G8 seguían
+  viendo una caché local Himalayas porque `tests/test_cache_updates.py` importa el
+  módulo heredado y éste aún ejecutaba `register_cache/register_update`. Se retiró
+  únicamente ese efecto lateral y se añadió una guarda explícita; el código
+  heredado y sus pruebas directas se conservan para rollback. La repetición focal
+  pasó 101/101 y la suite final 2.151 aprobadas, una omitida y cero fallos; la
+  batería focal previa pasó 323/323, Ruff y `diff --check` pasan, y el control de
+  propiedad informa exactamente ocho cosechadores locales.
+- En las ramas quedan 23 portales por implementar: 15 de SwissJob y 8 de
+  ReactPortfolio. Producción conserva todavía los 26 portales únicos/27 productores
+  de la línea base, porque no se ha creado scope productivo, desplegado, fusionado
+  ni cambiado ninguna credencial. El inventario continúa `local_pending` porque
+  describe esa producción. Rollback de rama: el módulo local permanece presente y
+  puede reconectarse restaurando registro, router, provider y manifiesto.
+- **Siguiente paso exacto:** continuar SwissTechJobs, siguiente fuente pública de
+  Fase 3. Primero trazar y comparar el productor activo
+  `ReactPortfolio/routers/swisstechjobs_jobs.py` con el módulo SwissJob dormido,
+  capturar la API WordPress pública con huellas y fijar su contrato antes de tocar
+  Core. No tocar `main`, producción ni crear/activar el scope real.
 
 La metodología obligatoria usada en Jobicy, RemoteOK e Himalayas queda
 formalizada en la sección 7.1 del contrato: preflight; trazado completo; línea
