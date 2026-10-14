@@ -1,0 +1,106 @@
+{
+  "source": "stelle_admin",
+  "captured_at_utc": "2026-10-14T23:33:34+00:00",
+  "question_answered": "Can jobs.admin.ch be harvested WITHOUT a browser? Yes. The portal is a React application over a public JSON API that its own bundle declares, so Core's deliberately Chromium-free image is enough.",
+  "how_the_api_was_found": {
+    "step_1": "GET https://jobs.admin.ch/?lang=de&page=1 returns a 2.220-byte SPA shell with an empty #root: there is no server-rendered listing to scrape.",
+    "step_2": "Its only module script is /careercenter/1000624/static/index-B28v8xCu.js.",
+    "step_3": "That bundle's settings object declares baseUrl = https://ohws.prospective.ch/public/v1/medium/1000624, and its query builder composes `${baseUrl}/jobs?lang=..&offset=..&limit=..`.",
+    "step_4": "The endpoint answers 200 with {total, jobs[]} to a plain HTTP client. No credential, no token, no browser."
+  },
+  "transport_contract": {
+    "url": "https://ohws.prospective.ch/public/v1/medium/1000624/jobs?lang=de&offset={n}&limit=100",
+    "credentials": null,
+    "pagination": "offset/limit, with the announced `total` closing the sweep",
+    "rate_limit_seconds": 3.0,
+    "canonical_offer_url": "links.directlink, host-validated against jobs.admin.ch"
+  },
+  "capture": {
+    "requests": 5,
+    "all_status_200": true,
+    "rows": 431,
+    "announced_total": 431,
+    "bytes_total": 1828799,
+    "per_page": [
+      {
+        "offset": 0,
+        "rows": 100,
+        "bytes": 430676,
+        "sha256": "7d86c60100506f8369a22702a7a4dbde85d1bdbc388166643ee374557649680e"
+      },
+      {
+        "offset": 100,
+        "rows": 100,
+        "bytes": 422677,
+        "sha256": "155b8a5628e3ed555eb223ae599e8a334c58e39e7a28b9701007452e10b83ad2"
+      },
+      {
+        "offset": 200,
+        "rows": 100,
+        "bytes": 428189,
+        "sha256": "db13562dfc0b451c4d9d536bb6ffb564c44618feb4759ff1a7af4d6856b5e22b"
+      },
+      {
+        "offset": 300,
+        "rows": 100,
+        "bytes": 416578,
+        "sha256": "b01746d34085cec5e808f37d78d79ee520322cb3253cd303aebb0f7fe53ad31f"
+      },
+      {
+        "offset": 400,
+        "rows": 31,
+        "bytes": 130679,
+        "sha256": "1a31f5c1f08df448ceae3ddfcccf25e1373810225fdcdd03b5140f04e439ceed"
+      }
+    ]
+  },
+  "producer_baseline_from_production": {
+    "source": "docs/audits/2026-10-14-dt144-swissjob-metrics.json#/sources/stelle_admin",
+    "stored_entries": 43,
+    "active_entries": 30,
+    "field_presence_company_location_description_url_publishedat_tags": [
+      43,
+      0,
+      0,
+      43,
+      0,
+      0
+    ],
+    "reading": "43 stored rows with company and URL present and location, description, published_at and tags empty in EVERY row. The browser scraper extracts a title, a URL and the constant 'Swiss Federal Administration'; its six DOM selectors are speculative ('Common patterns for government portals').",
+    "last_success_at": "2026-10-11T13:41:49.030942+00:00",
+    "last_jobs_count": 7
+  },
+  "core_projection": {
+    "listings": 431,
+    "requests": 5,
+    "unique_external_ids": 431,
+    "unique_urls": 431,
+    "with_real_company": 431,
+    "with_location": 431,
+    "with_canton": 201,
+    "with_published_at": 431,
+    "with_employment_type": 431,
+    "with_prof_group": 430,
+    "remote_true": 181,
+    "with_description": 431,
+    "description_chars_total": 486675,
+    "cantons": [
+      "BE",
+      "BS",
+      "GE",
+      "LU",
+      "NE",
+      "SG",
+      "ZH"
+    ],
+    "projection_sha256": "0550622d9c8ce63ee9054bb40c79f48cf7fdd07d60c1105764b8fe70c8a68907"
+  },
+  "parity_statement": "Field-by-field parity is impossible AND undesirable: the producer leaves location, description, published_at and tags empty in all 43 production rows. The migration is a strict superset — 431 offers against 43, with the real hiring unit, the workplace, the portal's publication date, the workload, a home-office flag and the task and requirement texts. What is preserved is the identity (the portal's own id plus its canonical link) and the rule that an unreadable response is a VISIBLE failure, never 'no offers'.",
+  "notes": [
+    "No credential exists for this source and none was created.",
+    "The artifact carries no personal data: only byte counts, hashes and aggregate counters.",
+    "sza_company_logo is a hash, not a URL: no logo URL is invented from it.",
+    "The home-office flag is attribute 125, named by the portal's own filter map.",
+    "431 of 431 rows carry directlink, arbeitsort, verwaltungseinheit, start_date and pensum."
+  ]
+}

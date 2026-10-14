@@ -1,0 +1,46 @@
+{
+  "probed_at_utc": "2026-10-14T23:48:31+00:00",
+  "question_answered": "Can proz and remoteco be implemented functionally? No — not from this infrastructure. Both portals refuse this host at the application layer, and both have been failing in production for 46 and 54 consecutive runs with NO successful harvest ever recorded.",
+  "method": "Live probes with the same realistic browser headers Core uses, plus a TCP/TLS/HTTP breakdown for the host that does not answer at all. No evasion was attempted: the point was to find out whether a compliant request works.",
+  "proz": {
+    "declared_transport": "RSS feed https://www.proz.com/rss/jobs/",
+    "probe_rss": {
+      "status": 403,
+      "bytes": 5610,
+      "body_markers": [
+        "Just a moment...",
+        "/cdn-cgi/challenge-platform"
+      ],
+      "reading": "Cloudflare hard challenge, not a dry feed"
+    },
+    "probe_homepage": {
+      "status": 403,
+      "reading": "the whole domain is challenged, not just the feed"
+    },
+    "production": {
+      "consecutive_errors": 46,
+      "successful_runs": 0
+    },
+    "verdict": "NOT implementable with a compliant HTTP client.",
+    "precedent": "Identical to medjobs, already disabled in this project for the same reason and recorded in COTAS: only a PAID remote stealth browser via SCRAPER_BROWSER_CDP_URL could pass, and that opt-in is off."
+  },
+  "remoteco": {
+    "declared_transport": "RSS feed https://remote.co/remote-jobs/feed/",
+    "dns": "resolves to Akamai (e206380.a.akamaiedge.net)",
+    "probe_breakdown": {
+      "tcp_443": "connects in 0.17 s",
+      "tls_443": "handshake OK (TLS_AES_256_GCM_SHA384)",
+      "http_request": "the server NEVER answers: read timeout after 8 s, and 20 s on a plain HEAD",
+      "http_2": "stream closed with INTERNAL_ERROR"
+    },
+    "reading": "The site is not down: it accepts the connection, completes TLS and then silently discards the request. That is application-layer mitigation by client fingerprint, not an outage.",
+    "production": {
+      "consecutive_errors": 54,
+      "successful_runs": 0
+    },
+    "verdict": "NOT implementable from this host with a compliant HTTP client."
+  },
+  "why_migrating_them_anyway_would_be_wrong": "The contract's method requires a reproducible live baseline and a field-by-field parity check against the retiring producer. Neither source has ever produced a successful harvest, so there is nothing to compare against: an adapter would be unverifiable by construction, and it would carry a failing source into Core where the new block kill-switch would switch it off after three sweeps anyway.",
+  "recommendation": "Retire both explicitly with this evidence (contract §10 allows it: a blocked source must be resolved or retired, never dropped from the count). Retirement removes two sources from the corpus permanently and changes the production registry, so it needs the owner's decision. The alternative the project already documents is to pay for a remote stealth browser and enable SCRAPER_BROWSER_CDP_URL, which would also change the compliance posture.",
+  "limits_of_this_probe": "Both verdicts describe THIS host and THIS moment. A different egress IP, or a paid stealth browser, could get a different answer — which is precisely the decision being handed to the owner rather than assumed."
+}

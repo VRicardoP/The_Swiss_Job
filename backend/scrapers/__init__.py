@@ -1,7 +1,6 @@
 """Scraper registry: discover and instantiate all HTML-scraping providers."""
 
 from scrapers.schuljobs import SchulJobsScraper
-from scrapers.stelle_admin import StelleAdminScraper
 from scrapers.swiss_schools_ecolint import SwissSchoolsEcolintScraper
 from scrapers.swiss_schools_hautlac import SwissSchoolsHautLacScraper
 from scrapers.swiss_schools_inspired import SwissSchoolsInspiredScraper
@@ -13,7 +12,6 @@ from scrapers.swiss_schools_zis import SwissSchoolsZISScraper
 from services.job_service import BaseJobProvider
 
 _SCRAPER_CLASSES: dict[str, type[BaseJobProvider]] = {
-    "stelle_admin": StelleAdminScraper,
     "schuljobs": SchulJobsScraper,
     # medjobs (med-jobs.com) SIGUE deshabilitado: está tras un challenge duro de
     # Cloudflare (/cdn-cgi/challenge-platform) que el Playwright endurecido local

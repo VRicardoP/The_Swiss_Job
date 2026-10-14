@@ -39,6 +39,7 @@ DATE_FIELDS = {
     "myscience": "date",
     "gastrojob": "_core_published_at",
     "tes": ("advert", "startDate"),
+    "stelle_admin": "start_date",
     "weworkremotely": "pubDate",
     "euremotejobs": "pubDate",
     "jobspresso": "pubDate",

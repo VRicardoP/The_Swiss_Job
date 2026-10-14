@@ -299,6 +299,7 @@ SOURCES_DECIDED_IN_ADVANCE: frozenset[str] = frozenset(
         "myscience",
         "gastrojob",
         "tes",
+        "stelle_admin",
         "adzuna",
         "jsearch",
         "undpjobs",

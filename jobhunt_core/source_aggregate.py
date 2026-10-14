@@ -123,7 +123,9 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                           )='string'
                        THEN r.raw#>'{jobAdvertisement,publication,startDate}' END,
                  CASE WHEN jsonb_typeof(r.raw#>'{advert,startDate}')='string'
-                       THEN r.raw#>'{advert,startDate}' END
+                       THEN r.raw#>'{advert,startDate}' END,
+                 CASE WHEN jsonb_typeof(r.raw->'start_date')='string'
+                       THEN r.raw->'start_date' END
                ) AS published_at
         FROM source_listing_revisions r
         WHERE r.incarnation_id=i.id
