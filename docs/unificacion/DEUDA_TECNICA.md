@@ -52,28 +52,33 @@ continuar sin rediseñarlo.
    también está centralizado en rama. Todos sus scopes productivos permanecen
    deshabilitados y ambos `main` intactos: el corte vivo continúa agrupado con
    la fusión final aprobada por el propietario.
-5. El último portal cerrado es JobScout24: Core/SwissJob está publicado en
-   `33a804d` y ReactPortfolio en `04a020d` + `ffcc0ba`, con el productor local
-   desconectado en rama. DynamiteJobs quedó cerrado antes (`9ec6901` /
+5. El último portal cerrado es myScience (Core/SwissJob `244f15e`), y antes
+   JobScout24: Core/SwissJob `33a804d` y ReactPortfolio `04a020d` + `ffcc0ba`,
+   con el productor local desconectado en rama. DynamiteJobs quedó cerrado antes (`9ec6901` /
    `1a0db8d`, CI `38607230379` y `38608902811` verdes), igual que JSearch y
    Adzuna en los commits de sus checkpoints. No se ha desplegado ninguno.
-6. Quedan **15 portales** por implementar en las ramas, **todos de SwissJob**:
-   `gastrojob`, `myscience`, `proz`, `remoteco`, `schuljobs`, `stelle_admin`,
-   `tes` y los ocho `swiss_schools_*`. ReactPortfolio no conserva ningún
-   cosechador local en rama. La Fase 5 continúa con el preflight verificable de
-   la primera fuente de SwissJob; no escribir adaptador antes de contrastar
-   código, runtime, disponibilidad y línea base real.
+6. Quedan **14 portales** por implementar en las ramas, **todos de SwissJob**:
+   `gastrojob`, `proz`, `remoteco`, `schuljobs`, `stelle_admin`, `tes` y los
+   ocho `swiss_schools_*`. ReactPortfolio no conserva ningún cosechador local
+   en rama. Sigue `gastrojob`; `stelle_admin` exige decisión del propietario
+   (Playwright, y la imagen de Core no lleva Chromium) y `proz`, `remoteco` y
+   `schuljobs` arrastran bloqueos propios ya anotados en el inventario. No
+   escribir adaptador antes de contrastar código, runtime, disponibilidad y
+   línea base real.
 7. **Relevo operativo verificado el 2026-10-14:** SwissJob/Core continúa en
    `feat/fase-a-core`, cabeza funcional `33a804d`; ReactPortfolio continúa en
    `feat/dt144-free-gate`, cabeza `ffcc0ba`. Los remotos `main` siguen
    exactamente en `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
    `5bf457afbde5b44a995acce4ef241324f066f836`.
-8. **Tres residuos bloquean la definición de terminado y no son de ningún
-   portal concreto** (detalle y evidencia en el checkpoint de JobScout24):
-   `jobicy` y `remoteok` todavía registran caché y actualizador al importarse;
-   los barridos de fidelidad G7 y G8 se quedaron sin parámetros y hoy se saltan;
-   y `services/catalog/seam.py` sigue construyendo un `CompositeCatalog`
-   Core + local. Resolverlos en la limpieza final, antes de la fusión.
+8. **Cuatro residuos bloquean la definición de terminado y no son de ningún
+   portal concreto** (detalle y evidencia en los checkpoints de JobScout24 y
+   myScience): `jobicy` y `remoteok` todavía registran caché y actualizador al
+   importarse; los barridos de fidelidad G7 y G8 se quedaron sin parámetros y
+   hoy se saltan; `services/catalog/seam.py` sigue construyendo un
+   `CompositeCatalog` Core + local; y **Core no tiene el portero de compliance
+   del motor legacy** (`is_allowed`/`robots_txt_ok` y apagado tras tres
+   bloqueos), que es el que protege a las fuentes de scraping. Resolverlos en la
+   limpieza final, antes de la fusión.
 9. El worktree ReactPortfolio estaba limpio. En SwissJob/Core ya existían
    cambios ajenos a DT-144 en `CLAUDE.md`, documentación histórica y de
    unificación, además de documentos/auditorías sin seguimiento. No añadirlos,
@@ -1622,6 +1627,141 @@ Core y apagado local; suites/CI; checkpoint antes de avanzar.
   scheduler de APScheduler, `LEGACY_DISABLED_PROVIDERS`/`LEGACY_DISABLED_SCRAPERS`
   y disponibilidad real antes de escribir adaptador. No tocar producción, los
   `main` ni activar scopes.
+
+### Checkpoint de relevo 2026-10-14 · myScience centralizado en ramas
+
+- **Primera fuente de SwissJob de la Fase 5**, y el lado SwissJob se traspasa de
+  otra forma que el de ReactPortfolio: aquí no hay rutas públicas por fuente que
+  conservar. El productor es un `BaseScraper` cuyo resultado persiste en la tabla
+  `jobs` del BFF, así que desconectarlo es sacar su clase de
+  `backend/scrapers/__init__.py` —exactamente lo que hizo el corte del
+  2026-09-22 con las 13 fuentes ya nativas— y conservar su política de cosecha
+  como pre-decidida. El módulo y sus pruebas se quedan como rollback.
+- Inicio verificado desde `3831d83` (CI `38619763001` **verde 9/9**, con lo que
+  JobScout24 quedó formalmente cerrado) y ReactPortfolio en `ffcc0ba`. Los
+  `main` remotos siguen en `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
+  `5bf457afbde5b44a995acce4ef241324f066f836`.
+- El trazado confirma un único productor activo:
+  `backend/scrapers/myscience.py`, registrado en `_SCRAPER_CLASSES`, despachado
+  por `tasks/scraping_tasks` cada 6 h con `FETCH_DETAILS=True`, cursor
+  incremental y early-stop por página conocida. ReactPortfolio no contiene
+  myScience y Core no tenía adaptador ni scope.
+- Contrato vivo, sin credencial: `GET https://www.myscience.ch/jobs?p={page}`,
+  cinco páginas, 20 por página, pausa de 2 s (los tres valores del scraper), más
+  una página de detalle por oferta porque el listado no trae descripción.
+  Captura sellada 2026-10-14T18:4x UTC: 5 listados (1.083.100 bytes) y 26
+  detalles (3.519.145 bytes), todos 200. Huellas en
+  [`2026-10-14-dt144-myscience-baseline.json`](../audits/2026-10-14-dt144-myscience-baseline.json).
+- **`?p=` apenas pagina, y eso le cuesta ofertas al productor:** 97 lecturas de
+  tarjeta dan 26 ofertas únicas; la página 3 repite la 2 exactamente y las 3 y 4
+  no aportan nada nuevo. Como el early-stop del cursor corta en la primera
+  página enteramente conocida, en frío el productor para en la 3 y **nunca ve
+  las cuatro ofertas que sólo aparecen en la 5**. Core barre las cinco páginas
+  declaradas y sí las cosecha, con el mismo coste de cinco listados.
+- La ejecución del scraper EXACTO sobre esa captura dio 26 ofertas, 26 con
+  descripción, 26 con logo, **cero con jornada**, 5 cantones, 9 ubicaciones, dos
+  tags como máximo y 58.789 caracteres de descripción. Huella normalizada
+  `4a4eefc1516c0b426c5a5a75c505621d8e47ff824b3fb5a2b439ef9cb4dcecf7`.
+- Taxonomías compartidas comprobadas EJECUTANDO: `JOB_TAGS` tiene los mismos 99
+  términos en el mismo orden en `backend/utils/text.py` y en
+  `jobhunt_core/.../rss_text.py`, `extract_canton` y `swiss_canton` coinciden en
+  las diez sondas, y los dos extractores dan la MISMA lista en las 26 ofertas
+  reales (incluidos sus falsos positivos por subcadena, que son su conducta).
+
+#### Avance verificable · myScience centralizado en ramas
+
+- `MyScienceProvider` reproduce el barrido y el pase de detalle con los parsers
+  de la biblioteca estándar. **Paridad byte a byte sobre la misma captura
+  sellada**: 97 de 97 registros de listado y 26 de 26 páginas de detalle
+  idénticos a los de BeautifulSoup, y la proyección normalizada de las 26
+  ofertas tiene la MISMA huella SHA-256 que la del scraper en los nueve campos
+  comparados (título, empresa, ubicación, cantón, descripción, URL, remoto, tags
+  y logo): cero diferencias de campo.
+- **Tres mejoras deliberadas, cada una con su evidencia** (detalle en el
+  artefacto):
+  1. `published_at` sale de la fecha del propio portal. Las 97 tarjetas traen
+     `<time datetime>` y el detalle lo repite como `datePosted` de schema.org;
+     el scraper no la leía y por eso **las 115 filas de producción no tienen
+     fecha**. Una tarjeta sin fecha ISO utilizable omite el campo: ausente
+     sigue significando DESCONOCIDO, nunca la hora de ingesta.
+  2. La identidad es el id numérico del portal (`/jobs/id70453-…`), no la URL:
+     las 26 URLs lo llevan y el slug incluye el título, así que un cambio de
+     título producía una segunda oferta en el productor.
+  3. Se barren siempre las cinco páginas declaradas, que es lo que recupera las
+     cuatro ofertas descritas arriba.
+- **Lo que NO se toca, a propósito:** los metadatos `Arbeitsort`/`Funktion`/
+  `Pensum` del detalle. El scraper exige `.descriptor` y `.long_value` en la
+  MISMA `.long_value_row` y el marcado vivo nunca tiene ambos, así que su
+  extracción está muerta —de ahí que `employment_type` esté vacío en las 115
+  filas—. Leerlos cambiaría el contenido de cada oferta y `Funktion` no es un
+  tipo de jornada: queda como hallazgo, no como suposición.
+- **Tráfico, medido:** Core hace 31 peticiones por barrido (5 listados + 26
+  detalles) al ritmo de 2 s del propio portal; el scraper hacía 5 + 97 en frío y
+  ~2 + ~8 en caliente. No se añade cursor de descripciones a propósito: llegan a
+  9.866 caracteres y recortarlas para que quepan en el cursor del scope
+  alteraría cinco de las 26 ofertas en cada ciclo.
+- **`TagStackParser` (nuevo, compartido) existe porque el marcado real lo
+  exigió:** el primer parser de detalle suponía etiquetas balanceadas y cortó
+  una descripción de myScience **siete párrafos antes del final**; además
+  incluía el texto de `<script>`, que BeautifulSoup no cuenta. La base cierra
+  implícitamente lo que quedó abierto, descarta etiquetas de cierre huérfanas y
+  excluye script/style/template/noscript. JobScout24 pasó a usarla y se
+  **re-demostró su paridad** (231 de 231 tarjetas idénticas) y sus 36 pruebas.
+  Cubierta por `test_html_response.py`, con una prueba por fallo real.
+- **El consumidor no necesita cambio, y eso se comprobó:** el BFF de SwissJob ya
+  lee el feed del núcleo por perfil (`services/matching/core_client.py`,
+  `/v1/profiles/{id}/matches`) sin lista blanca por fuente, igual que para las 16
+  fuentes ya nativas. En cuanto exista scope, las ofertas de myScience entran
+  solas; hasta entonces no cambia nada porque no hay scope. Esa es la diferencia
+  estructural con los portales de ReactPortfolio, donde había que conservar seis
+  rutas públicas por fuente.
+- Lado SwissJob: `myscience` sale de `_SCRAPER_CLASSES` y entra en
+  `SOURCES_DECIDED_IN_ADVANCE` (completitud inversa K10 de `harvest_window`).
+  No hay otra referencia viva: sólo su política y la fila del seed histórico de
+  compliance, igual que `financejobs` tras su propio traspaso.
+- Validación: Core **1.751 aprobadas y ninguna omitida** (las 1.713 anteriores
+  más mis 38 nuevas, en 7 min 33 s) y backend SwissJob **1.916 aprobadas y 4
+  `xfail`**, exactamente los recuentos de antes del cambio. CI de `244f15e`:
+  `38624702577`. Focales:
+  19 unitarias y de integración nuevas de myScience (doble ciclo PostgreSQL con
+  una sola revisión por identidad, fecha del portal viajando y provisión opt-in),
+  15 del módulo compartido, 125 focales de SwissJob (`harvest_window`,
+  `scrapers`, URLs degeneradas), `ruff check`/`format` del repo completo,
+  `git diff --check`, `check_no_secrets` 0 hallazgos y ratchet cruzado
+  `{{"core_owned":16,"local_pending":26,"sources":58}}`.
+- Incidencias cerradas antes de publicar: tres expectativas mías estaban mal y
+  se corrigió la EXPECTATIVA, no el comportamiento —`JOB_TAGS` es una taxonomía
+  de idiomas y docencia, no de tecnologías, así que una oferta de «Python
+  Developer» no produce tags—; y una tarjeta sin fecha dejaba `published_at`
+  como cadena VACÍA en el agregado, así que el campo se omite cuando no hay
+  fecha. Ningún intento tocó producción.
+- **Hallazgo nuevo, abierto, que afecta a las 14 fuentes de SwissJob que
+  quedan:** el motor legacy pasa cada barrido por `ComplianceEngine.can_scrape`
+  (`is_allowed` + `robots_txt_ok` de `source_compliance`) y deshabilita la fuente
+  tras tres bloqueos seguidos. **Core no tiene ese portero**: tiene contador de
+  fallos (`CORE_HARVEST_MAX_CONSECUTIVE_FAILURES=3`), alerta de salud y el
+  `enabled` del scope, pero ni la fila de compliance ni el apagado automático por
+  bloqueo. Afecta ya a todas las fuentes de scraping nativas en Core
+  (financejobs, irishjobs, chmedia, publicjobs) y lo heredarán las 14 restantes.
+  No se arregla en este portal: es una pieza de Core, no de una fuente.
+- **Rollback:** no existe scope productivo. Revertir el commit devuelve
+  `myscience` al registro de scrapers, saca su pre-decisión y retira adaptador,
+  registro, admisión y provisionador de Core; JobScout24 y DynamiteJobs
+  recuperarían sus parsers previos con sus paridades ya demostradas.
+- El inventario conserva `state=local_pending` y el ratchet sigue en 16 Core /
+  26 pendientes / 58 fuentes: producción sigue ejecutando el scraper hasta el
+  corte agrupado.
+- Tras myScience quedan **14 proveedores** por implementar en ramas, todos de
+  SwissJob: `gastrojob`, `proz`, `remoteco`, `schuljobs`, `stelle_admin`, `tes`
+  y los ocho `swiss_schools_*`.
+- **Siguiente paso exacto si hay relevo:** comprobar la CI de este commit;
+  después el preflight de `gastrojob` (sano, TYPO3, con tres cotas propias ya
+  anotadas en `COTAS_Y_DECISIONES.md` §1.10-1.12 y §1.19 que hay que respetar).
+  **No** empezar por `stelle_admin`: es Playwright y la imagen de Core no lleva
+  Chromium, así que exige una decisión del propietario antes de tocarlo.
+  `proz`, `remoteco` y `schuljobs` arrastran bloqueos propios registrados en el
+  inventario (46 y 54 errores seguidos sin ninguna cosecha correcta, y un
+  cursor sin bootstrap completo).
 
 ### Registro cerrado · Forgejo no forma parte de DT-144
 
