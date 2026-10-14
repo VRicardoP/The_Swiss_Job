@@ -282,15 +282,12 @@ continuar sin rediseñarlo.
   Core, `compose-config` y `docker-build`; rama al día, una aprobación, revisión
   CODEOWNER, conversaciones resueltas y cumplimiento también para
   administradores; force-push y borrado están deshabilitados.
-- `ReactPortfolioServer/main` no se pudo proteger: la API autenticada devuelve
-  `403 Upgrade to GitHub Pro or make this repository public to enable this
-  feature`. `ReactPortfolioServer` es el backend y debe continuar privado; que
-  el frontend sea público no sustituye esta protección porque la cosecha y sus
-  credenciales viven en el backend. No se cambió visibilidad ni se contrató un
-  plan. Además, ambos repositorios solo tienen como colaborador y CODEOWNER a
-  `VRicardoP`, y GitHub no permite aprobar una PR propia. La puerta requiere por
-  tanto GitHub Pro para el repositorio privado y un segundo revisor con permiso
-  de escritura; no se rebaja el contrato para sortearlo.
+- GitHub Free no ofrece protección administrativa para
+  `ReactPortfolioServer/main` mientras el backend siga privado. El frontend
+  público es otro repositorio y no altera esta limitación. No se cambia la
+  visibilidad ni se contrata un plan: la mitigación vigente es trabajar sólo en
+  la rama DT-144, ejecutar CI en cada push, bloquear despliegues cuyo SHA no sea
+  el de `github/main` y exigir al propietario la aprobación final de la fusión.
 - Línea base Jobicy de solo lectura:
   [`2026-10-14-dt144-jobicy-baseline.json`](../audits/2026-10-14-dt144-jobicy-baseline.json).
   Los dos productores locales usan ocho consultas únicas en conjunto: feed
@@ -302,23 +299,24 @@ continuar sin rediseñarlo.
   no existen porque el worker actual arrancó después. Esa causa debe resolverse
   o clasificarse con evidencia antes del corte, nunca asumirse.
 - No se creó fuente ni scope Core, no se ejecutó una sombra, no se detuvo ningún
-  productor y no cambió producción. La Fase -1 continúa **NO SUPERADA** hasta
-  que ambos repositorios tengan protección operable y obligatoria.
+  productor y no cambió producción en este checkpoint. La puerta se adaptó
+  después al mecanismo GitHub Free ratificado por el propietario sin reducir la
+  definición de terminado.
 
 ### Decisión vigente del propietario 2026-10-14 · sólo GitHub Free
 
-- GitHub es el único forge autorizado y el coste debe permanecer en 0 €.
-  `ReactPortfolioServer` continúa privado; no se contratará GitHub Pro ni se
-  instalará un forge alternativo.
+- GitHub Free es el único alojamiento y flujo Git autorizado; el coste debe
+  permanecer en 0 €. `ReactPortfolioServer` continúa privado y su frontend
+  continúa público. No se contratarán planes ni se instalarán forges
+  alternativos.
 - Toda implementación de DT-144 vive en ramas de feature. Los dos `main`
   permanecen intactos hasta que la centralización completa esté validada y el
   propietario apruebe expresamente la fusión final.
 - CI se ejecuta en cada push. Los scripts de despliegue sólo aceptan el SHA
   exacto de `github/main`; por tanto una rama incompleta no puede llegar al
   NAS aunque carezca de protección administrativa.
-- La instancia Forgejo, sus repositorios duplicados, integración, backup,
-  imagen y datos se retiran. Los bloques históricos inferiores explican cómo
-  se llegó a esta decisión, pero están **ANULADOS** y no son trabajo pendiente.
+- Forgejo, sus repositorios duplicados, integración, backup, imagen y datos ya
+  fueron retirados. No debe volver a proponerse ni desplegarse.
 - Esta decisión cambia el mecanismo de trabajo, no la definición de terminado:
   Core debe seguir siendo el único cosechador y ambos productos deben perder
   productores, credenciales, conexiones y persistencia local de ofertas.
@@ -354,6 +352,13 @@ continuar sin rediseñarlo.
   1 omitida. Siguiente paso exacto: publicar la retirada en ambas ramas,
   comprobar sus CI, ejecutar las dos pruebas negativas de despliegue y después
   iniciar la sombra Core de Jobicy sin tocar `main`.
+- Revalidación de continuidad del 2026-10-14: los únicos remotos configurados
+  en ambos repositorios son `github`; el NAS no devuelve contenedor, imagen,
+  directorio de datos ni backup Forgejo. El script de backup vivo tampoco lo
+  referencia y comparte con la copia versionada el SHA-256
+  `d1e21e88baa77aaaf482a78c07ff3727d3b2b245c6989fa7e9ba7fe1d7f19073`.
+  La rama ReactPortfolio `feat/dt144-free-gate` quedó enlazada explícitamente
+  con `github/feat/dt144-free-gate`, no con `github/main`.
 
 ### Checkpoint 2026-10-14 · Fase -1 superada y piloto Jobicy en rama
 
@@ -444,87 +449,14 @@ continuar sin rediseñarlo.
   Después continuar con la siguiente fuente pública de Fase 3; no habilitar
   RemoteOK ni cambiar `main` antes de la fusión final aprobada.
 
-### Histórico anulado · evaluación de servicios alternativos
+### Registro cerrado · Forgejo no forma parte de DT-144
 
-- `ReactPortfolioServer` seguirá privado y no se contratará GitHub Pro ni
-  ningún otro servicio de pago. Esta decisión sustituye la vía económica
-  descrita en el checkpoint anterior, no el objetivo ni la puerta de Fase -1.
-- GitHub Free rechazó por API la protección del backend privado. No se tratará
-  una regla documental, un CI no obligatorio o el bloqueo de despliegue local
-  como si fueran protección de rama verificable.
-- Debe comprobarse la alternativa gratuita mínima antes de implantarla. Un
-  Forgejo/Gitea autohospedado soporta técnicamente rama protegida, aprobación
-  CODEOWNER, checks requeridos y cumplimiento por administradores. GitLab Free
-  y Bitbucket Free se descartaron como no equivalentes: sus protecciones
-  gratuitas no hacen obligatorios todos esos controles.
-- La evaluación histórica midió el NAS en modo de solo lectura. Era compatible
-  (`amd64`, Docker 27.1.2, 426,1 GiB disponibles), pero
-  tiene 2 CPU, carga observada 12–14 y 24 contenedores. No se desplegará otro
-  runner: la alternativa mínima debe reutilizar el CI GitHub existente y
-  exigir una aprobación humana distinta del autor automatizado.
-- La prueba efímera local con Forgejo 16.0.5 fijado por digest confirmó el flujo
-  completo: los pushes directos del autor y del administrador fueron rechazados;
-  el merge exigió simultáneamente estado CI vigente y aprobación CODEOWNER; el
-  autor no pudo autoaprobarse; y un commit nuevo invalidó la aprobación previa.
-  Solo después del CI y la aprobación nuevos se permitió el merge.
-- El contenedor, repositorio, cuentas, datos e imagen locales ficticios se
-  retiraron al terminar. No se instaló software en el NAS, no cambió producción
-  y no se usó código real. El siguiente paso es diseñar el gate durable mínimo
-  que reutilice el CI GitHub existente, sin desplegar otro runner.
-
-### Histórico anulado · Forgejo desplegado y posteriormente retirado
-
-- Forgejo 16.0.5 quedó desplegado por digest y coste cero en el NAS, sin runner,
-  registro, hooks, webhooks, OpenID ni puerto SSH publicado. Responde pass en
-  base y caché, usa 131,3 MiB de 256 MiB, 0,25 CPU, no sufrió OOM y sólo publica
-  127.0.0.1:3001. Sus directorios 1000:100 tienen modo 700.
-- Se usa una sola instancia para los dos repositorios. GitHub sigue ejecutando
-  todo el CI; Forgejo es la autoridad de merge porque ReactPortfolioServer no
-  admite protección privada gratuita y la única cuenta GitHub no puede revisar
-  su propia PR de The_Swiss_Job. No se creó otra cuenta externa ni se contrató
-  ningún servicio.
-- ReactPortfolioServer y The_Swiss_Job son privados en Forgejo y parten
-  exactamente de 5bf457a y e59283b. Ambos main rechazan push directo incluso
-  para administradores, exigen un estado GitHub agregado, una aprobación fresca
-  de VRicardoP, CODEOWNER sin resolver, rama actualizada y aplican el control a
-  administradores. La lectura completa de ambas políticas coincidió.
-- Sólo quedan VRicardoP administrador y dt144-agent no administrador con write.
-  La cuenta administrativa de bootstrap fue eliminada y el único token
-  temporal conocido del propietario fue revocado. La contraseña inicial del
-  propietario sigue marcada para cambio obligatorio y debe sustituirla el
-  propietario sin revelar el nuevo valor.
-- La PR Forgejo 1 de ReactPortfolio está abierta en 72478d8. GitHub Actions run
-  38527933998 terminó verde con el job test; todavía no se publicó su estado
-  Forgejo ni se aprobó. La autoaprobación devolvió 422, el merge del autor 405
-  User not allowed to merge PR, el push directo fue rechazado por protected
-  branch y la guarda de despliegue rechazó el SHA de feature.
-- La PR Forgejo 1 de The_Swiss_Job está abierta con la implementación ef54418.
-  Su run GitHub 38532088870 tenía 8/9 jobs verdes en este checkpoint y sólo
-  core-test seguía en curso. El autor tampoco pudo autoaprobar (422, approve
-  your own pull is not allowed) ni fusionar (405, User not allowed to merge PR).
-- Al sincronizar el merge, GitHub queda como espejo CI gratuito: conserva los
-  nueve checks, pero no exige otra aprobación humana imposible con una sola
-  cuenta. Forgejo es la única autoridad de revisión y la guarda de despliegue
-  impide usar cualquier SHA que no sea su main protegido.
-- Los scripts de ambos repositorios consultan Forgejo mediante curl local sobre
-  ssh nas: el port-forward TCP de QNAP se comprobó y resetea conexiones. Los
-  deploys reales exigirán el SHA completo del main protegido y su estado verde.
-  ReactPortfolio elimina además el cargador antiguo de la etiqueta mutable
-  latest.
-- Un dump real de 8.317.326 bytes se restauró en un contenedor sin red: SQLite
-  reconstruyó dos usuarios, dos repositorios y dos protecciones; ambos
-  repositorios pasaron git fsck y conservaron los SHA. Todo el ensayo se borró.
-  El backup diario ya incluye el dump nativo y tiene 4/4 escenarios focales.
-- El primer backup completo falló cerrado antes de retención porque aún fijaba
-  la imagen retirada swissjob-core:d2a38e9. La causa se corrigió resolviendo y
-  validando la imagen exacta de core-api viva. El ciclo corregido terminó con
-  BACKUP_OK a las 2026-10-14T07:58:15Z: verificó las tres bases, registró el
-  dump Forgejo de 8.347.024 bytes, aplicó retención, escribió su marca de éxito
-  y liberó el lock. El lote daily-20261014T071731Z conserva además los tres TOC,
-  erasures.json y retention-result.json.
-- No cambió ninguna fuente, scope, credencial de portal, productor ni runtime
-  de producto durante ese ensayo. La instancia se retiró por decisión expresa
-  del propietario y no debe reintroducirse.
+La alternativa se evaluó temporalmente y se retiró por decisión expresa del
+propietario. Sus detalles operativos se eliminaron de este plan para impedir que
+se interpreten como instrucciones reanudables. La única información vigente es
+el checkpoint de retirada anterior: GitHub Free es la autoridad única, Forgejo
+no existe en los repositorios ni en el NAS y reintroducirlo queda fuera del
+alcance autorizado.
 
 **Prohibición de cierre parcial:** DT-144 no se cierra porque exista un adaptador,
 un scope o una ruta denominada `core_primary`. Solo se cierra cuando no queden
