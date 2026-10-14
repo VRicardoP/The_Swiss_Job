@@ -25,7 +25,7 @@ from jobhunt_core.harvest.provider import (
     ProviderResponseError,
 )
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills
-from jobhunt_core.harvest.providers.search_metadata import workingnomads_metadata
+from jobhunt_core.harvest.providers.search_metadata import search_metadata
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 logger = logging.getLogger(__name__)
@@ -149,8 +149,15 @@ def _content(name, raw):
         # until a validated enrichment step maps its amount/currency/period.
         "salary": None,
     }
-    if name == "workingnomads":
-        content.update(workingnomads_metadata(title, description, location))
+    if name in {"workingnomads", "jobicy"}:
+        content.update(
+            search_metadata(
+                title,
+                description,
+                location,
+                raw.get("jobType") if jobicy else None,
+            )
+        )
     return content
 
 

@@ -131,6 +131,29 @@ def test_jobicy_tags_are_separate_scopes_not_silent_deduped_fetches():
     assert requests[0].url.params["geo"] == "europe"
 
 
+def test_jobicy_list_job_type_preserves_search_metadata():
+    result, _ = fetch(
+        "jobicy",
+        {
+            "jobs": [
+                {
+                    "id": 1,
+                    "url": "https://example.org/a",
+                    "jobTitle": "Senior Editor",
+                    "jobDescription": "Write documentation",
+                    "jobGeo": "Zurich",
+                    "jobType": ["Full-time", 4, {"invalid": True}],
+                }
+            ]
+        },
+    )
+    content = normalize_offer("jobicy", result.listings[0].payload)
+    assert content["contract_type"] == "full_time"
+    assert content["seniority"] == "senior"
+    assert content["canton"] == "ZH"
+    assert content["language"] == "en"
+
+
 def test_scope_rejects_unknown_params_before_network():
     with pytest.raises(ProviderConfigError):
         fetch("remotive", {"jobs": []}, {"endpoint": "http://localhost/private"})

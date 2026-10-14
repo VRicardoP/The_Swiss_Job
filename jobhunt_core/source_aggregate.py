@@ -17,7 +17,8 @@ _SOURCE_AGGREGATE_SQL = sa.text(
              CASE WHEN jsonb_typeof(o.content->'tags')='array'
                   THEN o.content->'tags' ELSE '[]'::jsonb END AS tags,
              o.content->>'canton' AS canton,
-             latest.category, latest.job_type, latest.job_types_raw,
+             latest.category, latest.categories_raw,
+             latest.job_type, latest.job_types_raw,
              latest.published_at
       FROM sources s
       JOIN source_listings sl ON sl.source_id=s.id
@@ -27,12 +28,27 @@ _SOURCE_AGGREGATE_SQL = sa.text(
         ON v.id=i.vacancy_id AND v.archived_at IS NULL AND v.merged_into IS NULL
       JOIN offer_revisions o ON o.id=v.current_offer_revision_id
       LEFT JOIN LATERAL (
-        SELECT CASE WHEN jsonb_typeof(r.raw->'category')='string'
-                    THEN r.raw->>'category' END AS category,
-               CASE WHEN jsonb_typeof(r.raw->'job_type')='string'
-                    THEN r.raw->>'job_type' END AS job_type,
-               CASE WHEN jsonb_typeof(r.raw->'job_types')='array'
-                    THEN r.raw->'job_types' ELSE '[]'::jsonb END AS job_types_raw,
+        SELECT COALESCE(
+                 CASE WHEN jsonb_typeof(r.raw->'category')='string'
+                      THEN r.raw->>'category' END,
+                 CASE WHEN jsonb_typeof(r.raw->'jobIndustry')='string'
+                      THEN r.raw->>'jobIndustry' END
+               ) AS category,
+               CASE WHEN jsonb_typeof(r.raw->'jobIndustry')='array'
+                    THEN r.raw->'jobIndustry' ELSE '[]'::jsonb END AS categories_raw,
+               COALESCE(
+                 CASE WHEN jsonb_typeof(r.raw->'job_type')='string'
+                      THEN r.raw->>'job_type' END,
+                 CASE WHEN jsonb_typeof(r.raw->'jobType')='string'
+                      THEN r.raw->>'jobType' END
+               ) AS job_type,
+               CASE
+                 WHEN jsonb_typeof(r.raw->'job_types')='array'
+                   THEN r.raw->'job_types'
+                 WHEN jsonb_typeof(r.raw->'jobType')='array'
+                   THEN r.raw->'jobType'
+                 ELSE '[]'::jsonb
+               END AS job_types_raw,
                COALESCE(
                  CASE WHEN jsonb_typeof(r.raw->'publication_date')='string'
                       THEN r.raw->>'publication_date' END,
@@ -41,7 +57,9 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                  CASE WHEN jsonb_typeof(r.raw->'dateFirstPublished')='string'
                       THEN r.raw->>'dateFirstPublished' END,
                  CASE WHEN jsonb_typeof(r.raw->'date')='string'
-                      THEN r.raw->>'date' END
+                      THEN r.raw->>'date' END,
+                 CASE WHEN jsonb_typeof(r.raw->'pubDate')='string'
+                      THEN r.raw->>'pubDate' END
                ) AS published_at
         FROM source_listing_revisions r
         WHERE r.incarnation_id=i.id
@@ -76,6 +94,11 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                'tags', tags,
                'canton', canton,
                'category', category,
+               'categories', COALESCE((
+                 SELECT jsonb_agg(value) FROM jsonb_array_elements(categories_raw)
+                   AS item(value)
+                 WHERE jsonb_typeof(value)='string'
+               ), '[]'::jsonb),
                'job_type', job_type,
                'job_types', COALESCE((
                  SELECT jsonb_agg(value) FROM jsonb_array_elements(job_types_raw)
@@ -110,18 +133,33 @@ _SOURCE_AGGREGATE_SQL = sa.text(
       GROUP BY value ORDER BY n DESC, value LIMIT :top_n
     ),
     category_counts AS (
-      SELECT value, count(*)::int AS n FROM (
-        SELECT lower(replace(btrim(category), ' ', '-')) AS value
-        FROM source_rows
-      ) values_ WHERE value IS NOT NULL AND value<>''
-      GROUP BY value ORDER BY n DESC, value LIMIT :top_n
+      SELECT category.value, count(*)::int AS n FROM source_rows
+      CROSS JOIN LATERAL (
+        SELECT lower(replace(btrim(value), ' ', '-')) AS value
+        FROM (
+          SELECT category AS value
+          WHERE jsonb_array_length(categories_raw)=0
+          UNION
+          SELECT item #>> '{}'
+          FROM jsonb_array_elements(categories_raw) AS entry(item)
+          WHERE jsonb_typeof(item)='string'
+        ) values_
+        WHERE value IS NOT NULL AND btrim(value)<>''
+      ) AS category
+      GROUP BY category.value ORDER BY n DESC, category.value LIMIT :top_n
     ),
     job_type_counts AS (
       SELECT job_type.value, count(*)::int AS n FROM source_rows
       CROSS JOIN LATERAL (
-        SELECT value #>> '{}' AS value
-        FROM jsonb_array_elements(job_types_raw) AS item(value)
-        WHERE jsonb_typeof(value)='string'
+        SELECT value FROM (
+          SELECT job_type AS value
+          WHERE jsonb_array_length(job_types_raw)=0
+          UNION
+          SELECT item #>> '{}'
+          FROM jsonb_array_elements(job_types_raw) AS entry(item)
+          WHERE jsonb_typeof(item)='string'
+        ) values_
+        WHERE value IS NOT NULL AND btrim(value)<>''
       ) AS job_type
       WHERE btrim(job_type.value)<>''
       GROUP BY job_type.value ORDER BY n DESC, job_type.value LIMIT :top_n

@@ -64,10 +64,7 @@ def test_existing_priority_and_description_snippet_boundary(
     assert offer_text_hash(result) == offer_text_hash(previous)
 
 
-def test_only_workingnomads_receives_this_source_contract():
+def test_remotive_does_not_receive_search_metadata():
     register_handlers()
-    for source in ("remotive", "jobicy"):
-        result = normalize_offer(
-            source, {"title": "Senior teacher", "jobTitle": "Senior teacher"}
-        )
-        assert not {"canton", "language", "seniority", "contract_type"} & result.keys()
+    result = normalize_offer("remotive", {"title": "Senior teacher"})
+    assert not {"canton", "language", "seniority", "contract_type"} & result.keys()

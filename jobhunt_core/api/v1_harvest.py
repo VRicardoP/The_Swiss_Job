@@ -39,6 +39,7 @@ class SourceAggregateItemDTO(BaseModel):
     tags: list[str] = []
     canton: str | None = None
     category: str | None = None
+    categories: list[str] = []
     job_type: str | None = None
     job_types: list[str] = []
     published_at: str | None = None

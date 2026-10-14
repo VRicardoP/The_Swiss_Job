@@ -294,7 +294,11 @@ def test_source_aggregate_is_bounded_and_uses_latest_raw(db):  # noqa: F811
             "tags": ["Python"],
             "canton": "ZH",
         },
-        raw={"job_types": ["Contract"]},
+        raw={
+            "jobIndustry": ["Education", 4, {"invalid": True}],
+            "jobType": ["Contract", 4, {"invalid": True}],
+            "pubDate": "2026-10-11T12:00:00Z",
+        },
         age_seconds=60,
     )
 
@@ -345,7 +349,7 @@ def test_source_aggregate_is_bounded_and_uses_latest_raw(db):  # noqa: F811
         "locations": {"Berlin": 1, "Zurich": 1},
         "tags": {"API": 1, "Python": 2},
         "companies": {"ACME": 1, "Beta": 1},
-        "categories": {"software-development": 1},
+        "categories": {"education": 1, "software-development": 1},
         "job_types": {"Contract": 1, "Full-time": 1},
         "cantons": {"ZH": 1},
         "remote": 1,
@@ -358,6 +362,10 @@ def test_source_aggregate_is_bounded_and_uses_latest_raw(db):  # noqa: F811
     assert newest["job_type"] == "full_time"
     assert newest["category"] == "Software Development"
     assert len(newest["description"]) == 500
+    jobicy_shape = next(item for item in body["items"] if item != newest)
+    assert jobicy_shape["categories"] == ["Education"]
+    assert jobicy_shape["job_types"] == ["Contract"]
+    assert jobicy_shape["published_at"] == "2026-10-11T12:00:00Z"
 
     bounded = _api(
         factory,
