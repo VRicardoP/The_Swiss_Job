@@ -47,10 +47,10 @@ continuar sin rediseñarlo.
 3. Los despliegues reales deben fallar mientras HEAD no sea exactamente el SHA
    de `github/main`. Esta guarda evita publicar una rama incompleta, pero no se
    presenta como una protección de rama inexistente en GitHub Free privado.
-4. Jobicy, RemoteOK e Himalayas están centralizados en las ramas. Core y las
-   sombras de los tres están validados y sus CI están verdes. Mantener todos los
-   scopes productivos deshabilitados y `main` intacta; el corte vivo queda
-   agrupado con la fusión final aprobada por el propietario.
+4. Jobicy, RemoteOK, Himalayas y SwissTechJobs están centralizados en las ramas.
+   Los cuatro tienen CI verde. Mantener todos los scopes productivos
+   deshabilitados y `main` intacta; el corte vivo queda agrupado con la fusión
+   final aprobada por el propietario.
 5. Añadir aquí un checkpoint después de cada fuente u oleada con estados,
    pruebas, SHA, evidencia viva, rollback y siguiente paso exacto.
 
@@ -535,11 +535,14 @@ formalizada en la sección 7.1 del contrato: preflight; trazado completo; línea
 base con huellas; Core mínimo; pruebas por capas; doble ciclo y paridad; lectura
 Core y apagado local; suites/CI; checkpoint antes de avanzar.
 
-### Checkpoint de relevo 2026-10-14 · SwissTechJobs Core validado, consumidor pendiente
+### Checkpoint de relevo 2026-10-14 · SwissTechJobs centralizado en ramas
 
 - El preflight parte de SwissJob/Core `f137f4f` y ReactPortfolio `e8ba714`, con
   los CI de Himalayas verdes. Los `main` remotos siguen en `e59283b` y
   `5bf457a`; no se desplegó ni se creó ningún scope productivo.
+- Core quedó publicado en `a7016a6`; su run `38557077146` terminó verde en
+  sus 9 trabajos. ReactPortfolio quedó publicado en `f3baba8`; su run
+  `38557887736` terminó verde. Ambos commits viven sólo en sus ramas DT-144.
 - El único productor activo es
   `ReactPortfolio/routers/swisstechjobs_jobs.py`: dos páginas WordPress de 100,
   caché, worker, registro normalizador y cinco rutas públicas. El módulo
@@ -571,18 +574,29 @@ Core y apagado local; suites/CI; checkpoint antes de avanzar.
   ratchet sigue en `{"core_owned":16,"local_pending":26,"sources":58}` porque
   esos estados describen producción, aunque la ficha ya declara el adaptador de
   rama.
-- Archivos propios aún no versionados de este checkpoint:
+- Archivos Core versionados por `a7016a6`:
   `jobhunt_core/harvest/providers/native_json.py`, `harvest/admission.py`,
   `provision_swisstechjobs.py`, sus dos pruebas, `source_ownership.json`, esta
   deuda y la evidencia. No incluir ninguno de los cambios preexistentes ajenos
   enumerados en el checkpoint Himalayas.
-- **Siguiente paso exacto:** en ReactPortfolio añadir `swisstechjobs` al adaptador
-  Core con sus cinco rutas históricas; preservar salario raw, CHF, fecha, orden,
-  tags/empresas y excluir `Switzerland` del contador de ubicación; no crear rutas
-  `by-tag/by-company`. Desconectar import/router, provider, caché/update y añadir
-  la fuente a ambos `LEGACY_DISABLED_SOURCES`; bajar el ratchet de 8 a 7. Después
-  ejecutar pruebas focales y suite completa, versionar ambos commits y comprobar
-  CI. Hasta entonces permanecen 23 portales pendientes en ramas.
+- ReactPortfolio `f3baba8` conserva exactamente las cinco rutas históricas desde
+  Core, incluido salario raw, CHF, fecha y orden; excluye `Switzerland` sólo del
+  contador de ubicación y no crea `by-tag/by-company`. Retira import/router,
+  provider y los efectos laterales de caché/update, añade la fuente a los dos
+  manifiestos de apagado y baja el ratchet de 8 a 7.
+- Validación ReactPortfolio: focal 371/371; suite completa 2.159 aprobadas, una
+  omitida y 115 advertencias conocidas; Ruff en los archivos modificados y
+  `diff --check` verdes. La primera focal encontró dos pruebas acopladas a la
+  caché local —conflicto de refresh y salud tras purga—; se retiraron porque el
+  contrato Core 409 ya está cubierto y la variante de JSearch sigue midiendo el
+  productor local real.
+- En las ramas quedan 22 portales por implementar: 15 de SwissJob y 7 de
+  ReactPortfolio. Producción continúa en 26 portales únicos/27 productores y la
+  ficha sigue `local_pending` hasta el corte final aprobado.
+- **Siguiente paso exacto:** continuar con ICTJobs, la otra fuente WordPress
+  pública de Fase 3. Trazar primero sus diferencias ACF/enlaces respecto a
+  SwissTechJobs y capturar su API viva antes de generalizar código. No tocar
+  `main`, producción ni crear/activar scopes reales.
 
 ### Registro cerrado · Forgejo no forma parte de DT-144
 
