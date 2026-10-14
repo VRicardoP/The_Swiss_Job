@@ -1,0 +1,79 @@
+{
+  "source": "dynamitejobs",
+  "captured_at_utc": {
+    "reactportfolio_cache": "2026-10-14T16:46:35+00:00",
+    "public_category_pages": "2026-10-14T16:47:56.096636+00:00"
+  },
+  "temporal_caveat": "The cache and public pages were captured 81 seconds apart; their 300-row payloads are independent baselines and must not be claimed as byte-identical parity.",
+  "production": {
+    "last_success_at_utc": "2026-10-14T11:39:36+00:00",
+    "duration_seconds": 864.19,
+    "requests_succeeded": 20,
+    "requests_total": 20,
+    "reported_total": 321,
+    "cached_entries": 300,
+    "descriptions": 119,
+    "locations_tracked": 39,
+    "tags_tracked": 587,
+    "duplicate_exact_hashes": 3,
+    "normalization_errors": 0,
+    "last_error": null
+  },
+  "cache_capture": {
+    "bytes": 203014,
+    "sha256": "2763d823d51c6a3ddd721fd25958f12dba79cac53e0ec3340880e9e4a8239f31",
+    "rows": 300,
+    "unique_ids": 300,
+    "unique_urls": 300,
+    "jobs_sha256": "f98e273377077cd5932235d0bdc7399228286cadca4ef30bced2a6b095034258",
+    "normalized_sha256": "2f62eac747dd918641cf6ea8a3262f62d5848592ff5e65c262b47282bb873a50",
+    "locations_sha256": "20ba234969863f2a41e2e2275b584ea0df3ad18a9c9ab254c7abb9da02a42f2c",
+    "tags_sha256": "8299226e2b32d5dcf2a65433b9acfaa1c74c446769181d1a8a0f7455456ff914",
+    "job_types_sha256": "f987ed68c639b13d2a28f6a513508e3556f0624af3164191c3b2ace9860a16ec",
+    "salary_min_present": 103,
+    "salary_max_present": 90,
+    "visible_unique_tags": 572,
+    "visible_composite_locations": 78,
+    "job_types": 3,
+    "oldest_published_at": "2026-09-14T21:43:48.992000+00:00",
+    "newest_published_at": "2026-10-14T06:20:25.927000+00:00"
+  },
+  "public_capture": {
+    "bytes": 253707,
+    "sha256": "fc0da7f522c3cbffe040f9c79eff0ca1674f50d0bb799a4c0a6b0408be22e656",
+    "categories": 20,
+    "category_rows": 338,
+    "unique_ids": 322,
+    "valid_job_with_null_location_component": "sUqqaPGnPAkg4wyAqShG"
+  },
+  "legacy_replay": {
+    "processed": 321,
+    "cached": 300,
+    "requests_succeeded": 20,
+    "requests_total": 20,
+    "descriptions_retained": 112,
+    "locations_tracked": 39,
+    "tags_tracked": 589,
+    "jobs_sha256": "d93b9f61621f309ebe60243100466e0357914c8e2fbd696a841a02b27f35728e",
+    "exact_cache_match": false,
+    "explanation": "Replay reproduces the legacy drop of the null-location row. Differences from the cache are expected because the two upstream snapshots are not simultaneous and seven cached descriptions belong to rows outside the later top 300."
+  },
+  "availability": {
+    "robots_txt": "https://dynamitejobs.com/robots.txt",
+    "category_pages_disallowed": false,
+    "job_pages_disallowed": false,
+    "official_developer_api": "https://dynamitejobs.com/developers/",
+    "developer_api_exposes_public_board_corpus": false,
+    "terms": "https://dynamitejobs.com/terms-and-conditions"
+  },
+  "migration_contract": {
+    "scope_count": 1,
+    "scope_enabled_by_default": false,
+    "category_count": 20,
+    "max_recent_jobs": 300,
+    "max_detail_fetches_per_run": 20,
+    "description_state": "cursor-backed and pruned to active identities",
+    "deliberate_fix": "Ignore null/non-string location components and preserve the otherwise valid offer instead of dropping it.",
+    "production_change": false
+  }
+}

@@ -1296,6 +1296,82 @@ Core y apagado local; suites/CI; checkpoint antes de avanzar.
   saneada antes de decidir si se migra o se retira. No escribir adaptador, no
   tocar producción, no activar scopes y no rehacer JSearch ni Adzuna.
 
+### Checkpoint de relevo 2026-10-14 · DynamiteJobs EN CURSO, preflight cerrado
+
+- Se trazó el flujo completo sin inferencias: sólo ReactPortfolio produce la
+  fuente mediante `services/dynamitejobs_provider_impl.py`; la registra en su
+  caché/actualizador, la ejecuta al arrancar el worker, en la ronda diaria de
+  las 12:00 locales con ±4 h y desde lecturas obsoletas/refresco administrativo.
+  El frontend público sólo consume `/recent`; el BFF conserva además `/stats`,
+  `/by-tag`, `/by-location`, `/refresh-cache` y `/health`. Core no contiene aún
+  adaptador, fuente ni scope DynamiteJobs. No hay credenciales.
+- El productor lee 20 páginas públicas `/category/<slug>`, decodifica el JSON
+  doble de `window.__PINIA_STATE__`, deduplica globalmente por `id`, valida
+  publicación/visibilidad/caducidad, ordena por `publishedAt` y retiene 300.
+  Después enriquece como máximo 20 descripciones ausentes por ciclo desde las
+  páginas públicas de detalle y conserva las ya cacheadas. Esta semántica exige
+  **un único scope Core**: 20 scopes romperían el límite global de detalle y la
+  deduplicación entre categorías.
+- Comprobación productiva de sólo lectura: el worker cerró correctamente el
+  2026-10-14 a las 11:39:36 UTC tras 864,19 s, 20/20 categorías, 321 ofertas
+  procesadas y 300 retenidas; la caché exponía 119 descripciones, 39 ubicaciones,
+  587 tags y tres duplicados exactos. El ciclo anterior tardó 135,19 s con 314
+  procesadas. El primer request necesitó tres intentos, pero el ciclo terminó
+  sin error y la salud viva declaró la caché lista.
+- La captura saneada de las páginas públicas, tomada 81 s después de la caché,
+  contiene 338 apariciones y 322 ids únicos. No se proclama paridad byte a byte
+  entre instantes distintos. La reproducción aislada del código legacy sobre
+  esa captura hizo 20/20 requests simuladas, procesó 321 y retuvo 300, con 39
+  ubicaciones; su diferencia de filas, tags y siete descripciones frente a la
+  caché queda explicada por la ventana temporal/top 300, no ocultada.
+- Se confirmó un defecto repetido en producción: la oferta válida
+  `sUqqaPGnPAkg4wyAqShG` trae `locationSlugs=["latinamerica", null]`; el
+  formateador legacy llama a `isupper()` sobre `null` y descarta la oferta
+  entera. El adaptador Core ignorará únicamente componentes de ubicación nulos
+  o no textuales y conservará `Latin America`; será una diferencia funcional
+  deliberada, probada y documentada, no una falsa paridad.
+- Disponibilidad/autorización contrastadas: `robots.txt` no prohíbe categorías
+  ni páginas públicas de empleo; sí prohíbe rutas privadas como `/api/` y
+  `/admin/`, que no se usarán. La API oficial de desarrolladores es autenticada
+  y sirve puestos/candidatos de la empresa cliente, no el catálogo público. Las
+  condiciones oficiales no contienen una prohibición textual de scraping,
+  robot o crawler en la versión revisada. Se mantendrán cabeceras, pausas,
+  límites de bytes, reintentos y cadencia conservadora del productor vigente.
+- Línea base reproducible guardada en
+  `docs/audits/2026-10-14-dt144-dynamitejobs-baseline.json`: incluye fechas,
+  tamaños, métricas y SHA-256 de capturas/normalizados sin guardar secretos ni
+  el corpus de terceros. La caché de 300 filas tiene hash de datos
+  `f98e273377077cd5932235d0bdc7399228286cadca4ef30bced2a6b095034258` y
+  normalizado
+  `2f62eac747dd918641cf6ea8a3262f62d5848592ff5e65c262b47282bb873a50`.
+- Diseño mínimo cerrado antes de implementar: `native_dynamitejobs`, registro
+  explícito, fecha `publishedAt`, provisionador de un scope `{}` deshabilitado,
+  deduplicación por id, máximo 300 recientes, 20 detalles/ciclo y descripciones
+  persistidas/podadas en el cursor. Se reutilizan `BROWSER_HEADERS`, el sink,
+  dispatcher, scheduler y patrón de cursor de SwissDevJobs; no se crea cola,
+  caché, scheduler, dependencia ni abstracción nueva.
+- Las 119 descripciones productivas acumuladas no pueden degradarse a 20 en el
+  corte. La sombra debe precalentar el cursor deshabilitado durante ciclos
+  controlados o migrar ese estado comprobado antes de apagar el productor; el
+  corte final sólo se acepta con cobertura al menos equivalente. El agregado
+  Core hoy limita dimensiones a 500 y DynamiteJobs expone 587 tags: se debe
+  preservar el total real con el cambio local mínimo y una prueba, sin crear un
+  endpoint específico si ampliar el límite existente resulta suficiente.
+- El CI documental del cierre JSearch, run `38600512329` sobre `7a86328`,
+  terminó globalmente en `success` con sus nueve trabajos verdes.
+- Incidencias de preflight: el primer capturador local falló antes de red porque
+  cargó `Settings` sin variables obligatorias; se repitió con SQLite y valores
+  locales ficticios. Una reproducción posterior confirmó el error de ubicación
+  legacy y evitó interpretar como regresión la deriva temporal de 81 s.
+  Ninguna comprobación escribió en producción, activó scopes o modificó `main`.
+- **Siguiente paso exacto si hay relevo:** implementar y probar el adaptador,
+  admisión, registro y provisionador Core sobre la captura saneada; ampliar sólo
+  lo necesario el agregado para conservar los 587 tags; ejecutar doble ciclo
+  PostgreSQL con cursor de descripciones precargado y comparar hashes/campos.
+  Después adaptar las seis rutas BFF de ReactPortfolio, retirar sus registros y
+  triggers locales, ejecutar suites y CI, y sólo entonces bajar el recuento de
+  17 a 16. No tocar producción, `main` ni activar el scope.
+
 ### Registro cerrado · Forgejo no forma parte de DT-144
 
 La alternativa se evaluó temporalmente y se retiró por decisión expresa del
