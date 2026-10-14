@@ -38,6 +38,12 @@ continuar sin rediseñarlo.
 
 ### Punto de reanudación
 
+> **Lee primero [DT144_RELEVO.md](DT144_RELEVO.md)**: reúne el estado exacto, la
+> receta de migración ya rodada, los comandos que se usan de verdad, las
+> decisiones de diseño tomadas, la condición real de cada fuente pendiente y las
+> trampas ya pisadas. Esta lista es el punto de reanudación; ese fichero es el
+> contexto.
+
 1. No repetir el inventario ni la Fase 0: las 58 fuentes están verificadas y
    los ratchets están activos. GitHub Free es el único forge autorizado; no
    desplegar ni volver a proponer Forgejo, GitLab, Bitbucket o GitHub Pro.
