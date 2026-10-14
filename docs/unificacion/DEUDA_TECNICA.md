@@ -327,9 +327,15 @@ continuar sin rediseñarlo.
   tiene 2 CPU, carga observada 12–14 y 24 contenedores. No se desplegará otro
   runner: la alternativa mínima debe reutilizar el CI GitHub existente y
   exigir una aprobación humana distinta del autor automatizado.
-- No se instaló software, no se creó ninguna cuenta o repositorio y no cambió
-  producción. El siguiente paso es diseñar y validar el gate Forgejo mínimo
-  antes de autorizar su despliegue reversible.
+- La prueba efímera local con Forgejo 16.0.5 fijado por digest confirmó el flujo
+  completo: los pushes directos del autor y del administrador fueron rechazados;
+  el merge exigió simultáneamente estado CI vigente y aprobación CODEOWNER; el
+  autor no pudo autoaprobarse; y un commit nuevo invalidó la aprobación previa.
+  Solo después del CI y la aprobación nuevos se permitió el merge.
+- El contenedor, repositorio, cuentas, datos e imagen locales ficticios se
+  retiraron al terminar. No se instaló software en el NAS, no cambió producción
+  y no se usó código real. El siguiente paso es diseñar el gate durable mínimo
+  que reutilice el CI GitHub existente, sin desplegar otro runner.
 
 **Prohibición de cierre parcial:** DT-144 no se cierra porque exista un adaptador,
 un scope o una ruta denominada `core_primary`. Solo se cierra cuando no queden

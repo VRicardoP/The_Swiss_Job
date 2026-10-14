@@ -81,6 +81,24 @@
     "running_containers": 24,
     "existing_forgejo_gitea_container_or_image": false
   },
-  "decision": "Do not deploy a Forgejo Actions runner. Before any deployment, design the minimum server-only gate that reuses the existing GitHub CI result and requires a distinct human owner approval.",
+  "ephemeral_local_poc": {
+    "image": "codeberg.org/forgejo/forgejo:16.0.5@sha256:cf5f5ae6acf2ababca0ee3d255705b83a47f35b25e07fc931d694d60664053fe",
+    "binding": "127.0.0.1 only",
+    "real_code_or_data_used": false,
+    "verified": [
+      "private repository",
+      "direct main push rejected for the non-admin author",
+      "direct main push rejected for the administrator when apply_to_admins=true",
+      "required status context blocks merge until successful",
+      "CODEOWNERS automatically requests the configured owner",
+      "author self-approval rejected with HTTP 422",
+      "owner merge blocked until one eligible approval",
+      "new content commit dismisses and marks the prior approval stale",
+      "new CI success does not replace the required fresh approval",
+      "merge succeeds only after current CI and current owner approval"
+    ],
+    "cleanup": "Container, fictitious repository, accounts, temporary data and local image tag were removed after the test."
+  },
+  "decision": "Forgejo server-only is technically valid. Do not deploy a Forgejo Actions runner; design the minimum durable gate that reuses the existing GitHub CI result and requires a distinct human owner approval.",
   "mutations": false
 }
