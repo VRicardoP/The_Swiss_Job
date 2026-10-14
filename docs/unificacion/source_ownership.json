@@ -500,7 +500,7 @@
     {
       "name": "jsearch",
       "aliases": [],
-      "current_harvesters": [{"product": "reactportfolio", "module": "services/jsearch_provider_impl.py", "triggers": ["worker startup sweep", "daily circadian sweep at 12:00 container local time with +/-4h jitter", "public stale-cache reads and authenticated manual refresh"]}],
+      "current_harvesters": [{"product": "reactportfolio", "module": "services/jsearch_provider_impl.py and routers/jsearch_jobs.py", "triggers": ["worker startup sweep", "daily circadian sweep at 12:00 container local time with +/-4h jitter", "public stale-cache reads and authenticated manual refresh", "rate-limited live search from the visible JobSearchWindow tab"]}],
       "credentials": [{"name": "JSEARCH_RAPIDAPI_KEY", "present_in_production": true}],
       "transport": "credentialed JSearch RapidAPI JSON endpoint over HTTPS",
       "external_identity": "JSearch job_id plus the upstream apply link",
@@ -508,7 +508,7 @@
       "last_success": [{"product": "reactportfolio", "at": "2026-10-13T09:46:36.895599+00:00", "evidence": "successful persisted snapshot with 95 cached entries and zero normalization errors"}],
       "production_metrics": {"cached_entries": 95, "reported_total": 95, "normalization_errors": 0, "duplicate_stable_keys": 1, "duplicate_exact_hashes": 3, "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/jsearch/field_presence"},
       "core_scope_ids": [],
-      "blocker": "Core has no adapter or production scope; Phase -1 branch protection with required CI and CODEOWNER review is not yet verified.",
+      "blocker": "Verified preflight is complete, but Core still has no JSearch adapter, disabled scope or authenticated live-search seam; implementation and branch validation remain pending.",
       "inventory_verified": true,
       "state": "local_pending",
       "target_owner": "core",
@@ -516,7 +516,7 @@
       "swissjob_module": true,
       "swissjob_registry": true,
       "reactportfolio_source_name": "jsearch",
-      "evidence": "Portfolio production API is configured and cache healthy; SwissJob credential is absent."
+      "evidence": "Portfolio production API is configured with 95 healthy cached jobs; SwissJob credential is absent. The visible frontend also depends on the live-search route, so both scheduled harvest and on-demand outbound traffic must move to Core."
     },
     {
       "name": "linkedin_authorized",

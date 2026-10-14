@@ -55,13 +55,15 @@ continuar sin rediseñarlo.
 5. El último portal cerrado es Adzuna: Core/SwissJob está publicado en
    `c266b8d` con CI `38588047774` verde 9/9; ReactPortfolio está publicado en
    `95768ce`, con productor local desconectado, paridad exacta sobre la captura
-   viva de seis filas y CI `38588044222` verde. No se ha desplegado ninguno de
-   esos commits.
+   viva de seis filas y CI `38588044222` verde. El cierre documental `47d5561`
+   pasó también sus nueve trabajos en la CI `38589393135`. No se ha desplegado
+   ninguno de esos commits.
 6. Quedan 18 portales por implementar en las ramas: 15 de SwissJob y 3 de
-   ReactPortfolio. El siguiente paso es continuar la Fase 4 con el preflight de
-   JSearch, comprobando credencial, runtime y contrato vivo antes de decidir.
+   ReactPortfolio. El preflight de JSearch está cerrado y la implementación es
+   el siguiente paso; JSearch continúa contando como pendiente hasta superar
+   paridad, suites, commits, push y CI.
 7. **Relevo operativo verificado el 2026-10-14:** SwissJob/Core continúa en
-   `feat/fase-a-core`, cabeza funcional `c266b8d`; ReactPortfolio continúa en
+   `feat/fase-a-core`, cabeza `47d5561`; ReactPortfolio continúa en
    `feat/dt144-free-gate`, cabeza `95768ce`. Los remotos `main` siguen
    exactamente en `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
    `5bf457afbde5b44a995acce4ef241324f066f836`.
@@ -1133,6 +1135,85 @@ Core y apagado local; suites/CI; checkpoint antes de avanzar.
   imprimirla, contrato vivo, cuotas, países, queries, paginación y baseline
   saneado antes de escribir el adaptador Core. No tocar producción, no activar
   scopes y no rehacer Adzuna.
+
+### Checkpoint de relevo 2026-10-14 · JSearch EN CURSO, preflight cerrado
+
+- Se revalidaron las ramas y los remotos antes de decidir: SwissJob/Core está
+  en `47d5561`, ReactPortfolio en `95768ce`, y los `main` remotos continúan
+  intactos en `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
+  `5bf457afbde5b44a995acce4ef241324f066f836`. La CI documental de Adzuna
+  `38589393135` terminó `success` en sus nueve trabajos. No hubo despliegue,
+  scope ni cambio productivo.
+- El propietario activo quedó comprobado, no supuesto: ReactPortfolio ejecuta
+  `services/jsearch_provider_impl.py` al arranque, en la ronda circadiana diaria,
+  por lectura de caché caducada y por refresco manual. SwissJob conserva
+  `backend/providers/jsearch.py` y su registro, pero producción carece de
+  `JSEARCH_RAPIDAPI_KEY`, por lo que nunca lo instancia; sus logs de 72 horas
+  contienen cero ejecuciones. Core no tiene aún adaptador, fuente ni scope.
+- Sólo el backend/worker de ReactPortfolio posee hoy la credencial. SwissJob y
+  los procesos Core no la poseen. Se comprobaron exclusivamente booleanos; no
+  se imprimió, copió ni versionó ningún secreto. En 72 horas el worker Portfolio
+  registró 24 menciones JSearch y la salud viva declaró 95 procesadas/95 en
+  caché, sin último error y con una actualización de hace un día.
+- La cosecha activa real es una petición diaria con `query=software developer`,
+  `country=us`, `page=1`, `num_pages=10` y `date_posted=month`, que devuelve
+  hasta 100 ofertas. SwissJob contiene otra capacidad dormida —consulta amplia,
+  `country=ch`, tres páginas— que nunca estuvo habilitada en producción y no se
+  convertirá en comportamiento nuevo durante la migración.
+- Se capturó únicamente la respuesta pública ya cacheada, sin llamar de nuevo a
+  RapidAPI ni consumir cuota: `/tmp/dt144-jsearch-cache.json`, 143.668 bytes,
+  SHA-256
+  `2e10bf595aa30127ae874c65ce75c349329509be3e371a26b0c8dcdfa2055248`.
+  Contiene 95 ids únicos, 95 URLs válidas, 95 títulos/empresas/fechas, 93 logos,
+  20 mínimos y máximos salariales, dos remotas y tres pares título/empresa
+  repetidos que no deben deduplicarse porque `job_id` es la identidad externa.
+- La reproducción saneada fija los hashes de paridad: ofertas
+  `0253deb45f791364e7ef03ebe3768af8b8e33cab1b1cd7ef14d99696c1530705`,
+  ubicaciones (36)
+  `3da25852ca86c03c85d31487980630802c233808704942a3d72cdb840709a50f`,
+  empresas (74)
+  `f4789313a1cd51779ed1aa6aa7a1d8ec31464472c0f85f0f10c6825fac382629`,
+  publishers (24)
+  `3908d6f5f6a9eda7c663809798640ce246ce412ca9fb9b02c1cfa33a71920bc6`
+  y tipos de empleo (2)
+  `16504c18158d35599c4bec1df29947e0f4019aa70e9bedc3523293d35b357c8b`.
+  Las fechas van de `2026-09-14T00:00:00+00:00` a
+  `2026-10-12T23:00:00+00:00`; las 95 descripciones públicas conservan el
+  límite histórico de 500 caracteres.
+- La búsqueda en vivo no es código inaccesible: `JobSearchWindow` monta
+  `useJSearchLive`, que llama a `/api/v1/jsearch-jobs/search` con país, fecha,
+  tipo y remoto. Los logs de acceso no muestran uso en 30 días, pero eso no
+  autoriza eliminar una pestaña visible. Además se encontró una divergencia
+  real: el frontend envía `q` mientras el router exige `query`; la migración
+  conservará ambos nombres y corregirá ese 400 sin modificar el repositorio
+  frontend público.
+- Decisión mínima que satisface el contrato: un único adaptador JSearch Core
+  compartirá transporte, validación y normalización entre (1) el scope diario
+  persistente exacto y (2) un endpoint Core autenticado para la búsqueda en
+  vivo. ReactPortfolio conservará todas sus rutas y el límite 5/min, pero su
+  backend sólo consultará Core. La clave `CORE_JSEARCH_RAPIDAPI_KEY` estará en
+  el worker de cosecha y, por la búsqueda dinámica, en el API Core; se retirará
+  `JSEARCH_RAPIDAPI_KEY` de ambos BFF. No se añade cola síncrona ni una segunda
+  caché porque no aporta funcionalidad y aumenta acoplamiento/latencia.
+- El agregado Core deberá conservar, además del contrato común, ciudad, estado,
+  país y publisher; ordenar por fecha como la caché activa y reproducir las
+  dimensiones ubicación/empresa/publisher/tipo. La búsqueda dinámica devolverá
+  la forma pública actual, truncará el snippet a 300 caracteres y nunca seguirá
+  redirects ni expondrá cabeceras, URL o credencial en errores.
+- Incidencias contenidas: dos primeras sondas SSH fallaron sólo por el quoting
+  del shell remoto y se repitieron con código base64, sin escritura ni secretos.
+  Una consulta inicial de CI usó por error el propietario GitHub `vicentepau`;
+  el remoto verificó `VRicardoP` y la misma ejecución se leyó correctamente.
+  La búsqueda global de referencias produjo salida truncada; se repitió por
+  rutas concretas y reveló el consumidor frontend descrito arriba.
+- **Siguiente paso exacto si hay relevo:** implementar `native_jsearch` y un
+  scope deshabilitado con el contrato diario comprobado; exponer la búsqueda
+  dinámica autenticada desde Core reutilizando el mismo transporte; probar
+  errores saneados, redirects, límites y doble ciclo; después adaptar todas las
+  rutas ReactPortfolio, desconectar registros/disparadores locales y retirar la
+  credencial de ambos BFF. Validar la captura completa antes de cambiar el
+  recuento de 18 a 17. No llamar a RapidAPI, no activar scopes y no tocar
+  producción ni `main`.
 
 ### Registro cerrado · Forgejo no forma parte de DT-144
 
