@@ -47,18 +47,6 @@ backup() {
 backup swissjob-postgres swissjobhunter swissjob
 backup swissjob-postgres swissjobhunter_r5_rehearsal swissjob
 backup portfolio_db proyecto lothar
-forgejo_archive="$batch/forgejo.tar.gz"
-forgejo_created=$(date +%s)
-if ! "$D" exec -u git dt144-forgejo forgejo dump --quiet --file - --type tar.gz --skip-log --skip-index --skip-repo-archives > "$forgejo_archive.partial"; then
-  retention --register "$forgejo_archive.partial" --kind temporary --database forgejo --created-at "$forgejo_created"
-  exit 1
-fi
-if ! tar -tzf "$forgejo_archive.partial" >/dev/null; then
-  retention --register "$forgejo_archive.partial" --kind temporary --database forgejo --created-at "$forgejo_created"
-  exit 1
-fi
-mv "$forgejo_archive.partial" "$forgejo_archive"
-retention --register "$forgejo_archive" --kind backup --database forgejo --created-at "$forgejo_created" --verified
 # Minimal suppression inventory is independent of old dumps, and regenerated
 # from the live authority. Keep snapshots: never expire them as ordinary backups.
 "$D" exec swissjob-core-api-r5 python -c \

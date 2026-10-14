@@ -42,11 +42,13 @@ Una nota de progreso, un cierre anterior o el nombre `core_primary` no acreditan
 el cumplimiento si sigue existiendo un productor local, una mezcla Core + local
 o una conexión directa desde un BFF a un portal.
 
-Ningún fichero es técnicamente inmutable para una persona con permisos de
-administración. Por ello, el blindaje requerido consiste en revisión de
-propietario, historial Git, comprobaciones obligatorias y bloqueo de despliegue.
-La implantación de esos controles forma parte de la Fase -1 y no se presume
-completada por la mera ratificación de este texto.
+El propietario ha fijado GitHub Free como único forge. Todo el trabajo se
+realiza en ramas de feature, `main` permanece intacta hasta que DT-144 esté
+completa y la fusión final requiere su aprobación explícita. El control se
+completa con historial Git, CI en cada push y un bloqueo que impide desplegar
+cualquier SHA distinto del `github/main` vigente. No se instala un segundo
+forge ni se presenta este flujo como una protección de rama que GitHub Free no
+ofrece al repositorio privado.
 
 ## 3. Estado que motivó la reapertura
 
@@ -176,18 +178,20 @@ Reglas del inventario:
 - Publicar este contrato como documento canónico.
 - Crear el inventario único de propietarios y estados.
 - Añadir comprobaciones CI del inventario y de las invariantes estructurales.
-- Proteger contrato, inventario, reglas CI, registros de Core y manifiestos con
-  revisión obligatoria del propietario.
+- Ejecutar CI en cada rama de trabajo y conservar `main` sin cambios hasta la
+  aprobación explícita de la fusión final por el propietario.
 - Prohibir nuevas dependencias, credenciales o conexiones de portales en los
   BFF.
-- Añadir un bloqueo de despliegue ante fuentes duplicadas, sin propietario o en
-  regresión.
-- Incorporar a la revisión obligatoria la evidencia exigida por las reglas de la
+- Añadir un bloqueo de despliegue ante fuentes duplicadas, sin propietario, en
+  regresión o cuando el SHA local no coincida exactamente con `github/main`.
+- Incorporar a la revisión final la evidencia exigida por las reglas de la
   sección 4.1, incluida la justificación de código o abstracciones nuevas y las
   mediciones de cualquier optimización declarada.
 
-**Puerta de salida:** controles ejecutándose en las ramas protegidas. No empieza
-una migración de fuente antes de superar esta puerta.
+**Puerta de salida:** CI operativo en las ramas de feature, inventario y
+ratchets activos, y ambos despliegues rechazando el SHA de trabajo mientras no
+sea `github/main`. La migración se desarrolla y valida en esas ramas; no se
+fusiona ni despliega antes de completar DT-144 y obtener la aprobación final.
 
 ### Fase 0 — inventario productivo verificable
 
@@ -382,8 +386,8 @@ DT-144 solo puede cerrarse cuando se cumplan a la vez estas condiciones:
 - toda oferta nueva entra exclusivamente por Core;
 - ambos productos pasan sus recorridos sobre el corpus común;
 - las sondas productivas confirman las mismas invariantes;
-- el contrato, el inventario y los checks están asociados a revisiones
-  desplegadas exactas.
+- el contrato, el inventario y los checks están asociados al SHA exacto
+  aprobado, fusionado en GitHub y desplegado.
 
 Las fuentes bloqueadas no desaparecen del recuento. Deben resolverse o retirarse
 explícitamente con evidencia. La frase «alcance autorizado completado» no puede

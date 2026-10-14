@@ -124,7 +124,11 @@ if [[ "$MODO" == "--dry-run" ]]; then
   exit 0
 fi
 
-python3 scripts/forgejo_gate.py check-release "$FULL_SHA"
+read -r GITHUB_MAIN _ < <(git ls-remote --exit-code github refs/heads/main)
+if [[ "$FULL_SHA" != "$GITHUB_MAIN" ]]; then
+  echo "ABORTA: sólo se despliega el SHA exacto de github/main ($GITHUB_MAIN)" >&2
+  exit 1
+fi
 
 if [[ "$MODO" != "--config-only" ]]; then
   echo "== construyendo"

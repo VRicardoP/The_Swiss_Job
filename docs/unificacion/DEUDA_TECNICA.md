@@ -39,20 +39,16 @@ continuar sin rediseñarlo.
 ### Punto de reanudación
 
 1. No repetir el inventario ni la Fase 0: las 58 fuentes están verificadas y
-   `The_Swiss_Job/main` ya tiene los nueve checks y la revisión CODEOWNER
-   obligatorios. Comprobar el último checkpoint y el estado remoto antes de
-   actuar, porque este bloque es solo el acceso rápido al ledger cronológico.
-2. Mantener `ReactPortfolioServer` privado y el coste en 0 €. Forgejo ya está
-   desplegado y protege ambos main; no repetir la evaluación de GitHub Pro,
-   GitLab o Bitbucket. El siguiente paso requiere al propietario: cambiar la
-   contraseña inicial, conservar los nuevos valores fuera del agente, publicar
-   los estados CI y aprobar las dos PR vigentes.
-3. Terminar primero la adopción protegida: fusionar en Forgejo, sincronizar los
-   SHA exactos a GitHub y comprobar que ambos deploys aceptan sólo esos main.
-   No empujar directamente a una rama protegida ni publicar un estado manual
-   sin que el verificador haya contrastado el run GitHub exacto.
-4. Solo cuando ambos repositorios hayan cruzado esa puerta, iniciar Jobicy como
-   primer corte de extremo a extremo. Su sombra Core debe conservar las ocho consultas
+   los ratchets están activos. GitHub Free es el único forge autorizado; no
+   desplegar ni volver a proponer Forgejo, GitLab, Bitbucket o GitHub Pro.
+2. Mantener `ReactPortfolioServer/main` y `The_Swiss_Job/main` intactas
+   durante toda la ejecución. Trabajar sólo en sus ramas DT-144, con CI en cada
+   push, y fusionar al final tras la aprobación explícita del propietario.
+3. Los despliegues reales deben fallar mientras HEAD no sea exactamente el SHA
+   de `github/main`. Esta guarda evita publicar una rama incompleta, pero no se
+   presenta como una protección de rama inexistente en GitHub Free privado.
+4. Continuar con Jobicy como primer corte de extremo a extremo. Su sombra Core
+   debe conservar las ocho consultas
    inventariadas y resolver o clasificar con evidencia el síntoma SwissJob
    `69 descargadas / 0 persistidas / 17 ciclos` antes del corte.
 5. Añadir aquí un checkpoint después de cada fuente u oleada con estados,
@@ -310,7 +306,57 @@ continuar sin rediseñarlo.
   productor y no cambió producción. La Fase -1 continúa **NO SUPERADA** hasta
   que ambos repositorios tengan protección operable y obligatoria.
 
-### Decisión de propietario 2026-10-14 · cero servicios de pago
+### Decisión vigente del propietario 2026-10-14 · sólo GitHub Free
+
+- GitHub es el único forge autorizado y el coste debe permanecer en 0 €.
+  `ReactPortfolioServer` continúa privado; no se contratará GitHub Pro ni se
+  instalará un forge alternativo.
+- Toda implementación de DT-144 vive en ramas de feature. Los dos `main`
+  permanecen intactos hasta que la centralización completa esté validada y el
+  propietario apruebe expresamente la fusión final.
+- CI se ejecuta en cada push. Los scripts de despliegue sólo aceptan el SHA
+  exacto de `github/main`; por tanto una rama incompleta no puede llegar al
+  NAS aunque carezca de protección administrativa.
+- La instancia Forgejo, sus repositorios duplicados, integración, backup,
+  imagen y datos se retiran. Los bloques históricos inferiores explican cómo
+  se llegó a esta decisión, pero están **ANULADOS** y no son trabajo pendiente.
+- Esta decisión cambia el mecanismo de trabajo, no la definición de terminado:
+  Core debe seguir siendo el único cosechador y ambos productos deben perder
+  productores, credenciales, conexiones y persistencia local de ofertas.
+
+### Checkpoint 2026-10-14 · Forgejo retirado y flujo GitHub Free validado
+
+- Se retiraron del NAS el contenedor `dt144-forgejo`, su imagen, el directorio
+  de datos, el único archivo de backup y su entrada exacta del registro de
+  retención. La comprobación posterior devolvió `FORGEJO_ABSENT`: no queda
+  contenedor, imagen, ruta, backup, registro ni referencia en el script vivo.
+  Los datos eliminados no son recuperables desde el NAS; el código continúa en
+  las ramas publicadas de GitHub.
+- Antes de retirar el servicio se instaló atómicamente el backup diario sin la
+  dependencia Forgejo. La copia versionada y la viva comparten SHA-256
+  `d1e21e88baa77aaaf482a78c07ff3727d3b2b245c6989fa7e9ba7fe1d7f19073`;
+  además resuelve y valida la imagen Core efectiva en vez de fijar una etiqueta
+  histórica.
+- Los repositorios de GitHub conservaron sus referencias: SwissJob
+  `main=e59283b`, rama DT-144 `fd643cb`; ReactPortfolioServer `main=5bf457a`,
+  rama DT-144 `72478d8`. Ningún `main` se modificó durante la retirada.
+- La protección gratuita de `The_Swiss_Job/main` se leyó de vuelta: PR y rama
+  actualizada, nueve checks obligatorios, conversaciones resueltas, aplicación
+  a administradores, y force-push y borrado prohibidos. Las aprobaciones quedan
+  en cero y CODEOWNER desactivado porque el único propietario no puede aprobar
+  su propia PR. `ReactPortfolioServer`, al ser privado, no ofrece protección de
+  rama en GitHub Free; esta limitación está declarada, no simulada.
+- El CI sigue ejecutándose en cada push y ambos despliegues comparan el commit
+  completo con `github/main`. La prueba negativa real de esas guardas y los
+  runs CI de los commits de retirada deben registrarse después de publicarlos;
+  hasta entonces la Fase -1 continúa **NO SUPERADA**.
+- Validación local previa al commit: backup SwissJob 3/3, sintaxis Bash y
+  formato/diff limpios; suite completa ReactPortfolioServer 2.129 aprobadas,
+  1 omitida. Siguiente paso exacto: publicar la retirada en ambas ramas,
+  comprobar sus CI, ejecutar las dos pruebas negativas de despliegue y después
+  iniciar la sombra Core de Jobicy sin tocar `main`.
+
+### Histórico anulado · evaluación de servicios alternativos
 
 - `ReactPortfolioServer` seguirá privado y no se contratará GitHub Pro ni
   ningún otro servicio de pago. Esta decisión sustituye la vía económica
@@ -323,9 +369,8 @@ continuar sin rediseñarlo.
   CODEOWNER, checks requeridos y cumplimiento por administradores. GitLab Free
   y Bitbucket Free se descartaron como no equivalentes: sus protecciones
   gratuitas no hacen obligatorios todos esos controles.
-- Evidencia de alternativas y medición NAS de solo lectura:
-  [`2026-10-14-dt144-free-protection-feasibility.json`](../audits/2026-10-14-dt144-free-protection-feasibility.json).
-  El NAS es compatible (`amd64`, Docker 27.1.2, 426,1 GiB disponibles), pero
+- La evaluación histórica midió el NAS en modo de solo lectura. Era compatible
+  (`amd64`, Docker 27.1.2, 426,1 GiB disponibles), pero
   tiene 2 CPU, carga observada 12–14 y 24 contenedores. No se desplegará otro
   runner: la alternativa mínima debe reutilizar el CI GitHub existente y
   exigir una aprobación humana distinta del autor automatizado.
@@ -339,7 +384,7 @@ continuar sin rediseñarlo.
   y no se usó código real. El siguiente paso es diseñar el gate durable mínimo
   que reutilice el CI GitHub existente, sin desplegar otro runner.
 
-### Checkpoint 2026-10-14 · gate gratuito desplegado; adopción pendiente
+### Histórico anulado · Forgejo desplegado y posteriormente retirado
 
 - Forgejo 16.0.5 quedó desplegado por digest y coste cero en el NAS, sin runner,
   registro, hooks, webhooks, OpenID ni puerto SSH publicado. Responde pass en
@@ -389,14 +434,9 @@ continuar sin rediseñarlo.
   dump Forgejo de 8.347.024 bytes, aplicó retención, escribió su marca de éxito
   y liberó el lock. El lote daily-20261014T071731Z conserva además los tres TOC,
   erasures.json y retention-result.json.
-- Evidencia estructurada:
-  [2026-10-14-dt144-forgejo-deployment.json](../audits/2026-10-14-dt144-forgejo-deployment.json)
-  y procedimiento:
-  [FORGEJO_GATE_RUNBOOK.md](FORGEJO_GATE_RUNBOOK.md).
 - No cambió ninguna fuente, scope, credencial de portal, productor ni runtime
-  de producto. La Fase -1 sigue **NO SUPERADA** hasta que el propietario cambie
-  su contraseña, publique los dos estados CI, apruebe ambas PR, se fusionen y
-  sincronicen ambos main y las guardas acepten sólo esos SHA protegidos.
+  de producto durante ese ensayo. La instancia se retiró por decisión expresa
+  del propietario y no debe reintroducirse.
 
 **Prohibición de cierre parcial:** DT-144 no se cierra porque exista un adaptador,
 un scope o una ruta denominada `core_primary`. Solo se cierra cuando no queden

@@ -9,7 +9,7 @@ import pytest
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts/nas_backup_daily.sh"
 
 
-@pytest.mark.parametrize("failure", ["", "dump", "verify", "forgejo"])
+@pytest.mark.parametrize("failure", ["", "dump", "verify"])
 def test_daily_backup_fails_closed_and_releases_lock(tmp_path, failure):
     root = tmp_path / "private"
     ops = root / "e13-erasure"
@@ -25,7 +25,6 @@ case "$*" in
   *"inspect swissjob-core-api-r5"*) echo swissjob-core:point5-a1b2c3d ;;
   *pg_dump*) test "$FAILURE" != dump; echo synthetic-archive ;;
   *pg_restore*) test "$FAILURE" != verify; cat >/dev/null ;;
-  *"forgejo dump"*) test "$FAILURE" != forgejo; tar -czf - -T /dev/null ;;
   *"python -c"*) echo '{"synthetic":"inventory"}' ;;
   *) echo '{"retention_met":true}' ;;
 esac
@@ -55,13 +54,11 @@ esac
         assert "--kind temporary" in log
         assert "--apply" not in log
         assert not (ops / "last-backup-success").exists()
-        dumps = list(ops.glob("daily-*/*.dump"))
-        assert len(dumps) == (3 if failure == "forgejo" else 0)
+        assert not list(ops.glob("daily-*/*.dump"))
     else:
         assert result.returncode == 0, result.stderr
-        assert log.count("--kind backup") == 4
+        assert log.count("--kind backup") == 3
         assert "swissjob-core:point5-a1b2c3d" in log
         assert "--apply" in log
         assert len(list(ops.glob("daily-*/*.dump"))) == 3
-        assert len(list(ops.glob("daily-*/forgejo.tar.gz"))) == 1
         assert (ops / "last-backup-success").is_file()
