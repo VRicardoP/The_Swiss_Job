@@ -186,7 +186,8 @@ _SOURCE_AGGREGATE_SQL = sa.text(
         CASE WHEN :source IN ('adzuna','jsearch')
              THEN published_at #>> '{}' END DESC NULLS LAST,
         CASE WHEN :source IN ('adzuna','jsearch') THEN source_order END ASC NULLS LAST,
-        CASE WHEN :source='dynamitejobs' THEN source_order END ASC NULLS LAST,
+        CASE WHEN :source IN ('dynamitejobs','jobscout24')
+             THEN source_order END ASC NULLS LAST,
         last_seen_at DESC, incarnation_id
       LIMIT :item_limit
     ),
@@ -203,7 +204,8 @@ _SOURCE_AGGREGATE_SQL = sa.text(
         FROM jsonb_array_elements(
           CASE
             WHEN :source='swissdevjobs' THEN technologies_raw
-            WHEN :source IN ('jobroom','dynamitejobs') THEN statistics_tags_raw
+            WHEN :source IN ('jobroom','dynamitejobs','jobscout24')
+              THEN statistics_tags_raw
             ELSE tags
           END
         ) AS entry(item)
@@ -288,7 +290,7 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                             THEN published_at #>> '{}' END DESC NULLS LAST,
                        CASE WHEN :source IN ('adzuna','jsearch')
                             THEN source_order END ASC NULLS LAST,
-                       CASE WHEN :source='dynamitejobs'
+                       CASE WHEN :source IN ('dynamitejobs','jobscout24')
                             THEN source_order END ASC NULLS LAST,
                        last_seen_at DESC, incarnation_id)
                      FROM recent), '[]'::jsonb) AS items,

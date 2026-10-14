@@ -22,6 +22,7 @@ from jobhunt_core.harvest.providers.native_jobroom import JobRoomProvider
 from jobhunt_core.harvest.providers.native_adzuna import AdzunaProvider
 from jobhunt_core.harvest.providers.native_jsearch import JSearchProvider
 from jobhunt_core.harvest.providers.native_dynamitejobs import DynamiteJobsProvider
+from jobhunt_core.harvest.providers.native_jobscout24 import JobScout24Provider
 
 _PROVIDERS: dict[str, BaseProvider] = {
     ArbeitnowProvider.name: ArbeitnowProvider(),
@@ -39,6 +40,7 @@ _PROVIDERS: dict[str, BaseProvider] = {
     AdzunaProvider.name: AdzunaProvider(),
     JSearchProvider.name: JSearchProvider(),
     DynamiteJobsProvider.name: DynamiteJobsProvider(),
+    JobScout24Provider.name: JobScout24Provider(),
 }
 
 

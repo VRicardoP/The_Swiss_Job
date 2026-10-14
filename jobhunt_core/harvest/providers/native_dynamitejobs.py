@@ -19,8 +19,8 @@ from jobhunt_core.harvest.provider import (
     ProviderResponseError,
 )
 from jobhunt_core.harvest.providers.browser_headers import BROWSER_HEADERS
+from jobhunt_core.harvest.providers.html_response import job_posting_description
 from jobhunt_core.harvest.providers.jobicy_metadata import COUNTRIES
-from jobhunt_core.harvest.providers.rss_text import strip_html_tags
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 SOURCE_NAME = "dynamitejobs"
@@ -57,8 +57,6 @@ REQUEST_PAUSE_S = 0.5
 MAX_RETRIES = 3
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 _PINIA_STATE_RE = re.compile(r'window\.__PINIA_STATE__\s*=\s*("(?:[^"\\]|\\.)*")', re.S)
-_SCRIPT_RE = re.compile(r"<script\b([^>]*)>(.*?)</script\s*>", re.I | re.S)
-_JSON_LD_TYPE_RE = re.compile(r"\btype\s*=\s*(['\"])application/ld\+json\1", re.I)
 _PATH_SEGMENT_RE = re.compile(r"[\w.-]{1,300}")
 _REGION_LABELS = {
     "europe": "Europe",
@@ -72,15 +70,6 @@ _REGION_LABELS = {
     "anywhere": "Worldwide",
 }
 _SALARY_ANNUAL_FACTOR = {"yearly": 1, "monthly": 12, "hourly": 2080}
-_SOFT_BLOCK_MARKERS = (
-    "are you a human",
-    "are you a robot",
-    "verify you are human",
-    "unusual traffic",
-    "request unsuccessful",
-    "/cdn-cgi/challenge",
-    "attention required! | cloudflare",
-)
 
 logger = logging.getLogger(__name__)
 
@@ -246,33 +235,7 @@ def _category_jobs(html: str) -> list[dict]:
 
 
 def _description(html: str) -> str:
-    if any(marker in html[:5000].lower() for marker in _SOFT_BLOCK_MARKERS):
-        raise ValueError("detail page is a soft block")
-    queue = []
-    for attributes, body in _SCRIPT_RE.findall(html):
-        if not _JSON_LD_TYPE_RE.search(attributes):
-            continue
-        try:
-            value = json.loads(body)
-        except JSONDecodeError:
-            continue
-        queue.extend(value if isinstance(value, list) else [value])
-    while queue:
-        value = queue.pop(0)
-        if not isinstance(value, dict):
-            continue
-        graph = value.get("@graph")
-        if isinstance(graph, list):
-            queue.extend(graph)
-        kind = value.get("@type")
-        if kind == "JobPosting" or (isinstance(kind, list) and "JobPosting" in kind):
-            description = value.get("description")
-            return (
-                strip_html_tags(description)[:MAX_DESCRIPTION_LENGTH]
-                if isinstance(description, str)
-                else ""
-            )
-    return ""
+    return job_posting_description(html, max_length=MAX_DESCRIPTION_LENGTH)
 
 
 async def _pause() -> None:

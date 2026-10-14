@@ -35,6 +35,7 @@ DATE_FIELDS = {
     "adzuna": "created",
     "jsearch": "job_posted_at_datetime_utc",
     "dynamitejobs": "_core_published_at",
+    "jobscout24": "date",
     "weworkremotely": "pubDate",
     "euremotejobs": "pubDate",
     "jobspresso": "pubDate",
