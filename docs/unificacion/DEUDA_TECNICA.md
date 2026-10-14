@@ -259,6 +259,44 @@ continuar sin rediseñarlo.
   **NO SUPERADA** porque no existe una sesión administrativa GitHub autenticada
   con la que demostrar y fijar los checks obligatorios y la revisión CODEOWNER.
 
+### Checkpoint 2026-10-14 · protección parcial y línea base Jobicy
+
+- Se autenticó GitHub CLI mediante el flujo OAuth oficial como `VRicardoP`, con
+  permisos administrativos comprobados en ambos repositorios. No se extrajeron
+  cookies ni contraseñas del navegador y el cliente se ejecuta desde `/tmp`.
+- `The_Swiss_Job/main` estaba 276 commits detrás de la rama operativa, sin
+  divergencia. Se adelantó por fast-forward de `1af39b8` a `e59283b`; el SHA
+  ya había terminado 9/9 checks en `feat/fase-a-core` y el push no dispara
+  ningún despliegue automático. El CI específico de `main`, run
+  `38520384241`, terminó con sus 9/9 jobs en `success`.
+- La protección de `The_Swiss_Job/main` quedó aplicada y leída de vuelta:
+  exige los nueve checks `source-ownership`, lint/test de backend, frontend y
+  Core, `compose-config` y `docker-build`; rama al día, una aprobación, revisión
+  CODEOWNER, conversaciones resueltas y cumplimiento también para
+  administradores; force-push y borrado están deshabilitados.
+- `ReactPortfolioServer/main` no se pudo proteger: la API autenticada devuelve
+  `403 Upgrade to GitHub Pro or make this repository public to enable this
+  feature`. `ReactPortfolioServer` es el backend y debe continuar privado; que
+  el frontend sea público no sustituye esta protección porque la cosecha y sus
+  credenciales viven en el backend. No se cambió visibilidad ni se contrató un
+  plan. Además, ambos repositorios solo tienen como colaborador y CODEOWNER a
+  `VRicardoP`, y GitHub no permite aprobar una PR propia. La puerta requiere por
+  tanto GitHub Pro para el repositorio privado y un segundo revisor con permiso
+  de escritura; no se rebaja el contrato para sortearlo.
+- Línea base Jobicy de solo lectura:
+  [`2026-10-14-dt144-jobicy-baseline.json`](../audits/2026-10-14-dt144-jobicy-baseline.json).
+  Los dos productores locales usan ocho consultas únicas en conjunto: feed
+  general y siete tags. Un solo scope genérico perdería categorías visibles.
+- ReactPortfolio conserva 40 ofertas Jobicy, 40/40 normalizadas y completas en
+  los once campos medidos, con dos colisiones tanto de clave estable como de
+  título/empresa. SwissJob descargó 69 en el último ciclo pero no conserva
+  ninguna fila y acumula 17 ciclos con cero persistidas; sus logs del ciclo ya
+  no existen porque el worker actual arrancó después. Esa causa debe resolverse
+  o clasificarse con evidencia antes del corte, nunca asumirse.
+- No se creó fuente ni scope Core, no se ejecutó una sombra, no se detuvo ningún
+  productor y no cambió producción. La Fase -1 continúa **NO SUPERADA** hasta
+  que ambos repositorios tengan protección operable y obligatoria.
+
 **Prohibición de cierre parcial:** DT-144 no se cierra porque exista un adaptador,
 un scope o una ruta denominada `core_primary`. Solo se cierra cuando no queden
 productores, credenciales, conexiones ni persistencia de ofertas locales y las
