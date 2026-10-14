@@ -52,19 +52,20 @@ continuar sin rediseñarlo.
    también está centralizado en rama. Todos sus scopes productivos permanecen
    deshabilitados y ambos `main` intactos: el corte vivo continúa agrupado con
    la fusión final aprobada por el propietario.
-5. El último portal cerrado es myScience (Core/SwissJob `244f15e`), y antes
-   JobScout24: Core/SwissJob `33a804d` y ReactPortfolio `04a020d` + `ffcc0ba`,
-   con el productor local desconectado en rama. DynamiteJobs quedó cerrado antes (`9ec6901` /
+5. Los últimos portales cerrados son gastrojob (`280bfc2`, CI `38635097926`
+   verde) y myScience (`244f15e`, CI `38624702577` verde), y antes JobScout24:
+   Core/SwissJob `33a804d` y ReactPortfolio `04a020d` + `ffcc0ba`, con el
+   productor local desconectado en rama. DynamiteJobs quedó cerrado antes (`9ec6901` /
    `1a0db8d`, CI `38607230379` y `38608902811` verdes), igual que JSearch y
    Adzuna en los commits de sus checkpoints. No se ha desplegado ninguno.
-6. Quedan **14 portales** por implementar en las ramas, **todos de SwissJob**:
-   `gastrojob`, `proz`, `remoteco`, `schuljobs`, `stelle_admin`, `tes` y los
-   ocho `swiss_schools_*`. ReactPortfolio no conserva ningún cosechador local
-   en rama. Sigue `gastrojob`; `stelle_admin` exige decisión del propietario
-   (Playwright, y la imagen de Core no lleva Chromium) y `proz`, `remoteco` y
-   `schuljobs` arrastran bloqueos propios ya anotados en el inventario. No
-   escribir adaptador antes de contrastar código, runtime, disponibilidad y
-   línea base real.
+6. Quedan **13 portales** por implementar en las ramas, **todos de SwissJob**:
+   `proz`, `remoteco`, `schuljobs`, `stelle_admin`, `tes` y los ocho
+   `swiss_schools_*`. ReactPortfolio no conserva ningún cosechador local en
+   rama. Sigue `tes`; `stelle_admin` exige decisión del propietario (Playwright,
+   y la imagen de Core no lleva Chromium) y `proz`, `remoteco` y `schuljobs`
+   arrastran bloqueos propios ya anotados en el inventario. No escribir
+   adaptador antes de contrastar código, runtime, disponibilidad y línea base
+   real.
 7. **Relevo operativo verificado el 2026-10-14:** SwissJob/Core continúa en
    `feat/fase-a-core`, cabeza funcional `33a804d`; ReactPortfolio continúa en
    `feat/dt144-free-gate`, cabeza `ffcc0ba`. Los remotos `main` siguen
@@ -1762,6 +1763,90 @@ Core y apagado local; suites/CI; checkpoint antes de avanzar.
   `proz`, `remoteco` y `schuljobs` arrastran bloqueos propios registrados en el
   inventario (46 y 54 errores seguidos sin ninguna cosecha correcta, y un
   cursor sin bootstrap completo).
+
+### Checkpoint de relevo 2026-10-14 · gastrojob centralizado en ramas
+
+- Inicio desde `599ec3f` (CI `38632186849` **verde 9/9**, con lo que myScience
+  quedó formalmente cerrado). Los `main` remotos siguen intactos en
+  `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
+  `5bf457afbde5b44a995acce4ef241324f066f836`.
+- El trazado confirma un único productor activo:
+  `backend/scrapers/gastrojob.py`, registrado en `_SCRAPER_CLASSES` y
+  despachado cada 6 h. El consumidor sigue siendo el feed del núcleo, así que
+  el traspaso es el mismo patrón que myScience: sacar la clase del registro y
+  conservar su política como pre-decidida.
+- **Por qué el listado público no sirve, y por eso el contrato es el endpoint
+  AJAX:** `/stellen` monta las ofertas por JavaScript y devuelve 200 con cero
+  enlaces de oferta — el fallo exacto que mató a esta fuente (VD.4b). Se pagina
+  contra el endpoint del PROPIO frontend, cuya URL sale de los href de su
+  paginación, con la cabecera `Referer: .../stellen` que ese endpoint espera,
+  10 ofertas por página, cinco páginas y 2 s de pausa.
+- Captura sellada: 5 páginas AJAX (46.000 bytes, todas 200, contador 1.027
+  anunciadas, 10 stubs por página, **50 únicas y cero duplicadas**) y 50
+  detalles (1.471.686 bytes, todos 200). Huellas en
+  [`2026-10-14-dt144-gastrojob-baseline.json`](../audits/2026-10-14-dt144-gastrojob-baseline.json).
+- La ejecución del scraper EXACTO dio 50 ofertas, 48 con descripción, 50 con
+  localidad y fecha de detalle, **cero anonimizadas hoy**, 50 con `published_at`,
+  48 con jornada, 11 cantones y 23 ubicaciones. Huella normalizada
+  `797788fcb1b55b54ff0983035c4d7ad858036c6447a875ea794494aeb54a9c50`.
+
+#### Avance verificable · gastrojob centralizado en ramas
+
+- Core/SwissJob publicado en `280bfc2`; CI `38635097926` **verde en sus nueve
+  trabajos**. No existe scope productivo y nada se ha desplegado.
+- **Paridad byte a byte sobre la misma captura**: 50 de 50 stubs de listado y 50
+  de 50 páginas de detalle idénticos a los de BeautifulSoup, y la proyección
+  normalizada de las 50 ofertas tiene la MISMA huella SHA-256 en los diez campos
+  comparados —incluido `published_at` con su offset suizo—: cero diferencias.
+- **El veredicto de cinco vías se porta ENTERO**, porque leer una estructura
+  cambiada como listado vacío es el fallo original: sin contador, contador
+  ilegible y «hay enlaces propios y ninguno parsea» son fallos VISIBLES; más
+  allá del rango que cubre el contador y una página sólo-partner dentro de rango
+  son vacíos legítimos (la vía de rehabilitación). Cada uno tiene su prueba.
+- **Un caso que el legacy arregló tarde y este port también necesitaba:** un
+  contador de miles de dígitos pasa el `[0-9]+` y aun así hace lanzar a `int()`
+  (límite de 4.300 dígitos de CPython). Mi primera versión dejaba escapar ese
+  `ValueError`; ahora se captura y se reporta como contador ilegible, con una
+  prueba que muerde sin el guard.
+- Reglas de identidad conservadas y probadas: la URL guardada se RECONSTRUYE del
+  path canónico —una query de tracking, un puerto o un cambio de mayúsculas no
+  crean una segunda fila—, el host se valida (nada de protocolo-relativo,
+  userinfo ni otro dominio), y la empresa sale SÓLO del listado aunque la
+  microdata del detalle la conozca: participa en la identidad y sólo el listado
+  es estable run a run. Ése es el motivo de que entre ~3 % y ~13 % de los
+  anuncios queden como «Unknown», y hoy la captura no trae ninguno.
+- La fecha del listado («Erstmals aktiviert», hora civil suiza) se ancla a
+  Europe/Zurich y el `datePosted` del detalle queda sólo como respaldo, igual
+  que en el productor. La hora ambigua de otoño resuelve al primer instante: una
+  hora de error, una noche al año, frente a perder la fecha entera.
+- Validación: Core **1.791 aprobadas y ninguna omitida** (las 1.751 anteriores
+  más 40 nuevas, en 8 min 52 s) y backend SwissJob **1.916 aprobadas y 4
+  `xfail`**, los mismos recuentos de antes. Además 122 focales de SwissJob,
+  doble ciclo PostgreSQL con una sola identidad por oferta, provisión opt-in,
+  `ruff check`/`format` del repo completo, `git diff --check`,
+  `check_no_secrets` 0 hallazgos y ratchet
+  `{"core_owned":16,"local_pending":26,"sources":58}`.
+- Incidencias cerradas antes de publicar: tres expectativas mías estaban mal
+  —el `?tracking=` NO se rechaza, se descarta al reconstruir la URL canónica; y
+  dos pruebas daban por vacío legítimo una página que el veredicto declara
+  fallo— y se corrigió la EXPECTATIVA; la localidad del detalle llega en un
+  `<meta content=…>`, que no pasa por la pila de elementos, así que leerla sólo
+  en etiquetas de apertura no encontraba nada en ninguno de los 50 detalles.
+  Ningún intento tocó producción.
+- **Tráfico:** 55 peticiones por barrido (5 AJAX + 50 detalles) al ritmo de 2 s
+  del portal. El productor hacía lo mismo en frío y menos en caliente por su
+  early-stop de cursor, que Core no reproduce a propósito (emisión total).
+- **Rollback:** revertir `280bfc2` devuelve `gastrojob` al registro de scrapers,
+  saca su pre-decisión y retira adaptador, registro, admisión y provisionador.
+- Tras gastrojob quedan **13 proveedores** por implementar en ramas, todos de
+  SwissJob: `proz`, `remoteco`, `schuljobs`, `stelle_admin`, `tes` y los ocho
+  `swiss_schools_*`.
+- **Siguiente paso exacto si hay relevo:** comprobar la CI del checkpoint y
+  seguir con `tes` (sano, `__NEXT_DATA__`, una oferta por página). `stelle_admin`
+  exige decisión del propietario (Playwright, y la imagen de Core no lleva
+  Chromium); `proz` y `remoteco` llevan 46 y 54 errores seguidos SIN ninguna
+  cosecha correcta —el inventario pide decidir transporte o retirarlas— y
+  `schuljobs` tiene un intento sin desenlace y el cursor sin bootstrap completo.
 
 ### Registro cerrado · Forgejo no forma parte de DT-144
 
