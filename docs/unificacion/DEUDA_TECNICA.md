@@ -704,6 +704,112 @@ Core y apagado local; suites/CI; checkpoint antes de avanzar.
   preflight y trazado; comprobar su productor real, contrato y API viva antes de
   modificar código. No tocar `main`, producción ni activar scopes reales.
 
+### Checkpoint de relevo 2026-10-14 · SwissDevJobs EN CURSO, preflight cerrado
+
+- Inicio verificado desde SwissJob/Core `030d347` en `feat/fase-a-core` y
+  ReactPortfolio `fda24a9` en `feat/dt144-free-gate`; ambos `main` y producción
+  siguen intactos. La CI `38564269161` de `12fabdc` terminó verde 9/9; la
+  repetición `38564792245` de la anotación documental seguía ejecutando sólo
+  sus suites largas al cerrar este preflight.
+- El trazado confirma un único productor activo: ReactPortfolio
+  `services/swissdevjobs_provider_impl.py`, registrado en caché/worker e
+  incluido por `routers/swissdevjobs_jobs.py`. Hace un barrido de arranque, uno
+  circadiano y refresco administrativo; expone `recent`, `stats`, `by-tag`,
+  `by-location`, `refresh-cache` y `health`. SwissJob no contiene módulo ni
+  registro SwissDevJobs y Core todavía no contiene provider ni scope.
+- El contrato vivo es un `GET https://swissdevjobs.ch/api/jobsLight` sin
+  credencial ni paginación, seguido de páginas públicas de detalle. La captura
+  saneada dio 210 objetos, cero pausados, 210 `jobUrl` y 210 `_id` únicos,
+  272.877 bytes y SHA-256
+  `d4a611e9f0686279eb3cf2f7e02eed915bf8d19b9eabeb3704c591b8ef880d23`.
+  La muestra de detalle dio 10.445 bytes, un único marcador
+  `window.__detailedJob`, 1.138 caracteres de descripción y SHA-256 de texto
+  `df02081d8bc43abdcdad7f9bb3c7375b9dd7fa4974e44ed85c2ad7a58ac554d4`.
+- La ejecución del productor legado exacto sobre esa captura procesó 210 y
+  dejó 157 ofertas servibles tras la regla compartida de 90 días, 20
+  descripciones en caché fría, 14 ubicaciones y 259 tags; tasa 100 %, sin error.
+  Huellas: ofertas
+  `c0b543b747de87ca2cc5a87a3abd10f1094e7f9fa692f776290b1f9893ee8296`,
+  proyección normalizada
+  `7ac0d97bd21512264562b026424835ed32ae8a95096f4316bcd5ea8159b176cb`,
+  ubicaciones
+  `221f4697a852fb12f10d8b32297bd24c8ddef6a32f3e011ecd9f863532165583`
+  y tags
+  `d185799dedbc5b271f76514d5b0bb5c1e49f4efb6da611dbf6c91cf5135ba2db`.
+- Contrato que no se debe simplificar: el feed ligero no trae descripción; el
+  productor intenta como máximo 20 detalles nuevos por ciclo, conserva los ya
+  enriquecidos por identidad, limita la descripción visible a 500 caracteres,
+  conserva como máximo 300 recientes y cuenta todos los tags aunque cada oferta
+  sólo muestra los diez primeros. El feed vivo contiene 41 ofertas con más de
+  diez tecnologías, así que usar el mismo campo capado para estadísticas
+  perdería información.
+- Decisión mínima tras revisar el sink, cursores y providers Core: implementar
+  un provider SwissDevJobs cohesivo y sin estado propio. Su cursor transaccional
+  conservará sólo descripciones activas, podadas por el feed, para volver a
+  emitir cada oferta y refrescar `last_seen_at` sin solicitar 210 detalles cada
+  día ni borrar texto bueno. No se añade tabla, dependencia ni caché paralela.
+  El agregado seguirá contando las tecnologías completas del raw y el consumidor
+  limitará a diez las etiquetas visibles, como el legado.
+- Incidencias de preflight sin efecto funcional: el primer parser aislado no
+  llegó a importar por faltar las cinco variables obligatorias; se repitió con
+  el entorno de pruebas versionado. El primer script temporal no encontraba el
+  worktree en `PYTHONPATH`; se corrigió sin ejecutar red. La línea base final
+  avisó de tablas SQLite auxiliares ausentes y continuó por sus degradaciones
+  previstas; los recuentos/hashes anteriores proceden de la ejecución válida.
+- **Siguiente paso exacto si hay relevo:** confirmar que `38564792245` terminó
+  verde; implementar y probar provider, normalizador, registro, fecha
+  `activeFrom`, agregado de tags completos y provisionador opt-in; ejecutar dos
+  ciclos PostgreSQL aislados y comparar la proyección contra las huellas de este
+  bloque. Sólo después adaptar las seis rutas ReactPortfolio, desconectar sus
+  imports/registros y reducir el ratchet local de 6 a 5.
+
+#### Avance verificable · capacidad SwissDevJobs terminada en Core
+
+- La repetición documental `38564792245` terminó verde. Core quedó versionado y
+  publicado en `63fe4e5` sobre `feat/fase-a-core`; `main` sigue exactamente en
+  `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y no se ha creado, habilitado ni
+  desplegado ningún scope productivo.
+- `SwissDevJobsProvider` implementa el feed ligero y el enriquecimiento
+  incremental de hasta 20 detalles por ciclo con el cursor transaccional ya
+  existente. Conserva únicamente descripciones de identidades aún activas,
+  limita el texto a 500 caracteres y no añade tabla, caché, dependencia ni
+  proceso. El registro, la admisión, `activeFrom`, el agregado de tecnologías
+  completas y el provisionador opt-in quedan incluidos en el mismo commit.
+- La proyección Core reproducible sobre la captura viva devolvió 210 filas,
+  157 dentro de la ventana histórica de 90 días y 20 descripciones. Coinciden
+  byte a byte tanto la huella de ofertas legado
+  `c0b543b747de87ca2cc5a87a3abd10f1094e7f9fa692f776290b1f9893ee8296`
+  como la normalizada
+  `7ac0d97bd21512264562b026424835ed32ae8a95096f4316bcd5ea8159b176cb`.
+- Dos ciclos aislados sobre PostgreSQL terminaron correctamente: el segundo
+  reutilizó la descripción, mantuvo una sola revisión raw por identidad y el
+  agregado expuso los 12 tags completos de la muestra frente a los 10 visibles.
+  Validación Core: 16 unidades nuevas, 120 pruebas focales, 10 integraciones,
+  repetición aislada 2/2 y suite completa con 1.603 aprobadas, una omitida y dos
+  avisos conocidos; Ruff, formato, `diff --check` y el ratchet
+  `{"core_owned":16,"local_pending":26,"sources":58}` quedaron verdes.
+- Incidencias contenidas: el primer test unitario llevaba una fixture híbrida
+  incompatible con su expectativa remota y se corrigió la fixture, no el
+  comportamiento; el host no tenía `psycopg2` y la integración se repitió en la
+  imagen Core; el primer script de proyección usó el Python del sistema sin
+  `aiohttp` y se repitió con el entorno ReactPortfolio. Ningún intento fallido
+  modificó base de datos o producción.
+- La CI `38568433424` de `63fe4e5` tiene siete trabajos verdes; sólo
+  `backend-test` y `core-test` siguen en ejecución al escribir este checkpoint.
+  No se modifica ReactPortfolio hasta comprobar que el run completo termina
+  verde.
+- Los cambios ajenos enumerados en este documento siguen preservados y sin
+  añadir al commit. La única modificación DT-144 pendiente en el worktree Core
+  es este ledger de relevo.
+- **Siguiente paso exacto si hay relevo:** consultar `38568433424`; si termina
+  verde, trabajar en `/tmp/reactportfolio-dt144-free-gate` desde `fda24a9`.
+  Añadir SwissDevJobs al adaptador `core_source_compat`, conservar las seis
+  rutas y la ventana servible de 90 días, retirar import/router/provider y los
+  registros laterales locales, añadirlo a ambos `LEGACY_DISABLED_SOURCES`,
+  bajar el ratchet de 6 a 5 y ejecutar focales, suite completa, paridad, commit,
+  push y CI. Si la CI Core falla, resolver y documentar antes de tocar el
+  consumidor.
+
 ### Registro cerrado · Forgejo no forma parte de DT-144
 
 La alternativa se evaluó temporalmente y se retiró por decisión expresa del
