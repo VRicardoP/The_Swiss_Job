@@ -294,6 +294,7 @@ SOURCES_DECIDED_IN_ADVANCE: frozenset[str] = frozenset(
         "remoteok",
         "ictjobs",
         "swisstechjobs",
+        "jobicy",
         # FULL inciertas, deshabilitadas hoy
         "undpjobs",
         "ilojobs",

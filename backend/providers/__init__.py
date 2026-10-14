@@ -5,7 +5,6 @@ import logging
 from config import settings
 from providers.adzuna import AdzunaProvider
 from providers.careerjet import CareerjetProvider
-from providers.jobicy import JobicyProvider
 from providers.jooble import JoobleProvider
 from providers.jsearch import JSearchProvider
 from providers.proz import ProzProvider
@@ -33,7 +32,6 @@ _PROVIDER_CLASSES: dict[str, type[BaseJobProvider]] = {
     "indeed_partner": IndeedPartnerProvider,
     "glassdoor_partner": GlassdoorPartnerProvider,
     "xing_partner": XingPartnerProvider,
-    "jobicy": JobicyProvider,
 }
 
 _KEY_REQUIREMENTS: dict[str, str] = {

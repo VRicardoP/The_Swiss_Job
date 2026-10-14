@@ -414,7 +414,7 @@
       "inventory_verified": true,
       "core_adapter": true,
       "swissjob_module": true,
-      "swissjob_registry": true,
+      "swissjob_registry": false,
       "reactportfolio_source_name": "jobicy",
       "evidence": "Both local schedulers are active; Core adapter exists but production has no Jobicy scope."
     },

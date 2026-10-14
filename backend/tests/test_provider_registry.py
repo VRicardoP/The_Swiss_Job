@@ -20,7 +20,6 @@ EXPECTED = {
     "indeed_partner",
     "glassdoor_partner",
     "xing_partner",
-    "jobicy",
 }
 
 
@@ -44,7 +43,8 @@ def test_constructed_providers_are_unique_base_providers():
     names = [provider.get_source_name() for provider in providers]
     assert all(isinstance(provider, BaseJobProvider) for provider in providers)
     assert len(names) == len(set(names))
-    assert {"proz", "remoteco", "jobicy"} <= set(names)
+    assert {"proz", "remoteco"} <= set(names)
+    assert "jobicy" not in names
 
 
 def test_status_reports_exact_registry_and_key_gates():

@@ -47,10 +47,9 @@ continuar sin rediseñarlo.
 3. Los despliegues reales deben fallar mientras HEAD no sea exactamente el SHA
    de `github/main`. Esta guarda evita publicar una rama incompleta, pero no se
    presenta como una protección de rama inexistente en GitHub Free privado.
-4. Continuar con Jobicy como primer corte de extremo a extremo. Su sombra Core
-   debe conservar las ocho consultas
-   inventariadas y resolver o clasificar con evidencia el síntoma SwissJob
-   `69 descargadas / 0 persistidas / 17 ciclos` antes del corte.
+4. Jobicy ya conserva las ocho consultas en Core y completó dos ciclos sombra
+   aislados. Mantener sus scopes productivos deshabilitados y `main` intacta;
+   el corte vivo queda agrupado con la fusión final aprobada por el propietario.
 5. Añadir aquí un checkpoint después de cada fuente u oleada con estados,
    pruebas, SHA, evidencia viva, rollback y siguiente paso exacto.
 
@@ -355,6 +354,51 @@ continuar sin rediseñarlo.
   1 omitida. Siguiente paso exacto: publicar la retirada en ambas ramas,
   comprobar sus CI, ejecutar las dos pruebas negativas de despliegue y después
   iniciar la sombra Core de Jobicy sin tocar `main`.
+
+### Checkpoint 2026-10-14 · Fase -1 superada y piloto Jobicy en rama
+
+- La Fase -1 queda **SUPERADA** conforme a la puerta vigente de GitHub Free:
+  SwissJob `57f161e`, run `38539018069`, terminó 9/9 controles en `success`;
+  ReactPortfolio `cb99f39`, run `38539017146`, terminó su CI en `success`.
+  Las pruebas negativas reales rechazaron desplegar ambos SHA de feature porque
+  no coincidían con `github/main`. Las ramas principales continúan exactamente
+  en `e59283b` y `5bf457a`.
+- La causa del histórico SwissJob `69 descargadas / 0 persistidas / 17 ciclos`
+  quedó reproducida: el feed actual entrega `jobType` como lista y el
+  normalizador local intentaba unir valores anidados; 50/50 filas del feed
+  amplio lanzaron `TypeError`. No era el filtro tech ni la ventana de edad.
+- Core incorpora ocho scopes Jobicy exactos e idempotentes. El aprovisionador
+  crea scopes deshabilitados y sólo cambia activación con `--enable` o
+  `--disable` explícitos; un scope extra, parámetros distintos o propietario
+  incorrecto hacen fallar la transacción.
+- Dos ciclos sombra, sin red y sobre PostgreSQL desechable, recibieron 204
+  filas cada uno y estabilizaron en 158 ofertas, 158 revisiones raw y 158
+  revisiones normalizadas. El segundo ciclo no añadió oferta ni revisión;
+  8/8 scopes completaron, con cero fallos, 158 fechas, 22 categorías y tres
+  tipos de contrato. Evidencia saneada y hashes de entrada:
+  [`2026-10-14-dt144-jobicy-shadow.json`](../audits/2026-10-14-dt144-jobicy-shadow.json).
+- La comparación del contrato visible detectó y cerró antes del corte tres
+  diferencias no cubiertas inicialmente: países `USA/UK/Anywhere`, taxonomía
+  técnica de `/by-tag` y el parámetro histórico `geo_filter`. Core preserva
+  además `jobIndustry`, `jobType` y `pubDate` cuando llegan como listas/campo
+  nativo; el agregado evita contar a la vez el valor singular y su lista.
+- ReactPortfolio `0d1cc26` + `9390071` deja Jobicy fuera de su registro local,
+  mantiene las rutas históricas como adaptador exclusivo de Core y declara la
+  fuente deshabilitada en backend y worker. SwissJob deja Jobicy fuera de
+  `_PROVIDER_CLASSES`; su buscador ya usa `CoreCatalog`, por lo que no necesita
+  un segundo adaptador de lectura.
+- Validación local: ReactPortfolio completa 2.127 aprobadas y una omitida;
+  batería focal de compatibilidad 257 aprobadas. Core completa 1.549 aprobadas
+  y una omitida; Jobicy/Core focal 36 aprobadas; registro SwissJob 85 aprobadas;
+  ratchet cruzado `{"core_owned":16,"local_pending":26,"sources":58}`.
+- No se desplegó ni se creó fuente/scope en producción. La ficha permanece
+  `local_pending` porque describe el estado vivo, mientras el código de rama
+  conserva las clases antiguas únicamente para rollback. Se borrarán después
+  de la observación productiva final, no antes.
+- Siguiente paso exacto: terminar el CI de los SHA Jobicy publicados, confirmar
+  el commit de desconexión SwissJob y avanzar a las fuentes públicas de Fase 3.
+  No fusionar, desplegar ni habilitar Jobicy hasta completar todas las fuentes
+  y recibir la aprobación final del propietario.
 
 ### Histórico anulado · evaluación de servicios alternativos
 
