@@ -2,7 +2,7 @@
 
 Each request refreshes the provider's published feed, not an invented complete
 historical archive. Remotive uses the existing 200-item feed; Jobicy uses a
-50-item feed PER tag/geo scope (the five old queries need five scopes). These
+50-item feed PER tag/geo scope; RemoteOK has one global feed. These
 adapters preserve the original object for the sink; parsing canonical content
 is separate. They do not import the BFF, access its DB, or enable any source.
 
@@ -38,6 +38,7 @@ ENDPOINTS = {
     "remotive": "https://remotive.com/api/remote-jobs",
     "workingnomads": "https://www.workingnomads.com/api/exposed_jobs/",
     "jobicy": "https://jobicy.com/api/v2/remote-jobs",
+    "remoteok": "https://remoteok.com/api",
 }
 MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 
@@ -109,9 +110,19 @@ def _plain(value):
     return " ".join("".join(parser.parts).split()) or None
 
 
+def _remoteok_salary(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    value = value * 1000 if value < 1000 else value
+    return int(value) if isinstance(value, float) and value.is_integer() else value
+
+
 def _content(name, raw):
     jobicy = name == "jobicy"
-    title = raw.get("jobTitle" if jobicy else "title")
+    remoteok = name == "remoteok"
+    title = raw.get("jobTitle" if jobicy else "position" if remoteok else "title")
+    if remoteok and not title:
+        title = raw.get("title")
     description = _plain(raw.get("jobDescription" if jobicy else "description"))
     tags = raw.get("tags")
     if name == "workingnomads" and isinstance(tags, str):
@@ -120,19 +131,26 @@ def _content(name, raw):
     category = raw.get("category_name") if name == "workingnomads" else None
     if isinstance(category, str) and category.strip():
         tags = [category.strip(), *tags]
-    extracted = extract_job_skills(
-        title if isinstance(title, str) else "", description or ""
+    extracted = (
+        []
+        if remoteok
+        else extract_job_skills(
+            title if isinstance(title, str) else "", description or ""
+        )
     )
     if jobicy:
         extracted = [*extract_tech_skills(title, description), *extracted]
-    merged, seen = [], set()
-    for tag in [*tags, *extracted]:
-        if not isinstance(tag, (str, int, float)) or isinstance(tag, bool):
-            continue
-        tag = str(tag).strip()
-        if tag and tag.lower() not in seen:
-            seen.add(tag.lower())
-            merged.append(tag)
+    if remoteok:
+        merged = tags
+    else:
+        merged, seen = [], set()
+        for tag in [*tags, *extracted]:
+            if not isinstance(tag, (str, int, float)) or isinstance(tag, bool):
+                continue
+            tag = str(tag).strip()
+            if tag and tag.lower() not in seen:
+                seen.add(tag.lower())
+                merged.append(tag)
     location = (
         (raw.get("jobGeo") or raw.get("country"))
         if jobicy
@@ -142,19 +160,23 @@ def _content(name, raw):
     )
     if jobicy:
         location = normalize_location(location)
+    elif remoteok:
+        location = normalize_location(location) or "Worldwide"
     if name == "workingnomads" and (
         not isinstance(location, str) or not location.strip()
     ):
         location = "Remote / Worldwide"
     content = {
         "title": title,
-        "company": raw.get("companyName" if jobicy else "company_name"),
+        "company": raw.get(
+            "companyName" if jobicy else "company" if remoteok else "company_name"
+        ),
         "description": description,
         "location": location,
-        "tags": merged[:15],
+        "tags": merged if remoteok else merged[:15],
         "remote": True,
-        # Preserve the existing canonical boundary; portal salary stays in raw
-        # until a validated enrichment step maps its amount/currency/period.
+        # Preserve the existing canonical boundary; unverified portal salary
+        # stays in raw. RemoteOK's USD amounts are mapped below from live parity.
         "salary": None,
     }
     if name in {"workingnomads", "jobicy"}:
@@ -166,6 +188,14 @@ def _content(name, raw):
                 raw.get("jobType") if jobicy else None,
             )
         )
+    if remoteok:
+        salary_min = _remoteok_salary(raw.get("salary_min"))
+        salary_max = _remoteok_salary(raw.get("salary_max"))
+        content.update(
+            salary_min=salary_min,
+            salary_max=salary_max,
+            salary_currency="USD" if salary_min or salary_max else None,
+        )
     return content
 
 
@@ -175,6 +205,8 @@ def register_handlers():
         title, company = (
             ("jobTitle", "companyName")
             if name == "jobicy"
+            else ("position", "company")
+            if name == "remoteok"
             else ("title", "company_name")
         )
         register_extractor(
@@ -182,15 +214,12 @@ def register_handlers():
         )
 
 
-def _listing(raw):
-    if not isinstance(raw, dict):
+def _valid_url(value):
+    if not isinstance(value, str):
         return None
-    url = raw.get("url")
-    if not isinstance(url, str):
-        return None
-    url = url.strip()
+    value = value.strip()
     try:
-        parsed = urlsplit(url)
+        parsed = urlsplit(value)
         if (
             parsed.scheme not in {"http", "https"}
             or not parsed.hostname
@@ -199,6 +228,19 @@ def _listing(raw):
         ):
             return None
     except ValueError:
+        return None
+    return value
+
+
+def _listing(name, raw):
+    if not isinstance(raw, dict):
+        return None
+    apply_url = _valid_url(raw.get("apply_url")) if name == "remoteok" else None
+    url = _valid_url(raw.get("url"))
+    if url is None and name == "remoteok" and raw.get("slug"):
+        url = _valid_url(f"https://remoteok.com/remote-jobs/{raw['slug']}")
+    url = url or apply_url
+    if url is None:
         return None
     identity = raw.get("id")
     if (
@@ -209,11 +251,19 @@ def _listing(raw):
         external_id = "url:" + url
     else:
         external_id = "id:" + str(identity).strip()
-    return RawListing(external_id=external_id, url=url, payload=raw)
+    return RawListing(
+        external_id=external_id, url=url, payload=raw, apply_url=apply_url
+    )
 
 
 def _validate_params(name, params):
-    allowed = {"query"} if name != "jobicy" else {"tag", "geo"}
+    allowed = (
+        {"tag", "geo"}
+        if name == "jobicy"
+        else {"query"}
+        if name in {"remotive", "workingnomads"}
+        else set()
+    )
     if not isinstance(params, dict) or set(params) - allowed:
         raise ProviderConfigError(f"Invalid parameters for {name}")
     if any(not isinstance(value, str) or len(value) > 200 for value in params.values()):
@@ -257,13 +307,20 @@ async def _fetch_body(name, http, query):
 
 
 def _rows_of(name, body):
-    rows = (
-        body
-        if name == "workingnomads"
-        else body.get("jobs")
-        if isinstance(body, dict)
-        else None
-    )
+    if name == "remoteok":
+        rows = (
+            body[1:]
+            if isinstance(body, list) and body and isinstance(body[0], dict)
+            else None
+        )
+    else:
+        rows = (
+            body
+            if name == "workingnomads"
+            else body.get("jobs")
+            if isinstance(body, dict)
+            else None
+        )
     if not isinstance(rows, list):
         raise ProviderResponseError(f"{name}: invalid jobs collection")
     return rows
@@ -299,7 +356,9 @@ class NativeJSONProvider(BaseProvider):
         _validate_params(self.name, params)
         body = await _fetch_body(self.name, http, _query_for(self.name, params))
         rows = _rows_of(self.name, body)
-        listings = tuple(item for row in rows if (item := _listing(row)) is not None)
+        listings = tuple(
+            item for row in rows if (item := _listing(self.name, row)) is not None
+        )
         if rows and not listings:
             raise ProviderResponseError(
                 f"{self.name}: nonempty feed has no usable identities"

@@ -32,6 +32,8 @@ CONTENT_FIELDS = (
 # salary/location text at the canonical boundary. TEXT_FIELDS stays unchanged.
 SEARCH_TEXT_FIELDS = ("canton", "language", "seniority", "contract_type")
 SEARCH_AMOUNT_FIELDS = ("salary_min_chf", "salary_max_chf")
+DISPLAY_TEXT_FIELDS = ("salary_currency",)
+DISPLAY_AMOUNT_FIELDS = ("salary_min", "salary_max")
 # Campos que definen el TEXTO embebible (ADR-02): salario/location fuera.
 TEXT_FIELDS = ("title", "company", "description", "tags")
 
@@ -89,6 +91,14 @@ def normalize_offer(source_name: str, raw: dict) -> dict | None:
         value = picked.get(field)
         # Same non-negative integer domain as the legacy CHF columns; bool
         # and numeric strings must not become fabricated salary bounds.
+        if type(value) is int and 0 <= value <= 2**31 - 1:
+            content[field] = value
+    for field in DISPLAY_TEXT_FIELDS:
+        value = _text(picked.get(field))
+        if value is not None:
+            content[field] = value
+    for field in DISPLAY_AMOUNT_FIELDS:
+        value = picked.get(field)
         if type(value) is int and 0 <= value <= 2**31 - 1:
             content[field] = value
     return content

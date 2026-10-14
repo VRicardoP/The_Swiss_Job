@@ -37,6 +37,14 @@ def fetch(name, payload, params=None, status=200):
     return asyncio.run(run()), requests
 
 
+def envelope(name, rows):
+    if name == "workingnomads":
+        return rows
+    if name == "remoteok":
+        return [{"legal": "metadata"}, *rows]
+    return {"jobs": rows}
+
+
 @pytest.mark.parametrize(
     "name,key,title,company",
     [
@@ -68,6 +76,44 @@ def test_raw_preserved_identity_does_not_depend_on_title(name, key, title, compa
     assert second.listings[0].external_id == listing.external_id
 
 
+def test_remoteok_raw_identity_apply_url_and_normalization_are_preserved():
+    raw = {
+        "id": 123,
+        "position": "Data Engineer",
+        "title": "ignored",
+        "company": "DataCorp",
+        "location": "",
+        "tags": [*[f"tag-{index}" for index in range(20)], "tag-0"],
+        "date": "2026-10-13T12:00:00Z",
+        "salary_min": 80,
+        "salary_max": 120000,
+        "apply_url": "https://apply.example/123",
+        "url": "https://remoteok.com/remote-jobs/123",
+        "description": "<b>Great</b> job",
+        "unknown_upstream_field": {"retained": True},
+    }
+    result, _ = fetch("remoteok", envelope("remoteok", [raw]))
+    listing = result.listings[0]
+    content = normalize_offer("remoteok", listing.payload)
+
+    assert listing.external_id == "id:123"
+    assert listing.url == raw["url"]
+    assert listing.apply_url == raw["apply_url"]
+    assert listing.payload == raw
+    assert content == {
+        "title": "Data Engineer",
+        "company": "DataCorp",
+        "description": "Great job",
+        "tags": [*[f"tag-{index}" for index in range(20)], "tag-0"],
+        "salary": None,
+        "location": "Worldwide",
+        "remote": True,
+        "salary_currency": "USD",
+        "salary_min": 80000,
+        "salary_max": 120000,
+    }
+
+
 @pytest.mark.parametrize(
     "name,payload",
     [
@@ -77,6 +123,9 @@ def test_raw_preserved_identity_does_not_depend_on_title(name, key, title, compa
         ("workingnomads", {}),
         ("jobicy", []),
         ("jobicy", {"jobs": "changed"}),
+        ("remoteok", []),
+        ("remoteok", {}),
+        ("remoteok", ["metadata"]),
     ],
 )
 def test_invalid_envelope_is_error_not_empty(name, payload):
@@ -90,6 +139,7 @@ def test_invalid_envelope_is_error_not_empty(name, payload):
         ("remotive", {"jobs": []}),
         ("workingnomads", []),
         ("jobicy", {"jobs": []}),
+        ("remoteok", [{"legal": "metadata"}]),
     ],
 )
 def test_explicit_empty_is_success(name, payload):
@@ -181,6 +231,22 @@ def test_scope_rejects_unknown_params_before_network():
         fetch("remotive", {"jobs": []}, {"endpoint": "http://localhost/private"})
 
 
+def test_remoteok_rejects_filters_before_network():
+    with pytest.raises(ProviderConfigError):
+        fetch("remoteok", [{"legal": "metadata"}], {"query": "python"})
+
+
+def test_remoteok_builds_url_from_slug_when_source_url_is_missing():
+    result, _ = fetch(
+        "remoteok",
+        envelope(
+            "remoteok",
+            [{"id": 4, "position": "QA", "slug": "qa-acme"}],
+        ),
+    )
+    assert result.listings[0].url == "https://remoteok.com/remote-jobs/qa-acme"
+
+
 def test_keyword_is_part_of_scope_identity():
     p = provider("remotive")
     assert p.params_fingerprint({"query": "editor"}) != p.params_fingerprint(
@@ -210,6 +276,6 @@ def test_native_registry_does_not_require_legacy_modules():
     from jobhunt_core.harvest.providers import get_provider
     from jobhunt_core.harvest.registry import ensure_handler
 
-    for name in ("remotive", "workingnomads", "jobicy"):
+    for name in ("remotive", "workingnomads", "jobicy", "remoteok"):
         assert get_provider(name).name == name
         assert ensure_handler(name)

@@ -410,7 +410,7 @@
         }
       ],
       "core_scope_ids": [],
-      "blocker": "Core has no production source or scope; Phase -1 branch protection with required CI and CODEOWNER review is not yet verified.",
+      "blocker": "The branch adapter and eight-scope shadow are validated, but production has no Jobicy source or scope until the final owner-approved merge and coordinated cutover.",
       "inventory_verified": true,
       "core_adapter": true,
       "swissjob_module": true,
@@ -696,14 +696,15 @@
       "last_success": [{"product": "reactportfolio", "at": "2026-10-13T16:22:00.221190+00:00", "evidence": "successful persisted snapshot with 97 cached entries and zero normalization errors"}],
       "production_metrics": {"cached_entries": 97, "reported_total": 99, "normalization_errors": 0, "duplicate_stable_keys": 0, "duplicate_exact_hashes": 0, "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/remoteok/field_presence"},
       "core_scope_ids": [],
-      "blocker": "Core has no adapter or production scope; Phase -1 branch protection with required CI and CODEOWNER review is not yet verified.",
+      "blocker": "The branch adapter and one-scope shadow are validated, but production has no RemoteOK source or scope until the final owner-approved merge and coordinated cutover.",
       "inventory_verified": true,
+      "core_adapter": true,
       "state": "local_pending",
       "target_owner": "core",
       "active_publishers": ["reactportfolio"],
       "swissjob_module": true,
       "reactportfolio_source_name": "remoteok",
-      "evidence": "Portfolio production cache healthy with 97 current entries; SwissJob module is dormant."
+      "evidence": "Portfolio production cache remains the sole live publisher with 97 audited entries; branch shadow matched all 99 current upstream rows and the SwissJob module remains dormant."
     },
     {
       "name": "remotive",

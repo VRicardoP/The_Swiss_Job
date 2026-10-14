@@ -400,6 +400,50 @@ continuar sin rediseñarlo.
   No fusionar, desplegar ni habilitar Jobicy hasta completar todas las fuentes
   y recibir la aprobación final del propietario.
 
+### Checkpoint 2026-10-14 · RemoteOK centralizado en rama
+
+- Se cerró primero el checkpoint anterior: los tres commits Core/SwissJob de
+  Jobicy terminaron en `success`; el último fue `8efa7b4`, run
+  `38545188502`. ReactPortfolio `9390071`, run `38544602348`, también terminó
+  en `success`. Los dos `main` y producción siguen intactos.
+- La API pública real de RemoteOK devolvió un objeto de metadatos y 99 ofertas:
+  99/99 con identidad, URL, `apply_url` y fecha; 19 con ambos límites
+  salariales. No existe paginación ni filtro que conservar: el catálogo exacto
+  es un scope global determinista
+  `d2d5b74e-56ea-5745-8ecb-8bac403b9613`, creado deshabilitado y activable sólo
+  mediante orden explícita.
+- Core reutiliza el productor JSON nativo y conserva el raw, `id`, URL de
+  portal, URL de candidatura, fecha, todos los tags —incluidos orden y
+  duplicados—, ubicación histórica, descripción y salarios USD. El agregado
+  transporta los importes visibles sin etiquetarlos como CHF. La comparación
+  campo a campo detectó primero el recorte a 15 tags y la deduplicación de un
+  tag; ambos defectos se corrigieron antes de cerrar una paridad final 99/99.
+  Una comprobación adicional detectó que el agregado genérico ordena por
+  observación, mientras la ruta histórica ordenaba por fecha publicada; el
+  adaptador RemoteOK conserva explícitamente el orden descendente anterior.
+- Dos ciclos sobre PostgreSQL aislado recibieron 99 filas cada uno y
+  estabilizaron en 99 identidades, 99 revisiones raw y 99 revisiones de oferta:
+  el segundo ciclo no duplicó nada. El scope quedó observado, sin fallos, con
+  99 fechas, 48 ubicaciones, 118 tags sensibles a mayúsculas, 19 salarios y 99
+  URLs de candidatura. Los datos de prueba se eliminaron al terminar. Evidencia
+  saneada:
+  [`2026-10-14-dt144-remoteok-shadow.json`](../audits/2026-10-14-dt144-remoteok-shadow.json).
+- ReactPortfolio sirve las seis rutas históricas de RemoteOK desde el adaptador
+  Core compartido, conserva identidad, importes, estadísticas y salud, lo
+  retira de `get_all_providers()` y baja el ratchet local de 10 a 9. El
+  manifiesto de backend y worker lo bloquea como productor local. Los módulos
+  antiguos quedan desconectados pero presentes como rollback hasta la
+  observación productiva final.
+- Validación a este checkpoint: Core completo 1.562 aprobadas y una omitida;
+  Core JSON 56/56 y PostgreSQL 12/12; ReactPortfolio completo 2.138 aprobadas
+  y una omitida, compatibilidad/registro 259/259; paridad viva 99/99; shadow de
+  doble ciclo correcto. No se creó scope productivo, no se desplegó, no se
+  fusionó y RemoteOK permanece `local_pending` porque el inventario describe el
+  estado vivo.
+- Siguiente paso exacto: publicar los commits RemoteOK y confirmar sus CI.
+  Después continuar con la siguiente fuente pública de Fase 3; no habilitar
+  RemoteOK ni cambiar `main` antes de la fusión final aprobada.
+
 ### Histórico anulado · evaluación de servicios alternativos
 
 - `ReactPortfolioServer` seguirá privado y no se contratará GitHub Pro ni

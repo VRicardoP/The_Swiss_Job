@@ -35,6 +35,9 @@ class SourceAggregateItemDTO(BaseModel):
     description: str | None = None
     location: str | None = None
     salary: str | None = None
+    salary_min: int | None = None
+    salary_max: int | None = None
+    salary_currency: str | None = None
     remote: bool | None = None
     tags: list[str] = []
     canton: str | None = None

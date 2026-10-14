@@ -26,6 +26,7 @@ DATE_FIELDS = {
     "remotive": "publication_date",
     "workingnomads": "pub_date",
     "jobicy": "pubDate",
+    "remoteok": "date",
     "weworkremotely": "pubDate",
     "euremotejobs": "pubDate",
     "jobspresso": "pubDate",

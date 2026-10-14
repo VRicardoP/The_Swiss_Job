@@ -15,7 +15,7 @@ from jobhunt_core.harvest.sink import RawListingSink
 from jobhunt_core.tests.test_integration_harvest import db, pytestmark, _seed_scopes  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
 
 
-@pytest.mark.parametrize("source", ["remotive", "workingnomads", "jobicy"])
+@pytest.mark.parametrize("source", ["remotive", "workingnomads", "jobicy", "remoteok"])
 def test_native_json_preserves_raw_and_refreshes_old_known_identity(db, source):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     (sid,) = _seed_scopes(factory, made, 1)
@@ -27,12 +27,20 @@ def test_native_json_preserves_raw_and_refreshes_old_known_identity(db, source):
         "jobTitle": "English teacher",
         "company_name": "School",
         "companyName": "School",
+        "position": "English teacher",
+        "company": "School",
         "description": "<p>TEFL &amp; English</p>",
         "jobDescription": "<p>TEFL &amp; English</p>",
         DATE_FIELDS[source]: stamp,
         "extra": {"retained": True},
     }
-    body = [raw] if source == "workingnomads" else {"jobs": [raw]}
+    body = (
+        [raw]
+        if source == "workingnomads"
+        else [{"legal": "metadata"}, raw]
+        if source == "remoteok"
+        else {"jobs": [raw]}
+    )
 
     async def run():
         async with factory() as s:
@@ -84,7 +92,10 @@ def test_native_json_preserves_raw_and_refreshes_old_known_identity(db, source):
             ).all()
             assert len(rows) == 1 and rows[0].raw == raw
             assert rows[0].content["description"] == "TEFL &amp; English"
-            assert {"english", "tefl"} <= set(rows[0].content["tags"])
+            if source == "remoteok":
+                assert rows[0].content["tags"] == []
+            else:
+                assert {"english", "tefl"} <= set(rows[0].content["tags"])
             if source == "workingnomads":
                 assert rows[0].content["language"] == "en"
 

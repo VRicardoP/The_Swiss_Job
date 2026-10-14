@@ -12,6 +12,11 @@ _SOURCE_AGGREGATE_SQL = sa.text(
              left(o.content->>'description', 500) AS description,
              o.content->>'location' AS location,
              o.content->>'salary' AS salary,
+             CASE WHEN jsonb_typeof(o.content->'salary_min')='number'
+                  THEN (o.content->>'salary_min')::int END AS salary_min,
+             CASE WHEN jsonb_typeof(o.content->'salary_max')='number'
+                  THEN (o.content->>'salary_max')::int END AS salary_max,
+             o.content->>'salary_currency' AS salary_currency,
              CASE WHEN jsonb_typeof(o.content->'remote')='boolean'
                   THEN (o.content->>'remote')::boolean END AS remote,
              CASE WHEN jsonb_typeof(o.content->'tags')='array'
@@ -90,6 +95,9 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                'description', description,
                'location', location,
                'salary', salary,
+               'salary_min', salary_min,
+               'salary_max', salary_max,
+               'salary_currency', salary_currency,
                'remote', remote,
                'tags', tags,
                'canton', canton,
