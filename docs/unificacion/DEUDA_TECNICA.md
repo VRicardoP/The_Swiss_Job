@@ -51,9 +51,10 @@ continuar sin rediseñarlo.
    Los cuatro tienen CI verde. Mantener todos los scopes productivos
    deshabilitados y `main` intacta; el corte vivo queda agrupado con la fusión
    final aprobada por el propietario.
-5. ICTJobs tiene adaptador, paridad 100/100, doble sombra y suite Core completa
-   verdes; falta versionar/publicar este checkpoint, obtener su CI verde y
-   transferir el consumidor ReactPortfolio. No iniciar SwissDevJobs antes.
+5. ICTJobs Core está publicado en `f273a24` con CI `38560944461` verde 9/9.
+   El consumidor ReactPortfolio está publicado en `fda24a9` con apagado local,
+   paridad 100/100, suites y CI `38563293589` verdes. El siguiente portal es
+   SwissDevJobs.
 6. Añadir aquí un checkpoint después de cada fuente u oleada con estados,
    pruebas, SHA, evidencia viva, rollback y siguiente paso exacto.
 
@@ -601,7 +602,7 @@ Core y apagado local; suites/CI; checkpoint antes de avanzar.
   SwissTechJobs y capturar su API viva antes de generalizar código. No tocar
   `main`, producción ni crear/activar scopes reales.
 
-### Checkpoint de relevo 2026-10-14 · ICTJobs Core validado, consumidor pendiente
+### Checkpoint de relevo 2026-10-14 · ICTJobs centralizado en ramas
 
 - El preflight parte de SwissJob/Core `7f28e71` y ReactPortfolio `f3baba8`.
   Los cuatro portales anteriores tienen CI verde; ambos `main` remotos y
@@ -653,14 +654,38 @@ Core y apagado local; suites/CI; checkpoint antes de avanzar.
   contexto específico de ICTJobs y el ratchet volvió a
   `{"core_owned":16,"local_pending":26,"sources":58}`.
 - **Rollback:** no se ha creado ni activado ningún scope productivo, no se ha
-  desplegado y ambos `main` siguen intactos. Revertir el futuro commit Core
+  desplegado y ambos `main` siguen intactos. Revertir `f273a24`
   elimina toda la capacidad nueva sin tocar al productor local vigente.
-- **Siguiente paso exacto:** versionar/publicar Core y exigir CI verde. Después
-  añadir ICTJobs al adaptador
-  compartido de ReactPortfolio, conservar exactamente sus cinco rutas y
-  contadores, retirar import/router/provider/efectos de registro locales, bajar
-  el ratchet de 7 a 6 y ejecutar suites completas. No avanzar a SwissDevJobs
-  hasta cerrar y versionar ese checkpoint.
+- Core quedó versionado y publicado en `f273a24`; la CI `38560944461` terminó
+  verde en sus 9 trabajos. El checkpoint documental previo `7f28e71` también
+  quedó verde en `38559313935`.
+- ReactPortfolio sirve las cinco rutas desde `core_source_compat`, incluida la
+  forma legado de oferta, orden por fecha, tags plegados antes del top 10,
+  grupos profesionales, salud y refresh autenticado. Eliminó el include del
+  router local, el provider del registro, los efectos de registro
+  cache/update y añadió ICTJobs a las dos listas de apagado productivo. El
+  módulo legado queda inerte para rollback; el ratchet baja de 7 a 6.
+- La comparación a través del adaptador consumidor real dio 100/100 filas,
+  cero diferencias y la misma huella de ofertas
+  `2a88dae4c136985c6895180883eea471c3478215e65ed32299a096ae5bc8f4e0`.
+  La focal ampliada terminó 331/331 y la suite completa 2.168 aprobadas, una
+  omitida y 115 advertencias conocidas en 3 min 19 s.
+- Incidencias ReactPortfolio resueltas antes de versionar: la primera focal
+  mostró que las fixtures agregadas aún no declaraban `prof_groups` y que el
+  registro esperado seguía enumerando ICTJobs; ambas expectativas se
+  actualizaron. Un `ruff format` focal tocó líneas ajenas en ocho archivos; el
+  diff no versionado se restauró y se reaplicaron sólo 124 adiciones/26
+  eliminaciones funcionales. Ruff queda verde salvo los E402 históricos de
+  `main.py` y el F841 histórico de `tests/test_jobs.py:229`, ninguno tocado.
+- ReactPortfolio quedó versionado y publicado en `fda24a9`; la CI
+  `38563293589` terminó verde. Se revalidó que los `main` remotos siguen
+  exactamente en `e59283b` y `5bf457a`.
+- Tras este traspaso quedan 21 portales por implementar en las ramas: 15 de
+  SwissJob y 6 de ReactPortfolio. Producción continúa en 26 portales
+  únicos/27 productores hasta el corte final aprobado.
+- **Siguiente paso exacto:** empezar SwissDevJobs con la metodología 7.1 desde
+  preflight y trazado; comprobar su productor real, contrato y API viva antes de
+  modificar código. No tocar `main`, producción ni activar scopes reales.
 
 ### Registro cerrado · Forgejo no forma parte de DT-144
 

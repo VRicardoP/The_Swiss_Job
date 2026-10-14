@@ -1,6 +1,6 @@
 {
   "source": "ictjobs",
-  "status": "core_validated_consumer_pending",
+  "status": "centralized_on_feature_branches_ci_green",
   "production_changed": false,
   "capture": {
     "endpoint": "https://ictjobs.ch/wp-json/wp/v2/posts",
@@ -36,6 +36,8 @@
     "counts_match": true,
     "legacy_sha256": "8fffc8d059bc63788695d5c6360640903a7c7eb8414ca84214774427633ca72a",
     "projected_sha256": "8fffc8d059bc63788695d5c6360640903a7c7eb8414ca84214774427633ca72a",
+    "consumer_jobs_legacy_sha256": "2a88dae4c136985c6895180883eea471c3478215e65ed32299a096ae5bc8f4e0",
+    "consumer_jobs_projected_sha256": "2a88dae4c136985c6895180883eea471c3478215e65ed32299a096ae5bc8f4e0",
     "tag_counts": 42,
     "location_counts": 9,
     "professional_group_counts": 9,
@@ -80,14 +82,21 @@
     "core_full": "1587 passed, 1 skipped, 1 warning",
     "ruff_core": "passed",
     "source_ownership": {"core_owned": 16, "local_pending": 26, "sources": 58},
-    "core_commit": null,
-    "core_ci": "not_started"
+    "core_commit": "f273a24a1b328da6c5020e077b580914a6bd1d8f",
+    "core_ci": "38560944461: success (9/9 jobs)",
+    "reactportfolio_focused": "331 passed",
+    "reactportfolio_full": "2168 passed, 1 skipped, 115 warnings",
+    "reactportfolio_local_harvesters": 6,
+    "reactportfolio_commit": "fda24a9a4692a360729cb3ab756b2b3b8f77aefd",
+    "reactportfolio_ci": "38563293589: success"
   },
   "incident_log": [
     "An initial uncommitted manifest patch matched the Adzuna block instead of ICTJobs. The ownership ratchet failed with missing adzuna and unexpected ictjobs; Adzuna was restored, ICTJobs was updated with source-specific context, and the ratchet then passed.",
     "The first full suite exposed an exact-counts fixture missing the new empty prof_groups counter; the fixture was corrected and its complete file passed 8/8.",
-    "A second full-suite attempt was stopped and restarted after tightening WordPress 400 handling so only pages after the first can signal a normal terminal page."
+    "A second full-suite attempt was stopped and restarted after tightening WordPress 400 handling so only pages after the first can signal a normal terminal page.",
+    "The first ReactPortfolio focused run exposed aggregate fixtures without prof_groups and a local registry expectation that still listed ICTJobs; both were corrected before the 331-test clean run.",
+    "A focused ruff format touched unrelated lines in eight existing files; the uncommitted diff was restored and only the minimal functional changes were reapplied."
   ],
   "rollback": "Production and both main branches are unchanged. No production source or scope was created; the isolated shadow scope and all test data were purged.",
-  "next_step": "Commit Core and obtain green CI, then move the five existing ReactPortfolio ICTJobs routes to the shared Core compatibility adapter and disable every local trigger."
+  "next_step": "Start SwissDevJobs with the documented preflight, end-to-end trace and live capture before changing code."
 }
