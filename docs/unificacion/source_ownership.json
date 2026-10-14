@@ -20,7 +20,7 @@
       "last_success": [{"product": "reactportfolio", "at": "2026-10-13T16:22:38.918879+00:00", "evidence": "successful persisted snapshot with 6 cached entries and zero normalization errors"}],
       "production_metrics": {"cached_entries": 6, "reported_total": 7, "normalization_errors": 0, "duplicate_stable_keys": 0, "duplicate_exact_hashes": 1, "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/adzuna/field_presence"},
       "core_scope_ids": [],
-      "blocker": "The branch adapter and both consumer handovers are under validation, but production has no Adzuna source, scopes or Core credentials until the final owner-approved merge and coordinated cutover.",
+      "blocker": "The branch adapter and both consumer handovers are validated and published, but production has no Adzuna source, scopes or Core credentials until the final owner-approved merge and coordinated cutover.",
       "inventory_verified": true,
       "state": "local_pending",
       "target_owner": "core",

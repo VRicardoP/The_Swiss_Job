@@ -52,16 +52,17 @@ continuar sin rediseñarlo.
    también está centralizado en rama. Todos sus scopes productivos permanecen
    deshabilitados y ambos `main` intactos: el corte vivo continúa agrupado con
    la fusión final aprobada por el propietario.
-5. El último portal cerrado es Job-Room: Core está publicado en `14b613a` con
-   CI `38574880608` verde 9/9; ReactPortfolio está publicado en `edf1b12`, con
-   productor local desconectado, paridad exacta sobre 300 ofertas y CI
-   `38576264319` verde. No se ha desplegado ninguno de esos commits.
-6. Quedan 19 portales por implementar en las ramas: 15 de SwissJob y 4 de
-   ReactPortfolio. El siguiente paso es la Fase 4, empezando el preflight de
-   Adzuna y comprobando credencial, runtime y contrato vivo antes de decidir.
+5. El último portal cerrado es Adzuna: Core/SwissJob está publicado en
+   `c266b8d` con CI `38588047774` verde 9/9; ReactPortfolio está publicado en
+   `95768ce`, con productor local desconectado, paridad exacta sobre la captura
+   viva de seis filas y CI `38588044222` verde. No se ha desplegado ninguno de
+   esos commits.
+6. Quedan 18 portales por implementar en las ramas: 15 de SwissJob y 3 de
+   ReactPortfolio. El siguiente paso es continuar la Fase 4 con el preflight de
+   JSearch, comprobando credencial, runtime y contrato vivo antes de decidir.
 7. **Relevo operativo verificado el 2026-10-14:** SwissJob/Core continúa en
-   `feat/fase-a-core`, cabeza funcional `14b613a`; ReactPortfolio continúa en
-   `feat/dt144-free-gate`, cabeza `edf1b12`. Los remotos `main` siguen
+   `feat/fase-a-core`, cabeza funcional `c266b8d`; ReactPortfolio continúa en
+   `feat/dt144-free-gate`, cabeza `95768ce`. Los remotos `main` siguen
    exactamente en `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
    `5bf457afbde5b44a995acce4ef241324f066f836`.
 8. El worktree ReactPortfolio estaba limpio. En SwissJob/Core ya existían
@@ -993,6 +994,145 @@ Core y apagado local; suites/CI; checkpoint antes de avanzar.
   proyectos, presencia real de credenciales sin exponerlas, contrato vivo,
   límites/paginación y baseline saneado antes de escribir el adaptador Core. No
   tocar producción, no activar scopes y no rehacer Job-Room.
+
+### Checkpoint de relevo 2026-10-14 · Adzuna EN CURSO, preflight cerrado
+
+- La rama y los propietarios se comprobaron de nuevo antes de decidir:
+  ReactPortfolio cosecha Adzuna realmente desde
+  `services/adzuna_provider_impl.py`; SwissJob conserva
+  `backend/providers/adzuna.py` y su registro, pero `get_all_providers()` lo
+  excluye porque `ADZUNA_APP_ID` no está presente. Los logs del worker SwissJob
+  de las últimas 48 horas tampoco contienen ejecuciones Adzuna. Core aún no
+  tiene adaptador, fuente ni scope Adzuna.
+- Sólo ReactPortfolio tiene en runtime ambos secretos Adzuna; SwissJob y Core no
+  los tienen. Se comprobó únicamente su presencia booleana: ningún valor se
+  imprimió, capturó ni versionó. El traspaso del secreto vivo queda reservado al
+  corte final coordinado; mientras tanto producción y ambos `main` permanecen
+  intactos.
+- El contrato productivo comprobado es `gb`, `us`, `de`, páginas 1 y 2, 50
+  resultados, `what=remote+developer` y el `what_or` histórico. SwissJob contiene
+  una consulta alternativa para `de`, `at`, `gb`, pero nunca ha estado activa en
+  producción: es capacidad dormida y no se convertirá en comportamiento nuevo
+  durante esta migración.
+- La salud viva de ReactPortfolio declaró 6 procesadas, 5 visibles tras la
+  ventana de 90 días, una página con resultados de seis intentadas, una
+  ubicación, una categoría y 15 tags. Los logs confirmaron las seis peticiones:
+  sólo `us/1` devolvió seis filas y una de ellas era antigua. La captura saneada
+  local `/tmp/dt144-adzuna-capture.json` contiene esas seis envolturas y sólo los
+  campos funcionales; SHA-256
+  `81eb9b09378379a747467816b8c3703ca5959e14b9da736eb4fcab2a8ed7f088`.
+- La reproducción legacy sin red fijó la línea base: 6 procesadas/5 visibles,
+  1/6 páginas no vacías, hashes `jobs`
+  `506051e70b52282d1f04ceb14601ffa7784bba2936add3b806911f9fa7cad1d1`,
+  normalizado
+  `4c66a0c4f34a88acbddd4d67bc68fe4592bcd7c043e3abf9641aa45e3efa37bd`,
+  ubicaciones
+  `4ff24ba47ffe40690cfb0785134caacd2622ac2588be2be6d95595363d0473fd`,
+  categorías
+  `a7fae6be6be0b9072d393c877e6e79f41d5aa7792f7d028dd5e6f4bfd98392fd`,
+  tags `e56511f44ba97a1c4e8ab8250bce2b1a499ac7d190798231593758b19639f40b`
+  e ids visibles
+  `a553ffde1b95cec8ff26e1b24383e12ad92c6d1b0e23c35150dd47f6445c5d81`.
+  Las cinco visibles conservan ambos límites salariales.
+- Se verificó por código y comparación automática que las 77 etiquetas y el
+  mapa de países usados por ReactPortfolio son idénticos a los helpers ya
+  existentes de Core. La limpieza HTML legacy también coincide con
+  `rss_text.strip_html_tags`; se reutilizarán esos tres puntos de verdad.
+- Decisión mínima: tres scopes Core exactos, uno por país, siempre con sus dos
+  páginas. Core conservará las seis filas y su fecha `created`; el consumidor
+  aplicará la misma ventana visible de 90 días, manteniendo estadística completa
+  y tarjetas recientes sin inventar una segunda consulta. Los secretos serán
+  configuración `CORE_*` del worker de cosecha y todo error deberá quedar
+  saneado para que la URL con credenciales nunca llegue a logs.
+- Incidencia contenida: la primera lectura del worktree usó por error el prefijo
+  inexistente `backend/`; se localizó la raíz real del worktree y no hubo
+  escritura. La primera inspección estructural del capture trató `rows` como un
+  sobre y terminó con `AttributeError`; se corrigió leyendo sólo sus nombres de
+  campo, recuentos y hosts, sin exponer contenido.
+- **Siguiente paso exacto si hay relevo:** implementar el adaptador
+  `native_adzuna` y sus tres scopes deshabilitados, añadir fecha/categoría al
+  agregado, inyectar los secretos sólo en `core-harvest-worker`, y ejecutar
+  unitarias, provisión y doble ciclo con la captura. No adaptar todavía
+  ReactPortfolio ni retirar el provider SwissJob hasta que Core demuestre
+  paridad.
+
+#### Avance verificable · Adzuna centralizado en ramas
+
+- Core/SwissJob quedó versionado y publicado en `c266b8d` sobre
+  `feat/fase-a-core`; su CI `38588047774` terminó verde en los nueve trabajos.
+  `native_adzuna` reproduce exactamente los tres países `gb/us/de`, dos páginas
+  por país, 50 resultados y las consultas observadas. El provisionador crea tres
+  scopes deshabilitados e idempotentes; no existe ni se activó ningún scope
+  productivo.
+- Las credenciales nuevas son exclusivamente `CORE_ADZUNA_APP_ID/KEY` y sólo
+  se inyectan en el worker de cosecha Core. Se retiraron las variables Adzuna de
+  los manifiestos SwissJob y ReactPortfolio. El cliente no sigue redirects,
+  sanea errores sin URL credentializada y elimina únicamente importes no
+  finitos antes de persistir; las regresiones prueban que no reenvía secretos a
+  otro host y no pierde la oferta por un salario `NaN`/`Infinity`.
+- El agregado Core conserva fecha `created`, etiqueta de categoría y orden
+  histórico país/página/fila. Sobre la captura saneada de seis filas, el
+  productor Core y el consumidor ReactPortfolio reproducen exactamente las seis
+  huellas legacy: ofertas
+  `506051e70b52282d1f04ceb14601ffa7784bba2936add3b806911f9fa7cad1d1`,
+  normalizadas
+  `4c66a0c4f34a88acbddd4d67bc68fe4592bcd7c043e3abf9641aa45e3efa37bd`,
+  ubicaciones
+  `4ff24ba47ffe40690cfb0785134caacd2622ac2588be2be6d95595363d0473fd`,
+  categorías
+  `a7fae6be6be0b9072d393c877e6e79f41d5aa7792f7d028dd5e6f4bfd98392fd`,
+  tags `e56511f44ba97a1c4e8ab8250bce2b1a499ac7d190798231593758b19639f40b`
+  e ids visibles
+  `a553ffde1b95cec8ff26e1b24383e12ad92c6d1b0e23c35150dd47f6445c5d81`.
+  Se mantienen seis procesadas, cinco visibles a 90 días, una ubicación, una
+  categoría, 15 tags y ambos límites salariales en las cinco visibles.
+- Validación Core final: 22 pruebas focales/integradas, doble ciclo PostgreSQL,
+  paridad extremo a extremo real y suite completa con 1.642 aprobadas, una
+  omitida y tres avisos conocidos en 6 min 52 s. Ruff, formato, compilación,
+  `diff --check`, Compose, cero secretos literales y el ratchet
+  `{"core_owned":16,"local_pending":26,"sources":58}` quedaron verdes. El
+  inventario conserva el estado productivo, por eso sus contadores no cambian
+  antes del corte final.
+- ReactPortfolio quedó versionado y publicado en `95768ce` sobre
+  `feat/dt144-free-gate`; su CI `38588044222` terminó verde. Las siete rutas
+  históricas se sirven desde `core_source_compat`, incluida categoría; aplican
+  la misma ventana de 90 días y forma pública. `main.py`, `get_all_providers()`
+  y los registros cache/update ya no conectan el productor local; backend y
+  worker incluyen Adzuna en `LEGACY_DISABLED_SOURCES`. El ratchet local baja de
+  cuatro a tres cosechadores.
+- Validación ReactPortfolio final: 242 pruebas focales de consumidor/apagado y
+  suite completa con 2.205 aprobadas, una omitida y 115 avisos conocidos en
+  3 min 20 s. SwissJob cerró 46 pruebas focales y su suite completa con 1.916
+  aprobadas, cuatro `xfail` esperados y ocho avisos conocidos en 3 min 56 s.
+  Los tres manifiestos NAS pasan `docker compose config --quiet`; el control de
+  secretos informa cero hallazgos.
+- Incidencias contenidas y corregidas antes de versionar: la primera suite
+  ReactPortfolio encontró tres pruebas que seguían inyectando salarios hostiles
+  en la caché Adzuna ya desconectada; la protección se trasladó al propietario
+  Core y se reforzó antes de retirar esa prueba obsoleta. La primera suite
+  SwissJob detectó la política Adzuna huérfana; se añadió a la misma lista
+  explícita de rollback que las fuentes ya transferidas. Un Ruff se invocó por
+  error sobre un YAML y se repitió separando Python de Compose. Los intentos del
+  host que carecían de dependencias se descartaron y se repitieron en las
+  imágenes del proyecto. Ningún intento tocó producción.
+- Los remotos `main` se comprobaron intactos en
+  `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
+  `5bf457afbde5b44a995acce4ef241324f066f836`. Producción continúa cosechando
+  Adzuna desde ReactPortfolio porque el corte, los secretos Core y los scopes se
+  reservan a la fusión final aprobada; no se desplegó ningún commit.
+- **Rollback:** revertir `95768ce` reconecta router, provider, registros y
+  manifiesto ReactPortfolio; revertir `c266b8d` restaura el registro/manifiesto
+  SwissJob y elimina adaptador, scopes y configuración Core. Como no existe
+  estado productivo nuevo, no hay cola, scope ni base viva que drenar.
+- Tras Adzuna quedan 18 portales por implementar en ramas: 15 de SwissJob y
+  tres de ReactPortfolio. Producción conserva 26 portales únicos/27 productores
+  hasta el corte final coordinado.
+- **Siguiente paso exacto si hay relevo:** comenzar JSearch, segunda candidata
+  de la Fase 4. Revalidar ramas, `main`, worktrees, productor y scheduler en
+  ambos proyectos; comprobar presencia booleana de `JSEARCH_RAPIDAPI_KEY` sin
+  imprimirla, contrato vivo, cuotas, países, queries, paginación y baseline
+  saneado antes de escribir el adaptador Core. No tocar producción, no activar
+  scopes y no rehacer Adzuna.
 
 ### Registro cerrado · Forgejo no forma parte de DT-144
 
