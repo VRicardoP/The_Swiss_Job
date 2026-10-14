@@ -139,9 +139,9 @@ def test_jobicy_list_job_type_preserves_search_metadata():
                 {
                     "id": 1,
                     "url": "https://example.org/a",
-                    "jobTitle": "Senior Editor",
-                    "jobDescription": "Write documentation",
-                    "jobGeo": "Zurich",
+                    "jobTitle": "Senior Python Developer",
+                    "jobDescription": "Write React documentation in English",
+                    "jobGeo": "US",
                     "jobType": ["Full-time", 4, {"invalid": True}],
                 }
             ]
@@ -150,8 +150,30 @@ def test_jobicy_list_job_type_preserves_search_metadata():
     content = normalize_offer("jobicy", result.listings[0].payload)
     assert content["contract_type"] == "full_time"
     assert content["seniority"] == "senior"
-    assert content["canton"] == "ZH"
+    assert content["location"] == "United States"
+    assert content["tags"][:4] == ["developer", "python", "r", "react"]
     assert content["language"] == "en"
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [("anywhere", "Worldwide"), ("UK", "United Kingdom"), ("EMEA", "Emea")],
+)
+def test_jobicy_location_preserves_legacy_public_labels(raw, expected):
+    result, _ = fetch(
+        "jobicy",
+        {
+            "jobs": [
+                {
+                    "id": 1,
+                    "url": "https://example.org/a",
+                    "jobTitle": "Editor",
+                    "jobGeo": raw,
+                }
+            ]
+        },
+    )
+    assert normalize_offer("jobicy", result.listings[0].payload)["location"] == expected
 
 
 def test_scope_rejects_unknown_params_before_network():

@@ -24,6 +24,10 @@ from jobhunt_core.harvest.provider import (
     ProviderConfigError,
     ProviderResponseError,
 )
+from jobhunt_core.harvest.providers.jobicy_metadata import (
+    extract_tech_skills,
+    normalize_location,
+)
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills
 from jobhunt_core.harvest.providers.search_metadata import search_metadata
 from jobhunt_core.harvest.types import FetchResult, RawListing
@@ -119,6 +123,8 @@ def _content(name, raw):
     extracted = extract_job_skills(
         title if isinstance(title, str) else "", description or ""
     )
+    if jobicy:
+        extracted = [*extract_tech_skills(title, description), *extracted]
     merged, seen = [], set()
     for tag in [*tags, *extracted]:
         if not isinstance(tag, (str, int, float)) or isinstance(tag, bool):
@@ -134,6 +140,8 @@ def _content(name, raw):
             "candidate_required_location" if name == "remotive" else "location"
         )
     )
+    if jobicy:
+        location = normalize_location(location)
     if name == "workingnomads" and (
         not isinstance(location, str) or not location.strip()
     ):
