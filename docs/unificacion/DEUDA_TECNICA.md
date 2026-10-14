@@ -52,19 +52,20 @@ continuar sin rediseñarlo.
    también está centralizado en rama. Todos sus scopes productivos permanecen
    deshabilitados y ambos `main` intactos: el corte vivo continúa agrupado con
    la fusión final aprobada por el propietario.
-5. El último portal cerrado es Adzuna: Core/SwissJob está publicado en
-   `c266b8d` con CI `38588047774` verde 9/9; ReactPortfolio está publicado en
-   `95768ce`, con productor local desconectado, paridad exacta sobre la captura
-   viva de seis filas y CI `38588044222` verde. El cierre documental `47d5561`
-   pasó también sus nueve trabajos en la CI `38589393135`. No se ha desplegado
-   ninguno de esos commits.
-6. Quedan 18 portales por implementar en las ramas: 15 de SwissJob y 3 de
-   ReactPortfolio. El preflight de JSearch está cerrado y la implementación es
-   el siguiente paso; JSearch continúa contando como pendiente hasta superar
-   paridad, suites, commits, push y CI.
+5. El último portal cerrado es JSearch: Core/SwissJob está publicado en
+   `ac819f5` con CI `38599397880` verde 9/9; ReactPortfolio está publicado en
+   `855f243`, con productor local desconectado, paridad exacta sobre las 95
+   filas productivas y CI `38599401464` verde. Adzuna permanece cerrado en los
+   commits y CI indicados en su checkpoint. No se ha desplegado ninguno de esos
+   commits.
+6. Quedan 17 portales por implementar en las ramas: 15 de SwissJob y 2 de
+   ReactPortfolio. La Fase 4 de APIs autenticadas queda completada en ramas y
+   el siguiente paso es el preflight verificable de DynamiteJobs, primera
+   candidata de la Fase 5; no escribir adaptador antes de contrastar código,
+   runtime, disponibilidad y línea base real.
 7. **Relevo operativo verificado el 2026-10-14:** SwissJob/Core continúa en
-   `feat/fase-a-core`, cabeza `47d5561`; ReactPortfolio continúa en
-   `feat/dt144-free-gate`, cabeza `95768ce`. Los remotos `main` siguen
+   `feat/fase-a-core`, cabeza `ac819f5`; ReactPortfolio continúa en
+   `feat/dt144-free-gate`, cabeza `855f243`. Los remotos `main` siguen
    exactamente en `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
    `5bf457afbde5b44a995acce4ef241324f066f836`.
 8. El worktree ReactPortfolio estaba limpio. En SwissJob/Core ya existían
@@ -1214,6 +1215,86 @@ Core y apagado local; suites/CI; checkpoint antes de avanzar.
   credencial de ambos BFF. Validar la captura completa antes de cambiar el
   recuento de 18 a 17. No llamar a RapidAPI, no activar scopes y no tocar
   producción ni `main`.
+
+#### Avance verificable · JSearch centralizado en ramas
+
+- Core/SwissJob quedó versionado y publicado en `ac819f5` sobre
+  `feat/fase-a-core`; su CI `38599397880` terminó verde en sus nueve trabajos.
+  `native_jsearch` comparte un único transporte acotado, sin redirects y con
+  reintentos entre el scope diario persistente y la búsqueda dinámica
+  autenticada. El provisionador crea exactamente un scope deshabilitado con
+  `software developer`, `us`, página 1, diez páginas y ventana mensual; no se
+  creó ni activó ningún scope productivo.
+- La búsqueda visible se expone en Core con `vacancies:read`. ReactPortfolio
+  conserva sus rutas, DTO y límite de cinco peticiones por minuto, pero sólo
+  actúa como BFF de Core; acepta tanto `q` como `query`, corrigiendo el 400 real
+  del frontend sin tocar el repositorio público. El refresco manual conserva su
+  query: usa el dispatcher, tarea, scope, exclusión y sink existentes y cambia
+  sólo los parámetros del provider para esa ejecución; no hay un segundo
+  colector, caché ni cola.
+- La clave pasa a ser `CORE_JSEARCH_RAPIDAPI_KEY` y sólo se configura en API y
+  worker Core porque ambos necesitan el transporte. Se retiró la clave antigua
+  de los manifiestos SwissJob y ReactPortfolio. SwissJob dejó de registrar su
+  capacidad dormida y ReactPortfolio desconectó registros, arranque, ronda
+  diaria, caché y actualizador locales; backend y worker incluyen JSearch en
+  `LEGACY_DISABLED_SOURCES`. El ratchet Portfolio baja de tres a dos
+  cosechadores locales: DynamiteJobs y JobScout24.
+- Identidad y seguridad quedan fijadas: `job_id` es la identidad externa; los
+  ids que exceden 200 caracteres se representan internamente por SHA-256 sin
+  perder el id proveedor; una URL de fuente sintética estable evita colisiones
+  cuando ofertas distintas comparten enlace de aplicación; el enlace real se
+  conserva. Respuestas, colecciones y tamaño están validados; errores y
+  transporte no exponen secreto ni URL; salarios booleanos, no numéricos o no
+  finitos se degradan a `null`.
+- La prueba PostgreSQL sobre la captura completa persistió 95 ofertas, 74
+  empresas, 36 ubicaciones, 24 publishers y dos tipos de empleo, con run `ok`.
+  La comparación Core→ReactPortfolio reprodujo exactamente los hashes legacy:
+  ofertas `0253deb45f791364e7ef03ebe3768af8b8e33cab1b1cd7ef14d99696c1530705`,
+  ubicaciones `3da25852ca86c03c85d31487980630802c233808704942a3d72cdb840709a50f`,
+  empresas `f4789313a1cd51779ed1aa6aa7a1d8ec31464472c0f85f0f10c6825fac382629`,
+  publishers `3908d6f5f6a9eda7c663809798640ce246ce412ca9fb9b02c1cfa33a71920bc6`,
+  tipos `16504c18158d35599c4bec1df29947e0f4019aa70e9bedc3523293d35b357c8b`
+  y normalizado
+  `16c667f30bf2522916643be66f0c7a85db58ae632c18eb10f34de2ecbe068506`.
+- Validación local final: 58 pruebas focales Core antes de la regresión final y
+  dos integraciones adicionales verdes; 168 pruebas focales ReactPortfolio;
+  suites completas Core 1.671 aprobadas y una omitida, ReactPortfolio 2.210
+  aprobadas y una omitida, SwissJob 1.916 aprobadas y cuatro `xfail` esperados.
+  El CI independiente confirmó 1.673 Core, 2.210 ReactPortfolio y 1.916
+  SwissJob. Ruff y formato Core, Ruff de todos los Python modificados de
+  ReactPortfolio, Compose, `diff --check`, ownership y escáner de secretos
+  quedaron verdes. Los 18 `E402` de `tests/conftest.py` son anteriores y no se
+  reformateó el fichero completo para ocultarlos en este cambio.
+- Incidencias contenidas y corregidas antes de versionar: la primera paridad
+  detectó `null` frente a cadena vacía en ciudad/estado/país y la segunda la
+  normalización de espacios de descripción; se preservó el raw proveedor sólo
+  donde el contrato JSearch lo exige. Se detectó además que el refresco manual
+  provisional ignoraba la query y se corrigió antes del commit. La primera
+  suite SwissJob se lanzó fuera de la red Compose y falló por el hostname
+  `postgres`; se interrumpió y repitió en la red correcta. Una comprobación
+  Docker con una imagen ajena y montaje del repositorio privado fue rechazada
+  antes de ejecutarse; se usó el entorno virtual local ya instalado. Ninguno de
+  estos intentos tocó producción.
+- El directorio local vacío `.forgejo` del worktree ReactPortfolio fue retirado
+  y no contenía archivos versionados. Los cambios ajenos del worktree
+  SwissJob/Core siguen fuera de staging y sin alteración. Los `main` remotos se
+  revalidaron intactos en `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
+  `5bf457afbde5b44a995acce4ef241324f066f836`; producción conserva sus
+  cosechadores actuales y las 26 identidades locales hasta el corte agrupado.
+- **Rollback:** revertir `855f243` reconecta router, provider, registros,
+  caché, triggers y manifiesto ReactPortfolio; revertir `ac819f5` restaura el
+  registro/manifiesto SwissJob y elimina adaptador, endpoint, scope y
+  configuración Core. Como no existe estado productivo nuevo, no hay scope,
+  cola ni datos vivos que drenar.
+- Tras JSearch quedan **17 proveedores** por implementar en ramas: 15 de
+  SwissJob y dos de ReactPortfolio. La cifra productiva permanece en 26
+  identidades locales hasta la fusión y el corte final coordinados.
+- **Siguiente paso exacto si hay relevo:** iniciar el preflight de DynamiteJobs,
+  primera candidata de la Fase 5. Revalidar ramas, `main`, worktrees, productor,
+  registro, scheduler, rutas, caché, persistencia, tráfico y consumidores;
+  contrastar disponibilidad/autorización y capturar una línea base real
+  saneada antes de decidir si se migra o se retira. No escribir adaptador, no
+  tocar producción, no activar scopes y no rehacer JSearch ni Adzuna.
 
 ### Registro cerrado · Forgejo no forma parte de DT-144
 
