@@ -46,7 +46,10 @@
       "private": true,
       "initial_main": "e59283b83ffc5deb0ff0bb82efffc1c04a28123b",
       "required_status": "dt144/github-swissjob-ci",
-      "adoption_pull_request": null,
+      "adoption_pull_request": 1,
+      "implementation_commit": "ef5441882f879041b9269668dcb5fccf88d0bc10",
+      "github_actions_run": 38532088870,
+      "github_actions_checkpoint": "in progress: 8/9 jobs passed, core-test running",
       "forgejo_status_published": false,
       "owner_approval": false
     }
@@ -89,6 +92,10 @@
     "author_self_approval_http": 422,
     "author_merge_http": 405,
     "author_merge_response": "User not allowed to merge PR",
+    "swissjob_author_self_approval_http": 422,
+    "swissjob_author_self_approval_response": "approve your own pull is not allowed",
+    "swissjob_author_merge_http": 405,
+    "swissjob_author_merge_response": "User not allowed to merge PR",
     "direct_main_push": "rejected: protected branch main",
     "deployment_guard_on_feature_sha": "rejected: not protected main"
   },

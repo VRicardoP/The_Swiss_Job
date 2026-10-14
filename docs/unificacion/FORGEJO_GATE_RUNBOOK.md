@@ -10,8 +10,10 @@ Forgejo en el NAS es la autoridad de merge de ReactPortfolioServer y
 The_Swiss_Job. El primero debe permanecer privado y GitHub Free no permite
 protegerlo. El segundo ya tiene protección GitHub, pero la única cuenta GitHub
 no puede aprobar su propia PR; Forgejo aporta la identidad técnica separada sin
-pagar ni crear otra cuenta externa. Las protecciones GitHub se conservan como
-defensa adicional.
+pagar ni crear otra cuenta externa. GitHub conserva gratuitamente el CI y, en
+The_Swiss_Job, sus nueve checks y el bloqueo de pushes de terceros; la aprobación
+humana no se duplica allí porque volvería imposible sincronizar el merge ya
+aprobado en Forgejo.
 
 GitHub Actions sigue siendo el único motor de CI de ambos repositorios; no se
 instala Forgejo Actions ni un segundo runner.
@@ -76,7 +78,11 @@ Debe leerse de vuelta por API y cumplir simultáneamente:
 
 4. Forgejo sólo permite fusionar después del estado verde y la aprobación
    humana actual.
-5. El main fusionado se sincroniza a GitHub para conservar el remoto y su CI.
+5. El main fusionado se sincroniza con el mismo SHA a GitHub para conservar el
+   remoto y su CI. En The_Swiss_Job el propietario puede efectuar sólo esta
+   sincronización exacta; los nueve checks siguen obligatorios, pero GitHub no
+   exige una segunda aprobación. Un SHA que no sea el main Forgejo no puede
+   desplegarse.
 6. El scripts/deploy_nas.sh de cada repositorio vuelve a consultar Forgejo antes
    de construir y sólo acepta que HEAD sea exactamente el main protegido con el
    estado verde.
@@ -124,3 +130,9 @@ La Fase -1 no se declara superada hasta documentar:
   usuarios, dos repositorios y dos protecciones; ambos repositorios pasaron
   git fsck y conservaron sus SHA exactos. El dump y el entorno temporal fueron
   eliminados.
+- El backup diario corregido terminó con BACKUP_OK a las
+  2026-10-14T07:58:15Z. Registró como verificado el dump Forgejo de 8.347.024
+  bytes, verificó las tres bases PostgreSQL, aplicó retención y liberó el lock.
+- Las PR de adopción son la 1 en ambos repositorios. ReactPortfolio apunta a
+  72478d8 y The_Swiss_Job incorporó la implementación ef54418. En las dos, el
+  autor recibió 422 al intentar autoaprobar y 405 al intentar fusionar.

@@ -365,6 +365,14 @@ continuar sin rediseñarlo.
   Forgejo ni se aprobó. La autoaprobación devolvió 422, el merge del autor 405
   User not allowed to merge PR, el push directo fue rechazado por protected
   branch y la guarda de despliegue rechazó el SHA de feature.
+- La PR Forgejo 1 de The_Swiss_Job está abierta con la implementación ef54418.
+  Su run GitHub 38532088870 tenía 8/9 jobs verdes en este checkpoint y sólo
+  core-test seguía en curso. El autor tampoco pudo autoaprobar (422, approve
+  your own pull is not allowed) ni fusionar (405, User not allowed to merge PR).
+- Al sincronizar el merge, GitHub queda como espejo CI gratuito: conserva los
+  nueve checks, pero no exige otra aprobación humana imposible con una sola
+  cuenta. Forgejo es la única autoridad de revisión y la guarda de despliegue
+  impide usar cualquier SHA que no sea su main protegido.
 - Los scripts de ambos repositorios consultan Forgejo mediante curl local sobre
   ssh nas: el port-forward TCP de QNAP se comprobó y resetea conexiones. Los
   deploys reales exigirán el SHA completo del main protegido y su estado verde.
