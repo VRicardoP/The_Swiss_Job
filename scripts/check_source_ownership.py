@@ -355,8 +355,7 @@ def validate(manifest: dict, portfolio_root: Path | None) -> list[str]:
         )
     dockerignore = (ROOT / "backend/.dockerignore").read_text(encoding="utf-8")
     missing_recursive_ignores = sorted(
-        {"**/__pycache__/", "**/*.pyc", "providers/"}
-        - set(dockerignore.splitlines())
+        {"**/__pycache__/", "**/*.pyc", "providers/"} - set(dockerignore.splitlines())
     )
     if missing_recursive_ignores:
         errors.append(
