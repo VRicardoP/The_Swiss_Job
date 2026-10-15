@@ -69,6 +69,13 @@ SwissJob desde el nuevo `main`, desplegar ReactPortfolio `c47b7a3`, ejecutar las
 tres sondas finales y cerrar. No ejecutar JSearch. Detalles en
 `DT144_RELEVO.md` §0.1.
 
+Primer intento sobre `8906b89`: la imagen limpia se cargó en el NAS, pero la
+guarda abortó antes de sustituir el Compose o recrear el servicio porque el
+montaje vivo usa otra indentación, omite `read_only` y ordena las propiedades
+del volumen de otra forma. Producción no cambió. La corrección estrecha vive en
+`fix/dt144-live-compose-format`; después de CI/fusión se reintenta desde el
+nuevo SHA exacto de `main`.
+
 1. No repetir el inventario ni la Fase 0: las 58 fuentes están verificadas y
    los ratchets están activos. GitHub Free es el único forge autorizado; no
    desplegar ni volver a proponer Forgejo, GitLab, Bitbucket o GitHub Pro.

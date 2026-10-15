@@ -182,16 +182,18 @@ contenido = ruta.read_text()
 if "$SERVICIO" in {"bff", "worker"}:
     patron_cache = re.compile(
         r"(?m)^    volumes:\n"
-        r"    - type: volume\n"
-        r"      source: swissjob_hfcache\n"
-        r"      target: /home/app/\.cache/huggingface\n"
-        r"      read_only: false\n"
+        r"(?P<item_indent> {4,8})- type: volume\n"
+        r"(?P<field_indent> {6,10})source: swissjob_hfcache\n"
+        r"(?P=field_indent)target: /home/app/\.cache/huggingface\n"
+        r"(?:(?P=field_indent)read_only: false\n)?"
     )
     contenido = patron_cache.sub("", contenido)
     contenido = re.sub(
         r"(?m)^  swissjob_hfcache:\n"
-        r"    external: true\n"
-        r"    name: swissjob_hfcache\n",
+        r"(?:"
+        r"    external: true\n    name: swissjob_hfcache\n"
+        r"|    name: swissjob_hfcache\n    external: true\n"
+        r")",
         "",
         contenido,
     )

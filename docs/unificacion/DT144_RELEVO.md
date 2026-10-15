@@ -80,6 +80,14 @@ hasta el siguiente checkpoint:
   las sondas finales Core/SwissJob/Portfolio, verificar imágenes, colas,
   ausencia de módulos/dependencias/credenciales/montajes locales y cerrar
   DT-144. No desplegar desde la rama ni ejecutar JSearch.
+- **Intento posterior sobre `8906b89`:** la imagen limpia se construyó, se
+  transfirió y quedó cargada en el NAS, pero la guarda abortó antes de sustituir
+  el Compose o recrear el BFF. El Compose vivo usa ocho espacios en los campos
+  del montaje, omite `read_only: false` y ordena `name` antes de `external`; el
+  transformador esperaba la serialización versionada. Producción continúa en
+  la imagen anterior. La rama `fix/dt144-live-compose-format` amplía únicamente
+  el patrón a los dos formatos comprobados. Tras CI y fusión debe reintentarse
+  el BFF desde el nuevo SHA de `main`; no reutilizar `8906b89` como release.
 
 ### Checkpoint anterior · retiradas físicas publicadas y verificadas
 
