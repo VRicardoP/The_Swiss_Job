@@ -218,10 +218,10 @@ TMP_MIGRATE="$(mktemp -d /tmp/core-migrate.XXXXXX)"
 trap 'rm -rf "$TMP_MIGRATE"' EXIT
 LIVE_DB="$($D exec "$API" python -c 'import os; from urllib.parse import urlsplit; print(urlsplit(os.environ["CORE_DATABASE_URL"]).path.lstrip("/"))')"
 [[ "$LIVE_DB" =~ ^[a-zA-Z0-9_]+$ ]] || exit 1
-grep -v '^CORE_DATABASE_URL=' /share/Public/swissjob/.env.core.prod > "$TMP_MIGRATE/runtime.env"
+sed '/^CORE_DATABASE_URL=/d' /share/Public/swissjob/.env.core.prod > "$TMP_MIGRATE/runtime.env"
 $D inspect "$API" --format '{{range .Config.Env}}{{println .}}{{end}}' \
   | grep '^CORE_DATABASE_URL=' >> "$TMP_MIGRATE/runtime.env"
-grep -v '^CORE_ADMIN_DATABASE_URL=' /share/Public/swissjob/.env.core.admin.prod > "$TMP_MIGRATE/admin.env"
+sed '/^CORE_ADMIN_DATABASE_URL=/d' /share/Public/swissjob/.env.core.admin.prod > "$TMP_MIGRATE/admin.env"
 ADMIN_LINE="$(grep '^CORE_ADMIN_DATABASE_URL=' /share/Public/swissjob/.env.core.admin.prod)"
 ADMIN_URL="${ADMIN_LINE#CORE_ADMIN_DATABASE_URL=}"
 printf 'CORE_ADMIN_DATABASE_URL=%s/%s\n' "${ADMIN_URL%/*}" "$LIVE_DB" >> "$TMP_MIGRATE/admin.env"

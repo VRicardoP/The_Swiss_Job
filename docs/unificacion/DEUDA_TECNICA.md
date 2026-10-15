@@ -122,6 +122,34 @@ continuar sin rediseñarlo.
   Se eliminan de `_POLICIES` porque una fuente retirada no es una fuente viva ni
   una pre-decisión de cosecha. Repetir CI antes de fusionar.
 
+### Checkpoint 2026-10-15 · Corte productivo pausado por redacción de logs
+
+- PR iniciales fusionados y CI verdes: SwissJob/Core `239a737` (run de `main`
+  `38708626741`) y ReactPortfolio `8b38ddd` (`38706379993`). Core está desplegado
+  en sus cuatro procesos, autoritativo, con Alembic `core0055`.
+- Infraestructura recuperada antes del corte: directorios/Compose del NAS y
+  supervisor QTS reconstruidos y validados. La migración descubrió dos defectos
+  del material recuperado: falso fallo de `grep -v` sobre un env administrativo
+  de una línea y `CORE_DB_PASSWORD` divergente del DSN vivo. El primero queda
+  corregido con `sed`; el segundo se sincronizó atómicamente sin revelar el
+  valor. Bootstrap, aislamiento y `pgvector` pasaron después.
+- Los 24 orígenes/33 scopes se provisionaron primero deshabilitados y después se
+  habilitaron con recuento exacto: 71 fuentes, 79 scopes, 40 fuentes operativas y
+  50 scopes habilitados. `swissjob-worker` está detenido; Portfolio conserva su
+  proceso Uvicorn pero está recreado con el kill-switch global en `false` y cero
+  tareas de fondo armadas.
+- `dt144-cutover-1` empezó bajo el run
+  `ec3e6041-463a-5d89-987e-506aaa5a2940`; tras 2 scopes `ok` se detuvo el worker
+  de cosecha. Motivo: el INFO de `httpx` imprimía URLs completas y Adzuna lleva
+  autenticación en la query. Los valores no se documentan ni se vuelven a
+  copiar. El ciclo parcial **no** satisface el gate.
+- Corrección mínima pendiente de PR: elevar `httpx`/`httpcore` a WARNING tanto
+  al importar como después del setup de logger Celery; prueba focal 23/23 y
+  Ruff/formato verdes. Hasta fusionarla y redesplegar, el worker Core de cosecha
+  debe permanecer detenido. Después se reutiliza la misma clave idempotente,
+  pasado el lease de 900 s, y se exigen los 50 scopes cerrados sin fallo.
+- Estado completo y receta exacta de relevo: `DT144_RELEVO.md` §0.1.
+
 ### Checkpoint 2026-10-14 · Fase -1 parcialmente completada
 
 - Inventario reconciliado: 58 fuentes, 16 `local_removed`, 26

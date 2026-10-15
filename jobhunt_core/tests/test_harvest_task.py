@@ -1,9 +1,10 @@
 """Tarea Celery de cosecha (A-04): unit sin BD ni broker."""
 
+import logging
 from unittest.mock import patch
 
 import jobhunt_core.tasks.harvest as harvest_task
-from jobhunt_core.celery_app import celery_app
+from jobhunt_core.celery_app import celery_app, protect_http_logs
 from jobhunt_core.harvest import identity
 from jobhunt_core.harvest.provider import ProviderConfigError
 from jobhunt_core.harvest.providers import UnknownProviderError
@@ -15,6 +16,16 @@ def test_task_registered_on_core_queue():
     assert "jobhunt.harvest.run_scope" in celery_app.tasks
     # El namespace jobhunt.harvest.* enruta a core.harvest (aislamiento A-01).
     assert celery_app.conf.task_routes["jobhunt.harvest.*"] == {"queue": "core.harvest"}
+
+
+def test_http_client_request_urls_are_not_logged_at_info():
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.NOTSET)
+
+    protect_http_logs()
+
+    for name in ("httpx", "httpcore"):
+        assert logging.getLogger(name).getEffectiveLevel() >= logging.WARNING
 
 
 def test_task_returns_result_dict():
