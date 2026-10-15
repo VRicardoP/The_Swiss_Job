@@ -3,8 +3,7 @@
 import json
 import uuid
 from datetime import datetime, timezone
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -33,138 +32,6 @@ async def _register(client):
     headers = {"Authorization": f"Bearer {response.json()['access_token']}"}
     me = await client.get("/api/v1/auth/me", headers=headers)
     return uuid.UUID(me.json()["id"]), headers
-
-
-async def test_school_producer_configuration_freeze_and_retry_after_cdc(monkeypatch):
-    from services.schools import producer
-
-    client = AsyncMock()
-    mid = uuid.uuid4()
-    client.monitors.return_value = [
-        SimpleNamespace(
-            id=mid,
-            external_ref="zis_zurich",
-            settings={
-                "name": "Core School",
-                "city": "Zurich",
-                "is_active": True,
-                "monitoring_mode": "scrape",
-                "scraping_method": "groq_extract",
-                "jobs_page_url": "https://school.test/new",
-                "group_tier": "A",
-                "policy": "portal_only",
-            },
-        )
-    ]
-    client.pages.return_value = [
-        {"source_ref": JOB_HASH, "quarantine_reason": "awaiting_corpus"}
-    ]
-    client.request.return_value = httpx.Response(
-        200,
-        json={
-            "created": False,
-            "item": {"source_ref": JOB_HASH, "monitor_id": str(mid)},
-        },
-    )
-    stamp = datetime.now(timezone.utc)
-    job = SimpleNamespace(
-        hash=JOB_HASH,
-        tags=["zis_zurich"],
-        title="IT Manager",
-        url="https://school.test/job",
-        source="swiss_schools_zis",
-        description="Complete",
-        first_seen_at=stamp,
-        published_at=None,
-    )
-    result = MagicMock()
-    result.scalars.return_value.all.return_value = [job]
-    db = AsyncMock()
-    db.execute.return_value = result
-    state = AsyncMock(return_value=True)
-    monkeypatch.setattr(producer, "state_on_core", state)
-    scraper = SimpleNamespace(
-        WATCHLIST_SOURCE=True,
-        _school=SimpleNamespace(id="zis_zurich"),
-        get_source_name=lambda: "swiss_schools_zis",
-    )
-    monkeypatch.setattr(settings, "SCHOOL_WRITES_FROZEN", True)
-    assert await producer.SchoolProducer(db, client).prepare(scraper) is False
-    client.monitors.assert_not_awaited()
-    regular = SimpleNamespace(WATCHLIST_SOURCE=False)
-    assert await producer.SchoolProducer(db, client).prepare(regular) is True
-    state.assert_not_awaited()
-    monkeypatch.setattr(settings, "SCHOOL_WRITES_FROZEN", False)
-    for _ in range(2):
-        runner = producer.SchoolProducer(db, client)
-        assert await runner.prepare(scraper) is True
-        assert scraper.LISTING_URL == "https://school.test/new"
-        await runner.reconcile(scraper)
-    # Distinct retries execute the linking again; stable keys would replay
-    # the initial awaiting_corpus receipt forever even after CDC arrived.
-    assert client.request.await_count == 2
-    keys = [
-        call.kwargs["headers"]["Idempotency-Key"]
-        for call in client.request.call_args_list
-    ]
-    assert len(set(keys)) == 2
-    assert all(
-        call.kwargs["json"]["publish_missing"] is False
-        for call in client.request.call_args_list
-    )
-    runner = producer.SchoolProducer(db, client)
-    assert await runner.prepare(scraper)
-    runner.observations = {
-        JOB_HASH
-    }  # Even a known live observation refreshes presence.
-    await runner.reconcile(scraper, live_hashes={JOB_HASH})
-    assert client.request.call_args.kwargs["json"]["publish_missing"] is True
-
-
-async def test_school_delivery_failure_does_not_commit_the_harvest_cursor(
-    db_session, monkeypatch
-):
-    from tasks import scraping_tasks
-    from services.schools import producer
-    from tests.test_scraping_tasks import (
-        _make_mock_scraper,
-        _sample_job,
-        _mock_session_factory,
-    )
-    from models.source_cursor import SourceCursor
-
-    monkeypatch.setattr(settings, "CURSOR_INCREMENTAL_ENABLED", True)
-    monkeypatch.setattr(settings, "CRAWLER_BUDGET_ENABLED", False)
-    item = _sample_job(
-        "School delivery", "Example School", "https://school.test/cursor"
-    )
-    scraper = _make_mock_scraper("scr_test", [item])
-    monkeypatch.setattr(scraping_tasks, "get_all_scrapers", lambda: [scraper])
-    monkeypatch.setattr(
-        scraping_tasks, "task_session", _mock_session_factory(db_session)
-    )
-    monkeypatch.setattr(
-        producer.SchoolProducer, "prepare", AsyncMock(return_value=True)
-    )
-
-    async def unavailable(self, scraper, *, live_hashes):
-        assert len(live_hashes) == 1
-        assert (
-            await db_session.scalar(select(Job.hash).where(Job.url == item["url"]))
-            is not None
-        )
-        raise CoreUnavailableError("simulated delivery failure")
-
-    monkeypatch.setattr(producer.SchoolProducer, "reconcile", unavailable)
-    result = await scraping_tasks._fetch_scrapers_async()
-    assert result["errors"] == 1
-    assert (
-        await db_session.scalar(select(Job.hash).where(Job.url == item["url"])) is None
-    )
-    cursor = await db_session.scalar(
-        select(SourceCursor).where(SourceCursor.source_key == "scr_test")
-    )
-    assert cursor is None or item["url"] not in (cursor.recent_identities or [])
 
 
 async def test_native_school_vacancy_keeps_actionable_identity(

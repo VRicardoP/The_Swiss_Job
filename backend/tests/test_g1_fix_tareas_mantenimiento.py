@@ -15,7 +15,6 @@
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -130,34 +129,6 @@ class TestP210DuplicadoBajoCanonicaArchivada:
         ).scalar_one()
         assert dup.duplicate_of is None, "el duplicado vivo se promueve a canónico"
         assert dup.is_active is True, "la vacante viva vuelve a ser visible"
-
-
-class TestP213LinkErrorEnLaCadena:
-    def test_la_cadena_se_despacha_con_link_error(self):
-        from tasks.pipeline_tasks import daily_harvest
-
-        with patch("tasks.pipeline_tasks.chain") as mock_chain:
-            mock_chain.return_value.apply_async.return_value = SimpleNamespace(
-                id="chain-1"
-            )
-            result = daily_harvest.run()
-
-        assert result["status"] == "dispatched"
-        _, kwargs = mock_chain.return_value.apply_async.call_args
-        link_error = kwargs.get("link_error")
-        assert link_error is not None, "la cadena debe llevar link_error (P2-13)"
-        assert link_error.task == "tasks.pipeline.harvest_chain_failed"
-
-    def test_callback_deja_rastro_error(self, caplog):
-        from tasks.pipeline_tasks import harvest_chain_failed
-
-        with caplog.at_level("ERROR"):
-            harvest_chain_failed.run(
-                SimpleNamespace(task="tasks.fetch_providers"),
-                RuntimeError("db down"),
-                None,
-            )
-        assert any("FALLÓ" in rec.message for rec in caplog.records)
 
 
 @pytest.mark.asyncio

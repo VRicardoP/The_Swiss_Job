@@ -44,6 +44,20 @@ continuar sin rediseñarlo.
 > trampas ya pisadas. Esta lista es el punto de reanudación; ese fichero es el
 > contexto.
 
+**Checkpoint prevalente 2026-10-15 — limpieza SwissJob validada, aún sin
+commit:** en `/tmp/swissjob-dt144-deploy-a2ba944` (`feat/dt144-final-cleanup`,
+base publicada `3856482`) ya se aplicó la autorización informada: 60 módulos de
+cosecha local, 58 suites exclusivamente locales, el backfill de deduplicación
+obsoleto, `beautifulsoup4`, `playwright`, Chromium y su configuración fueron
+retirados. Se conservaron todas las rutas y pruebas de producto. Validación:
+891/891 pytest, Ruff/formato/compilación verdes, secretos 0 y ratchet
+`40 core_owned / 0 local_pending / 58 total`; el inventario contiene UUID y
+fechas de finalización leídos de producción. JSearch sigue configurado y
+manualmente deshabilitado, sin llamada nueva. Siguiente paso exacto: revisar,
+commit/push y CI de SwissJob; después aplicar y validar la limpieza de 40
+módulos en ReactPortfolio. Los detalles, lista de preservaciones y método de
+reanudación están en `DT144_RELEVO.md` §0.1.
+
 1. No repetir el inventario ni la Fase 0: las 58 fuentes están verificadas y
    los ratchets están activos. GitHub Free es el único forge autorizado; no
    desplegar ni volver a proponer Forgejo, GitLab, Bitbucket o GitHub Pro.

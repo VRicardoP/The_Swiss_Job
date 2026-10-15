@@ -34,6 +34,58 @@ VERIFIED_INVENTORY_FIELDS = {
     "core_scope_ids",
     "blocker",
 }
+FORBIDDEN_SWISSJOB_PATHS = {
+    *{
+        f"backend/scrapers/{name}.py"
+        for name in (
+            "gastrojob",
+            "medjobs",
+            "myscience",
+            "schuljobs",
+            "stelle_admin",
+            "swiss_schools_base",
+            "swiss_schools_ecolint",
+            "swiss_schools_hautlac",
+            "swiss_schools_inspired",
+            "swiss_schools_isb",
+            "swiss_schools_iscs",
+            "swiss_schools_isp",
+            "swiss_schools_nae",
+            "swiss_schools_zis",
+            "tes",
+        )
+    },
+    "backend/services/harvest_window.py",
+    "backend/services/schools/producer.py",
+    "backend/tasks/fetch_tasks.py",
+    "backend/tasks/harvest_persist.py",
+    "backend/tasks/pipeline_tasks.py",
+    "backend/tasks/scraping_tasks.py",
+    *{
+        f"backend/services/{name}.py"
+        for name in (
+            "compliance",
+            "circuit_breaker",
+            "crawler_budget",
+            "cursor_store",
+            "data_normalizer",
+            "deduplicator",
+            "job_classifier",
+            "job_repository",
+            "job_service",
+            "scraper_engine",
+            "scraper_stealth",
+            "source_health",
+        )
+    },
+    "backend/models/source_compliance.py",
+    "backend/models/source_cursor.py",
+    "backend/models/source_health.py",
+    "backend/utils/dates.py",
+    "backend/utils/fetch_diagnostics.py",
+    "backend/utils/http.py",
+}
+FORBIDDEN_SWISSJOB_DEPENDENCIES = {"beautifulsoup4", "playwright"}
 
 
 def _literal_assignments(path: Path, names: set[str]) -> list[object]:
@@ -114,7 +166,8 @@ def discover_swissjob_registry(root: Path) -> set[str]:
         (root / "backend/providers/__init__.py", "_PROVIDER_CLASSES"),
         (root / "backend/scrapers/__init__.py", "_SCRAPER_CLASSES"),
     ):
-        names.update(_dict_assignment_keys(path, assignment))
+        if path.exists():
+            names.update(_dict_assignment_keys(path, assignment))
     return names
 
 
@@ -257,6 +310,35 @@ def validate(manifest: dict, portfolio_root: Path | None) -> list[str]:
     _compare(
         "SwissJob registry", discover_swissjob_registry(ROOT), expected_registry, errors
     )
+    provider_modules = sorted(
+        str(path.relative_to(ROOT))
+        for path in (ROOT / "backend/providers").glob("*.py")
+    )
+    if provider_modules:
+        errors.append(f"retired SwissJob provider modules present: {provider_modules}")
+    present_paths = sorted(
+        path for path in FORBIDDEN_SWISSJOB_PATHS if (ROOT / path).exists()
+    )
+    if present_paths:
+        errors.append(f"retired SwissJob harvest paths present: {present_paths}")
+
+    requirements = (ROOT / "backend/requirements.txt").read_text(encoding="utf-8")
+    installed_names = {
+        line.split("==", 1)[0].strip().lower()
+        for line in requirements.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    retired_dependencies = sorted(FORBIDDEN_SWISSJOB_DEPENDENCIES & installed_names)
+    if retired_dependencies:
+        errors.append(
+            f"retired SwissJob harvest dependencies present: {retired_dependencies}"
+        )
+    dockerfile = (ROOT / "backend/Dockerfile").read_text(encoding="utf-8").lower()
+    if "playwright install" in dockerfile:
+        errors.append("retired Playwright browser installation present")
+    compose = (ROOT / "deploy/nas/swissjob.configured.yml").read_text(encoding="utf-8")
+    if "PLAYWRIGHT_BROWSERS_PATH" in compose:
+        errors.append("retired Playwright browser environment present")
 
     if portfolio_root is not None:
         expected_portfolio = {

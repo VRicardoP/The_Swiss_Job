@@ -30,7 +30,7 @@ class JobBase(BaseModel):
 
 
 class JobCreate(JobBase):
-    """Schema for creating a job (used internally by providers)."""
+    """Schema for creating a job through internal ingestion paths."""
 
     hash: str
     source: str

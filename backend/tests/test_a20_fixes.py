@@ -10,15 +10,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy import event
-
 from models.job import Job
 from models.match_result import MatchResult
 from services import scheduler as sched_mod
-from services.job_repository import JobRepository
 from services.sse_manager import SSEManager
 from tasks import maintenance_tasks
-from tests.conftest import test_engine
 from utils.redact import redact_credentials
 
 # ----------------------------------------------------------------- A20-01
@@ -129,42 +125,6 @@ def test_a20_10_cleanup_stale_jobs_lanza_en_vez_de_devolver_error(monkeypatch):
     monkeypatch.setattr(maintenance_tasks, "_cleanup_stale_jobs_async", revienta)
     with pytest.raises(Exception):
         maintenance_tasks.cleanup_stale_jobs(max_age_days=1)
-
-
-# ----------------------------------------------------------------- A20-11
-
-
-def _oferta(hash_: str) -> dict:
-    return {
-        "hash": hash_,
-        "source": "arbeitnow",
-        "title": "Entwickler",
-        "company": "Empresa",
-        "url": f"https://ejemplo.test/{hash_}",
-        "description": "Descripción",
-        "tags": ["python"],
-    }
-
-
-async def test_a20_11_upsert_devuelve_is_new_sin_select_previo(db_session):
-    repo = JobRepository(db_session)
-    h = uuid.uuid4().hex
-    sentencias: list[str] = []
-
-    def contar(_conn, _cursor, statement, *_args):
-        sentencias.append(statement)
-
-    event.listen(test_engine.sync_engine, "before_cursor_execute", contar)
-    try:
-        primera = await repo.upsert_job(_oferta(h))
-        segunda = await repo.upsert_job(_oferta(h))
-    finally:
-        event.remove(test_engine.sync_engine, "before_cursor_execute", contar)
-    await db_session.commit()
-
-    assert primera is True and segunda is False
-    selects = [s for s in sentencias if s.lstrip().upper().startswith("SELECT")]
-    assert selects == [], "el upsert ya no consulta la fila antes de escribirla"
 
 
 # ----------------------------------------------------------------- A20-06

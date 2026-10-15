@@ -96,17 +96,6 @@ class Settings(BaseSettings):
 
     # Scheduler
     SCHEDULER_ENABLED: bool = True
-    SCHEDULER_FETCH_INTERVAL_MINUTES: int = 30
-
-    # Cosecha diaria autónoma: encadena las dos familias de productores retenidas.
-    # UNA vez al día a hora VARIABLE (patrón circadiano; evita intervalos de
-    # reloj, ver a.txt §5/§10). Cuando está activa, sustituye al fetch por
-    # intervalos (providers/scrapers) y todo corre sin intervención del usuario.
-    SCHEDULER_DAILY_HARVEST_ENABLED: bool = True
-    SCHEDULER_DAILY_HARVEST_HOUR: int = 12  # hora base (CET)
-    # Jitter en horas: la ejecución se adelanta/retrasa hasta ±N horas, de modo
-    # que cada día cae a una hora distinta dentro de la franja diurna.
-    SCHEDULER_DAILY_HARVEST_JITTER_HOURS: int = 4
 
     # CV upload
     CV_MAX_SIZE_MB: int = 10
@@ -161,9 +150,6 @@ class Settings(BaseSettings):
     GROQ_RERANK_MAX_TOKENS: int = 2048
     GROQ_CACHE_TTL_DAYS: int = 7
 
-    # Scraper schedule
-    SCHEDULER_SCRAPER_INTERVAL_HOURS: int = 6
-
     # Alerts & Saved Searches
     # G1/P3-28 — rate limiting tras reverse proxy: confiar en X-Forwarded-For
     # SOLO si el proxy la sobreescribe (activar en el despliegue del NAS).
@@ -193,9 +179,6 @@ class Settings(BaseSettings):
     # Celery task pool (smaller, disposable)
     DB_TASK_POOL_SIZE: int = 2
     DB_TASK_MAX_OVERFLOW: int = 3
-
-    # Parallel fetch (TD-18)
-    FETCH_CONCURRENCY: int = 5
 
     # Groq concurrency (TD-22)
     GROQ_CONCURRENCY: int = 2
@@ -306,99 +289,6 @@ class Settings(BaseSettings):
     FEEDBACK_WRITES_FROZEN: bool = False
     # Freeze CRUD/manual runs AND scheduled search writers during handover.
     SAVED_SEARCH_WRITES_FROZEN: bool = False
-    # Compliance (TD-06)
-    COMPLIANCE_BLOCK_THRESHOLD: int = 3
-    # Reintento del kill-switch (V.0): horas tras el último bloqueo antes de
-    # volver a permitir la fuente. Sin esto el apagado era PERMANENTE y fuentes
-    # como gastrojob/swiss_schools_isb llevaban meses caídas sin reintentarse.
-    # 0 = desactivado (comportamiento anterior).
-    COMPLIANCE_RETRY_AFTER_HOURS: int = 24
-
-    # Salud de fuentes (V.0): rachas a partir de las cuales se alerta.
-    # Separadas porque un error (feed muerto/bloqueo) y un vacío (fuente que
-    # responde pero no trae nada) exigen acciones distintas.
-    SOURCE_HEALTH_ERROR_STREAK: int = 3
-    SOURCE_HEALTH_EMPTY_STREAK: int = 5
-    # VD.3 — racha de PERSISTENCIA: runs seguidos que descargan ofertas
-    # (fetched > 0) sin guardar ninguna (stored == 0). Umbral 2: un solo run
-    # puede ser un hipo transitorio de BD, y alertar al primero erosionaría
-    # la señal con falsos positivos; dos seguidos perdiéndolo todo no es un blip.
-    SOURCE_HEALTH_UNSTORED_STREAK: int = 2
-
-    # Scraper defaults (TD-06)
-    SCRAPER_HTTPX_TIMEOUT: float = 20.0
-    SCRAPER_PLAYWRIGHT_TIMEOUT_MS: int = 30000
-
-    # Anti-detección del scraper (apuntes del curso de web scraping)
-    # Jitter: fracción aleatoria extra sobre RATE_LIMIT_SECONDS para evitar
-    # intervalos constantes (0.5 = hasta +50%).
-    SCRAPER_DELAY_JITTER_RATIO: float = 0.5
-    # Reintentos ante errores transitorios (timeouts, 5xx) con backoff exponencial.
-    SCRAPER_MAX_RETRIES: int = 2
-    SCRAPER_RETRY_BACKOFF_SECONDS: float = 2.0
-    # Proxy opcional (httpx + Playwright). Vacío = desactivado. Permite enrutar
-    # portales muy protegidos a través de un proxy/rotación residencial externo.
-    SCRAPER_PROXY_URL: str = ""
-    # Browser remoto opcional vía CDP (p.ej. un browser stealth de pago). Vacío =
-    # se lanza Chromium local. Si se define, Playwright se conecta por CDP.
-    SCRAPER_BROWSER_CDP_URL: str = ""
-    # Chromium exige --no-sandbox al correr como root dentro de un contenedor, pero
-    # eso REDUCE el aislamiento del renderer. True por defecto (compat Docker root);
-    # ponlo en False donde el runtime permita mantener el sandbox (contenedor no-root).
-    SCRAPER_PLAYWRIGHT_NO_SANDBOX: bool = True
-
-    # Crawler incremental (cursores + early-stop). Ver a.txt / PLAN_STEALTH_SCRAPER.
-    # Eje: el volumen de peticiones depende de las ofertas NUEVAS, no del total.
-    CURSOR_INCREMENTAL_ENABLED: bool = True
-    # Nº de identidades recientes (URLs) que guarda cada cursor para el early-stop.
-    CURSOR_RECENT_IDENTITIES_MAX: int = 300
-
-    # Presupuesto explícito de crawling (plan incremental §7). Requiere cursores
-    # (CURSOR_INCREMENTAL_ENABLED): acota las páginas por run según las novedades
-    # medias de la fuente y salta runs de fuentes sin novedades (backoff).
-    CRAWLER_BUDGET_ENABLED: bool = True
-    # Margen de páginas sobre las esperadas (cubre reorden/patrocinadas al borde).
-    CRAWLER_BUDGET_SAFETY_PAGES: int = 1
-    # Runs vacíos seguidos a partir de los cuales se reduce la frecuencia.
-    CRAWLER_BUDGET_EMPTY_RUNS_THRESHOLD: int = 3
-    # Tope del multiplicador de backoff (x intervalo base entre runs).
-    CRAWLER_BUDGET_BACKOFF_MAX_MULTIPLIER: int = 4
-
-    # Ventana de cosecha (ADR-10 rev. J1, fase 2B): en las fuentes WINDOW el
-    # filtro aplica en TODOS los runs, y SOLO a ALTAS — una oferta que ya está
-    # en `jobs` sigue pasando por el upsert para refrescar last_seen_at. (La
-    # versión "solo en bootstrap" era decorativa: el run siguiente re-ingería
-    # todo lo descartado.) Interruptor aparte porque este cambio DESCARTA
-    # ofertas y debe poder apagarse sin redesplegar código.
-    # ⚠ APAGARLO NO restaura solo el comportamiento previo en los SCRAPERS:
-    # las identidades descartadas por antigüedad ya aprendidas por el cursor
-    # siguen suprimiendo la paginación vía early-stop, así que las ofertas
-    # viejas aún listadas NO se re-descargan. Apagar el interruptor — igual
-    # que reclasificar una fuente a FULL o corregir una deriva de identidad —
-    # exige vaciar `recent_identities` de las fuentes WINDOW afectadas:
-    #   UPDATE source_cursors SET recent_identities = '[]'::jsonb
-    #    WHERE source_key IN ('<fuentes WINDOW afectadas>');
-    HARVEST_WINDOW_ENABLED: bool = True
-    # Ventana MÓVIL en días — la "semana en curso" de ADR-10, precisada por
-    # delegación: con la semana natural el resultado dependería del día de la
-    # semana del run. N=7 lo decidió el propietario; se revisará con los datos
-    # de `window_skipped` de la primera semana (en especial zebis/schuljobs/tes)
-    # — OJO: en providers ese contador es FLUJO por run, no ofertas únicas
-    # (ver docstring de services/harvest_window.py). ge=1 (K4): con 0 el corte
-    # sería "ahora" (solo entrarían ofertas del futuro) y con negativo ni
-    # esas — un typo en el .env dejaría TODAS las fuentes WINDOW sin altas.
-    # ⚠ Al SUBIR N: vaciar `recent_identities` de las fuentes WINDOW en
-    # `source_cursors` — las identidades descartadas ya aprendidas impiden que
-    # el early-stop vuelva a paginar sobre ellas (K3).
-    HARVEST_WINDOW_DAYS: int = Field(default=7, ge=1)
-    # K1/L4 — tamaño mínimo del lote para las TRES alertas de la ventana
-    # (deriva de identidad + los dos escalones de fechas de
-    # log_window_summary): con lotes minúsculos — lo normal con early-stop —
-    # "nada reconocido" o "sin fechas" no es evidencia y dispararía falsos
-    # positivos. (Renombrado desde HARVEST_DRIFT_MIN_BATCH cuando pasó a
-    # servir a los tres guardarraíles.)
-    HARVEST_ALERT_MIN_BATCH: int = Field(default=10, ge=1)
-
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

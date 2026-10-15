@@ -9,13 +9,12 @@
 > ha hecho, cómo, en qué estado está respecto al objetivo final y qué queda**,
 > para que no haya que reconstruirlo leyendo veinte checkpoints.
 >
-> Última actualización: **2026-10-15, corte en curso**. Las dos ramas iniciales
-> y la corrección de redacción están fusionadas; Core `5b3bf3d` está desplegado.
-> Los 33 scopes DT-144 están habilitados, SwissJob local está detenido y
-> Portfolio local está verificablemente quiescente. El segundo ciclo nativo ya
-> terminó con **49/49 scopes ejecutables `ok`**, delivery drenado y cero filas de
-> JSearch. El propietario ordenó continuar sin esperar al reset ni reintentar
-> JSearch; la excepción y sus límites están al comienzo de §0.1.
+> Última actualización: **2026-10-15, limpieza final en curso**. Core `5b3bf3d`
+> está desplegado y el segundo ciclo terminó con **49/49 scopes ejecutables
+> `ok`**, delivery drenado y cero filas de JSearch. SwissJob ya tiene aplicada y
+> validada en su worktree la retirada física autorizada; ReactPortfolio es el
+> siguiente repositorio que debe cerrar su limpieza. La dispensa de JSearch y
+> el punto exacto de continuación están al comienzo de §0.1.
 
 ---
 
@@ -39,6 +38,48 @@
 
 Este bloque **prevalece sobre las fotografías anteriores de este documento**
 hasta el siguiente checkpoint:
+
+### Checkpoint más reciente · retirada física de SwissJob validada
+
+- El propietario autorizó expresamente retirar los 60 módulos locales de
+  SwissJob, los 40 de ReactPortfolio, sus pruebas exclusivamente locales y las
+  dependencias obsoletas documentadas. Esta autorización ya se aplicó en el
+  worktree SwissJob `/tmp/swissjob-dt144-deploy-a2ba944`, rama
+  `feat/dt144-final-cleanup`, todavía sin commit en este checkpoint; su base
+  publicada es `3856482`.
+- Se eliminaron exactamente **60 módulos** del productor local, **58 ficheros
+  de pruebas exclusivamente locales** y el auxiliar obsoleto
+  `backend/scripts/g6_backfill_fuzzy_hash.py`. Las pruebas mixtas conservaron
+  los casos de producto (SSE, mantenimiento, consumo escolar de Core y
+  redacción genérica) y perdieron sólo los casos de los componentes retirados.
+  La cobertura sensible de transporte/credenciales no se abandonó: sus
+  invariantes equivalentes están fijados en las suites nativas de Adzuna,
+  JSearch, TES, PublicJobs, salud y kill-switch de Core.
+- También se retiraron `beautifulsoup4`, `playwright`, la instalación de
+  Chromium, sus variables de entorno y el último ajuste sin consumidor
+  `FETCH_CONCURRENCY`. Se conservaron `lxml`, `models.Job`,
+  `scrapers.swiss_schools_config`, `utils.text`, el scheduler de producto y las
+  tareas de mantenimiento porque el trazado confirmó consumidores reales.
+- El inventario se actualizó con evidencia de sólo lectura de la base Core:
+  UUID y `last_complete_at` reales de cada scope. Resultado del ratchet:
+  **58 fuentes = 40 `local_removed` + 18 `retired`; 0 `local_pending`; 0
+  publicadores locales**. Los 23 portales ejecutables tienen scopes habilitados
+  y finalización `ok`; JSearch conserva su único scope configurado,
+  manualmente deshabilitado, sin ejecución nueva y sin reintento.
+- Validación local completada: `check_source_ownership` devuelve
+  `{"core_owned":40,"local_pending":0,"sources":58}`;
+  `check_no_secrets` devuelve 0 hallazgos; compilación, Ruff y formato pasan;
+  pytest descubre 891 casos y termina **891 passed**. Quedan dos avisos
+  `RuntimeWarning` de cancelación async ya presentes, sin fallo. Los tres rojos
+  de la primera pasada se cerraron: dos eran el `alembic` global fuera del venv
+  y uno una aserción obsoleta a un helper privado de SlowAPI; las pruebas
+  funcionales de rate-limit permanecen.
+- **Punto exacto de reanudación:** revisar el diff, crear y publicar el commit
+  SwissJob, esperar su CI; después completar la retirada autorizada de los 40
+  módulos de ReactPortfolio y sus dependencias, ejecutar su suite/ratchet,
+  publicar y esperar CI. Sólo con ambas ramas verdes: fusionar, desplegar las
+  imágenes limpias, arrancar el worker SwissJob sin cosecha y ejecutar las tres
+  sondas finales. No ejecutar ni programar JSearch.
 
 - **Decisión operativa prevalente del propietario:** continuar el corte sin
   esperar al `2026-11-02` y sin volver a llamar a JSearch. Quedan supersedidas
