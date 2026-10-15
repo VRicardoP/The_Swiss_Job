@@ -216,6 +216,54 @@ hasta el siguiente checkpoint:
   y sondas finales. No efectuar una llamada de prueba a JSearch durante este
   corte.
 
+### Checkpoint de relevo · despliegue de consumidores y limpieza final en curso
+
+- SwissJob documental llegó a `github/main`
+  `a2ba94485a263a9ecffdd9eb4eb0df84018d3fd0` (PR 12, CI exacta de `main`
+  `38765988901` verde). Su BFF se desplegó como
+  `swissjob-backend:point5-a2ba944`: saludable, cero reinicios y `.env.prod`
+  saneado. El worker local sigue detenido deliberadamente; no arrancarlo hasta
+  que la imagen carezca de tareas/productores locales.
+- El primer despliegue de Portfolio desde `682a3e5` abortó antes de promover el
+  Compose: el transformador suponía que `environment` aparecía antes de
+  `restart`. La corrección mínima soporta el orden vivo y exige ambos servicios,
+  seis políticas únicas y cero credenciales de portal. Se fusionó como
+  `b587c3e3e0a762df6208fe8607a24e1bfdbc0854` (PR 3, CI `38767084445`
+  verde) y se desplegó como `portfolio-backend:board-b587c3e`; backend y worker
+  están levantados, sin reinicios. La sonda confirma seis modos
+  `core_primary`, registro vacío y cero credenciales; su único fallo es la
+  presencia física del código local/fallback.
+- La sonda SwissJob sobre el BFF nuevo confirma autoridades
+  `CoreCatalog`/`CoreMatching`/`LocalProfile`/`CoreSchools`, 2/2 perfiles
+  enlazados y cero snapshots pendientes/erróneos. Permanece roja por siete
+  providers registrados, 39 módulos locales importables y las claves
+  `CAREERJET_AFFID`/`JOOBLE_API_KEY` aún heredadas por el Compose. El script ya
+  saneaba el fichero env, pero debe sanear también el candidato Compose.
+- ReactPortfolio se limpia en el worktree
+  `/tmp/reactportfolio-dt144-deploy-b587c3e`, rama
+  `feat/dt144-final-cleanup`, todavía **sin commit**: sus seams resuelven sólo a
+  Core; `main.py` ya no arma cosecha, snapshots ni worker bridge; AI matching e
+  informe diario leen sólo Core; se retiraron del árbol los módulos productores,
+  routers locales y motores composite/local. `py_compile` y el ratchet de
+  registro vacío pasan. La colección de pytest demuestra que quedan por migrar
+  pruebas históricas que importan esos módulos; no desactivar CI ni ocultarlas.
+- SwissJob se prepara en `/tmp/swissjob-dt144-deploy-a2ba944`, rama
+  `feat/dt144-final-cleanup`, limpia y sin cambios de código: la retirada
+  física propuesta (39 módulos, cuatro tareas/producer, registro y scheduler)
+  aún no se aplicó. Es una operación recuperable por Git, pero exige la
+  aprobación informada específica anotada en el turno que la ejecute.
+- Segundo ciclo nativo: una lectura de sólo consulta tomada durante la ventana
+  mostró 25 scopes ya despachados, 24 `ok` y Arbeitnow todavía `running`;
+  JSearch no fue despachado. El censo total es 79 scopes, 49 habilitados. Los
+  otros scopes deshabilitados son sombras/históricos; entre los scopes nativos
+  esperados, JSearch es la excepción manual. Repetir la lectura sólo cuando el
+  ciclo haya terminado y exigir 49 terminales `ok`; no llamar a JSearch.
+- Reanudación exacta: (1) obtener la aprobación informada para borrar código y
+  pruebas locales recuperables por Git; (2) completar las dos limpiezas y
+  migrar las pruebas a invariantes Core-only; (3) esperar el terminal 49/49;
+  (4) suites, commits, PR/CI y fusión; (5) desplegar Core final, SwissJob
+  BFF+worker y Portfolio; (6) sondas finales, inventario/ratchet y cierre.
+
 ---
 
 ## 1. En una frase

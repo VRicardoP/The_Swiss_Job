@@ -132,6 +132,24 @@ continuar sin rediseñarlo.
   habilitados/con estado, cero autoapagados y cero alertas; delivery permanece
   drenado. La maniobra no llamó al proveedor ni modificó los otros 49 scopes.
 
+#### Avance verificable · consumidores desplegados y retirada física preparada
+
+- SwissJob BFF `a2ba944` y Portfolio `b587c3e` están desplegados y saludables.
+  Portfolio ya resuelve las seis capacidades por Core, sin registro ni
+  credenciales locales; SwissJob confirma las cuatro autoridades y 2/2 perfiles
+  entregados. Los workers locales no cosechan: SwissJob permanece detenido y
+  Portfolio ya no arma cosecha.
+- Las sondas aíslan el trabajo restante: borrar código local/fallback, retirar
+  `CAREERJET_AFFID` y `JOOBLE_API_KEY` del Compose SwissJob, arrancar su worker
+  sólo con la imagen limpia y repetir las pruebas/sondas.
+- El segundo ciclo de Core sigue en curso. La fotografía intermedia contiene
+  24 `ok`, Arbeitnow `running`, ninguna ejecución de JSearch y 49 scopes
+  habilitados. No es todavía el gate terminal 49/49.
+- Punto exacto y metodología de relevo: ver
+  `DT144_RELEVO.md` §0.1, checkpoint «despliegue de consumidores y limpieza
+  final en curso». Los worktrees y ramas están allí fijados; ningún cambio de
+  limpieza está versionado todavía y no se debe desplegar desde ellos.
+
 ### Checkpoint 2026-10-15 · Decisión de retirada y comienzo del corte
 
 - El propietario confirmó la retirada definitiva de `proz` y `remoteco` y
