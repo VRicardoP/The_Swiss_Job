@@ -74,11 +74,15 @@ continuar sin rediseñarlo.
    2026-10-15) y esperan decisión del propietario: retirarlas con la evidencia o
    pagar un navegador stealth. El registro de scrapers de SwissJob está VACÍO y
    los trece módulos siguen como rollback.
-7. **Relevo operativo verificado el 2026-10-14:** SwissJob/Core continúa en
-   `feat/fase-a-core`, cabeza funcional `33a804d`; ReactPortfolio continúa en
-   `feat/dt144-free-gate`, cabeza `ffcc0ba`. Los remotos `main` siguen
+7. **Relevo operativo verificado el 2026-10-15:** SwissJob/Core continúa en
+   `feat/fase-a-core` (última cabeza funcional `020469e`, CI `38696733154`
+   verde; después sólo commits documentales); ReactPortfolio continúa en
+   `feat/dt144-free-gate`, cabeza `5f03c68`. Los remotos `main` siguen
    exactamente en `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
-   `5bf457afbde5b44a995acce4ef241324f066f836`.
+   `5bf457afbde5b44a995acce4ef241324f066f836`. El estado condición a condición
+   frente al §10 del contrato, el corte agrupado paso a paso y el diagnóstico
+   completo de `proz`/`remoteco` (con lo que lo arreglaría) están en
+   [DT144_RELEVO.md](DT144_RELEVO.md) §3, §5 y §10.
 8. **Los cuatro residuos estructurales están CERRADOS** (checkpoint del
    2026-10-15): `jobicy` y `remoteok` ya no registran caché ni actualizador y el
    censo vacío está fijado; los barridos G7/G8 saltan con motivo y su garantía

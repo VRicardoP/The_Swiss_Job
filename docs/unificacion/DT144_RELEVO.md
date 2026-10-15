@@ -5,13 +5,30 @@
 > [CONTRATO_CENTRALIZACION_TOTAL.md](CONTRATO_CENTRALIZACION_TOTAL.md), la
 > evidencia por portal vive en los checkpoints de
 > [DEUDA_TECNICA.md](DEUDA_TECNICA.md) §DT-144 y el inventario verificable en
-> [source_ownership.json](source_ownership.json). Este fichero explica **cómo se
-> está haciendo**, qué trampas ya se pisaron y qué queda, para que no haya que
-> reconstruirlo leyendo veinte checkpoints.
+> [source_ownership.json](source_ownership.json). Este fichero explica **qué se
+> ha hecho, cómo, en qué estado está respecto al objetivo final y qué queda**,
+> para que no haya que reconstruirlo leyendo veinte checkpoints.
 >
-> Última actualización: **2026-10-15** — cuatro residuos cerrados y **cero
-> portales pendientes de implementar**: 40 de 42 fuentes migrables tienen
-> adaptador en rama.
+> Última actualización: **2026-10-15**. Fase de implementación TERMINADA: 40 de
+> las 42 fuentes migrables tienen adaptador nativo en rama; las dos restantes
+> están diagnosticadas y esperan decisión del propietario. **Nada está cortado
+> en producción** y los dos `main` siguen intactos.
+
+---
+
+## 0. Índice
+
+1. En una frase
+2. Estado exacto (ramas, SHAs, inventario)
+3. Dónde estamos respecto a la definición de terminado (§10 del contrato)
+4. Todo lo migrado, fuente a fuente
+5. Lo que NO está migrado y por qué
+6. Cómo se migra un portal (receta ya rodada) y comandos reales
+7. Cómo se verifica la CI
+8. Decisiones de diseño ya tomadas
+9. Trampas ya pisadas
+10. Lo que queda: el corte agrupado (propietario)
+11. Mapa de ficheros
 
 ---
 
@@ -27,79 +44,192 @@ fusión final aprobada por el propietario.
 
 | Repositorio | Rama de trabajo | Cabeza | `main` remoto (INTACTO) |
 |---|---|---|---|
-| SwissJob/Core (`The_Swiss_Job`) | `feat/fase-a-core` | `020469e` | `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` |
-| ReactPortfolio (`ReactPortfolioServer`) | `feat/dt144-free-gate` | `5f03c68` | `5bf457afbde5b44a995acce4ef241324f066f836` |
+| SwissJob/Core (`The_Swiss_Job`, GitHub público) | `feat/fase-a-core` | `bc1ba91` + este commit documental | `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` |
+| ReactPortfolio (`ReactPortfolioServer`, GitHub privado) | `feat/dt144-free-gate` | `5f03c68` | `5bf457afbde5b44a995acce4ef241324f066f836` |
 
-El worktree de ReactPortfolio está en `/tmp/reactportfolio-dt144-free-gate`
-(**`/tmp` es volátil**: si no existe, recrearlo con `git worktree add` desde
-`/home/lothar/Public/ReactPortfolio/backend`). Las capturas selladas de cada
-portal viven en el scratchpad de la sesión, que también es volátil: las huellas
-SHA-256 que las identifican están en los artefactos de `docs/audits/`.
+- El worktree de ReactPortfolio está en `/tmp/reactportfolio-dt144-free-gate`
+  (**`/tmp` es volátil**: si no existe, `git worktree add
+  /tmp/reactportfolio-dt144-free-gate feat/dt144-free-gate` desde
+  `/home/lothar/Public/ReactPortfolio/backend`; el remoto se llama `github`,
+  no `origin`).
+- El entorno `/tmp/dt144-backend-venv` (bs4, aiohttp, pydantic-settings, black,
+  pytest-timeout) permite replayar productores legados fuera de Docker. Si se
+  perdió, recrearlo con esas cinco dependencias.
+- Las capturas selladas de cada portal vivían en el scratchpad de la sesión
+  (volátil). Sus huellas SHA-256 están en los JSON de `docs/audits/`: con ellas
+  se puede demostrar que una nueva captura es la misma o no.
+- Suites en la cabeza: **Core 1.952 passed**, **backend SwissJob 1.916 passed +
+  4 xfailed**, ReactPortfolio **2.256 passed + 3 skipped** (en `5f03c68`).
+  Ratchets: `check_no_secrets` 0 hallazgos; `check_source_ownership` devuelve
+  `{"core_owned":16,"local_pending":26,"sources":58}`.
 
-Inventario: **58 fuentes · 16 `local_removed` · 26 `local_pending` · 16
-`retired`**, y el ratchet cruzado devuelve
-`{"core_owned":16,"local_pending":26,"sources":58}`. Esas cifras **describen
-producción** y por eso no se mueven al migrar en rama: una fuente migrada
-conserva `state=local_pending` con `core_adapter: true` hasta el corte agrupado.
+**Inventario: 58 fuentes · 16 `local_removed` · 26 `local_pending` · 16
+`retired`.** Esas cifras **describen producción** y por eso no se mueven al
+migrar en rama: una fuente migrada conserva `state=local_pending` con
+`core_adapter: true` hasta el corte agrupado. Las 26 `local_pending` siguen
+cosechando en local AHORA MISMO (11 de ReactPortfolio, 16 de SwissJob, `jobicy`
+en los dos).
 
-### Ya no queda ningún portal por implementar
+Registros locales en rama: SwissJob `_SCRAPER_CLASSES` **VACÍO**; SwissJob
+`_PROVIDER_CLASSES` con 9 nombres (`proz`, `remoteco` y 7 `retired` inertes:
+`careerjet`, `jooble` y los cinco partner restringidos). ReactPortfolio sin
+productores locales: `services/catalog/seam.py` devuelve `CoreCatalog()`
+directamente.
 
-**40 de las 42 fuentes migrables tienen adaptador nativo en rama.** El registro
-de scrapers de SwissJob (`_SCRAPER_CLASSES`) está VACÍO y el de providers
-conserva nueve nombres, siete de ellos ya `retired` con cero publicadores y cero
-credenciales (clases inertes que no emiten ninguna petición).
+## 3. Dónde estamos respecto a la definición de terminado (§10)
 
-Las dos que faltan, y por qué: `proz` y `remoteco` **no son implementables con
-un cliente conforme desde este host** (403 con challenge de Cloudflare y un
-servidor que completa TLS y nunca responde). Esperan decisión del propietario:
-retirarlas con la evidencia o pagar un navegador stealth. Ver §6.
+| Condición del §10 | Estado | Qué falta |
+|---|---|---|
+| 100 % de fuentes operativas en `core_primary` o `local_removed` | **NO** · 16 de 42 | el corte agrupado (§10 de este doc) mueve 24; `proz`/`remoteco` se retiran o se resuelven |
+| Sin `local_pending` ni `core_shadow` | **NO** · 26 `local_pending` | ídem |
+| Cero productores externos activos en ambos productos | **En rama SÍ; en producción NO** | desplegar la rama tras la fusión |
+| Sin secretos ni tráfico de portales en los productos | **En rama SÍ** (`check_no_secrets` 0) · en producción las credenciales de Adzuna/JSearch siguen en el `.env` del Portfolio | rotarlas a `CORE_ADZUNA_APP_ID/APP_KEY` y `CORE_JSEARCH_RAPIDAPI_KEY` en el core del NAS y retirarlas del Portfolio en el corte |
+| Sin catálogo compuesto ni fallback local | **NO** · `CompositeCatalog` y `FallbackCatalog` existen pero no se construyen (vía de rollback) | borrarlos en el corte final |
+| Toda oferta nueva entra sólo por Core | **NO** | activar los scopes y apagar los productores locales en el mismo despliegue |
+| Ambos productos pasan sus recorridos sobre el corpus común | **En rama SÍ** (suites + fidelidad G7/G8 sobre 18 rutas) | repetir contra producción tras el corte |
+| Sondas productivas confirman invariantes | **NO ejecutadas** (no hay nada desplegado) | `probe_core_final.py` y afines tras el corte |
+| Contrato, inventario y checks atados al SHA fusionado y desplegado | **NO** | fusión aprobada + despliegue + actualizar `source_ownership.json` al SHA |
 
-### Lo que falta para cerrar DT-144 (nada de ello se hace sin el propietario)
+Lectura honesta: **la parte de ingeniería está terminada y verificada; la parte
+de operación no ha empezado**, y no debe empezar sin el propietario (contrato
+§6 fase -1: «no se fusiona ni despliega antes de completar DT-144 y obtener la
+aprobación final»).
 
-1. La decisión sobre `proz` y `remoteco`.
-2. Comprobar la CI de ReactPortfolio, que **no se puede leer desde este host**
-   (repositorio privado, sin token): los runs de `04a020d`, `ffcc0ba` y
-   `5f03c68`.
-3. El corte agrupado: provisionar y habilitar los scopes, drenar y retirar los
-   productores locales, **borrar `CompositeCatalog` y `FallbackCatalog`** (son
-   la vía de rollback hasta entonces) y fusionar tras la aprobación explícita.
+## 4. Todo lo migrado, fuente a fuente
 
-## 3. Cómo se migra un portal (receta ya rodada)
+### 4.1 Ya propiedad de Core antes de DT-144 (16 · `local_removed`)
+
+`arbeitnow`, `euremotejobs`, `financejobs`, `globaljobs`, `irishjobs`,
+`jobgether`, `jobspresso`, `nav_arbeidsplassen`, `ostjob`, `publicjobs`,
+`remotive`, `thehub`, `weworkremotely`, `workingnomads`, `zebis`, `zentraljob`.
+Cortadas en el corte nativo del 2026-09-22 (`docs/audits/POINT4_CUTOVER_2026-09-22.md`).
+No se tocaron en DT-144.
+
+### 4.2 Oleada ReactPortfolio (11 · `local_pending` con adaptador)
+
+Todas tienen: adaptador Core, `provision_<fuente>.py` (scope nace DESHABILITADO),
+`SourceSpec` en `services/core_source_compat.py` del Portfolio (conserva las
+seis rutas HTTP por fuente), productor local desconectado, tests fijados.
+Commit Core / commit Portfolio / CI SwissJob (la del Portfolio NO es verificable
+desde aquí, ver §7).
+
+| Fuente | Core | Portfolio | CI Core | Mecanismo | Checkpoint |
+|---|---|---|---|---|---|
+| `jobicy` (también SwissJob) | `3fe20e6`+`7d4181a` | `0d1cc26`+`9390071` | verde | JSON API; preserva metadatos visibles | DT §«piloto Jobicy» |
+| `remoteok` | `cdca8df` | `5cb6737` | verde | JSON API | DT L455 |
+| `himalayas` | `d9b6859` | `e8ba714` | verde | JSON API | DT L499 |
+| `swisstechjobs` | `a7016a6` | `f3baba8` | `38560944461` | JSON; 8/8 filas idénticas | DT L584 |
+| `ictjobs` | `f273a24` | `fda24a9` | `38564269161` | JSON | DT L647 |
+| `swissdevjobs` | `63fe4e5` | `fe0c77d` | `38568433424` | JSON | DT L732/838 |
+| `jobroom` | `14b613a` | `edf1b12` | `38574880608` | API job-room.ch | DT L891/941 |
+| `adzuna` | `c266b8d` | `95768ce` | `38588047774` | API con credencial → `CORE_ADZUNA_*` | DT L1022/1083 |
+| `jsearch` | `ac819f5` | `855f243` | `38599397880` | RapidAPI con credencial → `CORE_JSEARCH_RAPIDAPI_KEY` | DT L1161/1240 |
+| `dynamitejobs` | `9ec6901` | `1a0db8d` | `38607230379`/`38608902811` | `__PINIA_STATE__` + JSON-LD de detalle (≤20/barrido) | DT L1320/1396 |
+| `jobscout24` | `33a804d` | `04a020d`+`ffcc0ba` | `38619763001` | barrido por palabra clave | DT L1463/1513 |
+
+Residuos estructurales del Portfolio cerrados en `5f03c68`: `jobicy`/`remoteok`
+ya no registran caché ni actualizador; barridos G7/G8 saltan con motivo y
+prueban un agregado hostil sobre las 18 rutas; la costura sirve `CoreCatalog()`
+sin compuesto.
+
+### 4.3 Oleada SwissJob (14 · `local_pending` con adaptador)
+
+Aquí no hay rutas por fuente que conservar: el BFF ya lee el feed del núcleo sin
+lista blanca, así que el traspaso es apagar el productor (`_SCRAPER_CLASSES`
+vacío; cada fuente añadida a `SOURCES_DECIDED_IN_ADVANCE` en
+`backend/services/harvest_window.py`). Los módulos legados siguen en el árbol
+como rollback.
+
+| Fuente | Core | CI | Mecanismo y hallazgo clave | Evidencia |
+|---|---|---|---|---|
+| `myscience` | `244f15e` | `38632186849` | SSR + detalle; `published_at` de `<time datetime>`; el early-stop legado **ocultaba 4 de 26 ofertas** | `2026-10-14-dt144-myscience-baseline.json` |
+| `gastrojob` | `280bfc2` | `38635097926` | TYPO3 SSR; veredicto de cinco vías para página vacía; `int()` protegido | `…-gastrojob-baseline.json` |
+| `tes` | `9e62bd5` | `38655779623` | `__NEXT_DATA__`; el servidor **ignora `?page=N`** (8 de 28 páginas inalcanzables, contado y reportado) | `2026-10-15-dt144-tes-baseline.json` |
+| `stelle_admin` | `82c742d` | `38657167787` | **Reimplementado SIN navegador**: API pública Prospective (`ohws.prospective.ch/public/v1/medium/1000624/jobs`) hallada en el bundle del SPA; 431 ofertas con unidad, lugar, fecha, pensum, home-office | `…-stelle-admin-baseline.json` |
+| `swiss_schools_zis/isb/ecolint/hautlac/iscs` | `72d068d` | `38690714105` | 5 parsers de HTML propio; **vacío verificado**; 9 filas, 0 diferencias | `…-swiss-schools-boards-baseline.json` |
+| `swiss_schools_nae/inspired` | `287cc18` | `38692407198` | SuccessFactors compartido; 13 filas vivas, 0 diferencias | ídem |
+| `swiss_schools_isp` | `2200b56` | `38694111472` | Workday (Mosaic); cadena de guardas `externalPath` portada íntegra (27 formas rechazadas) | ídem + preflight |
+| `schuljobs` | `020469e` | `38696733154` | SSR + scroll AJAX (`searchhash`) + JSON-LD; 84 listados + 83 detalles, misma SHA-256 en 10 campos; **la mitad de los detalles no trae JSON-LD** (normal) | `…-schuljobs-baseline.json` |
+
+Infraestructura transversal añadida en esta oleada:
+
+- **Kill-switch de bloqueo en Core** (`c7d5388`, migración `core0055`):
+  `BLOCK_STATUSES={403,429,503}`, `blocking_status()` recorre la cadena de
+  excepciones, tres bloqueos seguidos apagan el scope y sellan
+  `disabled_by_blocks_at`, el censo de salud publica `apagados_por_bloqueo`.
+- **`TagStackParser`** (`jobhunt_core/harvest/providers/html_response.py`):
+  parser HTML de biblioteca estándar compartido por los scrapers SSR. Core no
+  lleva bs4 a propósito.
+- **`next_data.py`**: lector compartido de `__NEXT_DATA__` (financejobs, tes).
+- `source_aggregate.py`: rutas de fecha para `advert.startDate` (tes),
+  `start_date` (stelle_admin), `date_posted` (schuljobs);
+  `statistics_location` para dynamitejobs.
+- `scripts/check_source_ownership.py` lee `SOURCE_NAMES` (módulos
+  multi-fuente como los colegios).
+
+### 4.4 Retiradas sin productor (16 · `retired`)
+
+`authenticjobs`, `careerjet`, `dailyremote`, `ilojobs`, `impactpool`, `jooble`,
+`medjobs`, `reliefweb`, `translatorscafe`, `undpjobs`, `untalent` y los cinco
+partner restringidos (`jobcloud_partner`, `linkedin_authorized`,
+`indeed_partner`, `glassdoor_partner`, `xing_partner`). Cero publicadores, cero
+credenciales; las clases que quedan registradas no emiten peticiones.
+
+## 5. Lo que NO está migrado y por qué
+
+| Fuente | Diagnóstico MEDIDO (2026-10-15) | Qué lo arreglaría | Decisión |
+|---|---|---|---|
+| `proz` | Cloudflare *managed challenge* en **toda la zona** (feed, portada, `robots.txt`, `www2`), con cualquier cabecera/protocolo y desde cuatro redes (este host, NAS —misma IP—, fetcher de Anthropic, archive.org). Muro levantado entre jun y jul 2026; el provider es de abr 2026 y probablemente cosechó hasta entonces. 46 errores seguidos | (a) retirar; (b) **el propietario comprueba con su cuenta ProZ si el feed de miembro queda exento** (un minuto, `curl` sobre la URL del botón naranja de `/translation-jobs`): si da XML, un adaptador RSS normal de Core lo lee; (c) navegador que resuelva el desafío (fuera de la imagen de Core, contra la regla de no-evasión, precedente medjobs) | **propietario** |
+| `remoteco` | Dos fallos: **el feed `/remote-jobs/feed/` es 404 desde 2025-12-21**, antes de escribir el provider; y el edge es Akamai Bot Manager conductual (sirve a quien parece navegador hasta que su puntuación cae; sin el sensor JS nadie pasa de forma estable; un proxy no ayuda). 54 errores seguidos; nunca pudo cosechar | scraper HTML nuevo del listado (WordPress sin feed ni REST) **y** navegador stealth de pago. Ni con navegador queda feed que leer | **propietario** (recomendación: retirar) |
+
+Evidencia: [`2026-10-15-dt144-proz-remoteco-analysis.json`](../audits/2026-10-15-dt144-proz-remoteco-analysis.json)
+(corrige dos afirmaciones de la sonda del día 14, que se conserva). No se
+intentó resolver desafíos ni usar navegador o proxy: se midió si una petición
+conforme funciona, y no.
+
+**Nota para el corte sobre los colegios:** los ocho `swiss_schools_*` tienen
+adaptador, pero HOY el colector legado publica observaciones al núcleo
+(`backend/services/schools/producer.py` → `POST /v1/schools/{monitor_id}/jobs`).
+Al habilitar sus scopes en Core, ese empuje debe apagarse **en el mismo corte**
+o el corpus escolar recibiría las mismas ofertas por dos caminos.
+
+## 6. Cómo se migra un portal (receta ya rodada)
 
 Los pasos son los de la sección 7.1 del contrato; esto es lo que significan en
 la práctica de este repositorio.
 
 1. **Preflight.** Leer rama, upstream y los dos `main`; comprobar que el
    checkpoint anterior tiene su CI verde. `git status` antes de tocar nada: en
-   SwissJob hay cambios ajenos a DT-144 permanentes (ver §7).
+   SwissJob hay cambios ajenos a DT-144 permanentes (ver §9).
 2. **Trazado.** Localizar el productor, su registro, su despacho, el consumidor
    y sus credenciales. **El consumidor cambia según el producto:**
    - **ReactPortfolio** expone seis rutas HTTP por fuente
      (`/recent`, `/stats`, `/by-tag`, `/by-location`, `/refresh-cache`,
-     `/health`). Hay que conservarlas: las sirve el adaptador compartido
-     `services/core_source_compat.py`, y basta añadir el `SourceSpec` para que
+     `/health`). Las sirve el adaptador compartido
+     `services/core_source_compat.py`; basta añadir el `SourceSpec` para que
      `routers/core_source_compat.py` las genere.
-   - **SwissJob** no tiene rutas por fuente. Su BFF ya lee el feed del núcleo
-     (`backend/services/matching/core_client.py`, `/v1/profiles/{id}/matches`)
-     **sin lista blanca por fuente**, así que el traspaso es sólo apagar el
-     productor local.
+   - **SwissJob** no tiene rutas por fuente. Su BFF lee el feed del núcleo
+     (`backend/services/matching/core_client.py`) sin lista blanca por fuente,
+     así que el traspaso es sólo apagar el productor local.
 3. **Línea base viva y SELLADA.** Capturar la respuesta real con las cabeceras
-   que usará Core, guardarla en el scratchpad y **replayar el productor legado
-   EXACTO sobre esa captura**. Las huellas SHA-256 de esa ejecución son el
-   patrón contra el que se mide el adaptador. Capturar también las páginas de
-   detalle que el productor pediría.
-4. **Core mínimo.** Reutilizar las costuras existentes
-   (`browser_headers`, `html_response`, `rss_text`, `jobicy_metadata`,
-   `search_metadata`, `provision_scopes`). **Nunca una dependencia nueva**: el
-   HTML se lee con la biblioteca estándar sobre `TagStackParser`.
+   que usará Core, guardarla y **replayar el productor legado EXACTO sobre esa
+   captura**. Las huellas SHA-256 de esa ejecución son el patrón. Capturar
+   también las páginas de detalle que el productor pediría.
+4. **Core mínimo.** Reutilizar costuras existentes (`browser_headers`,
+   `html_response`/`TagStackParser`, `next_data`, `rss_text`,
+   `provision_scopes`). **Nunca una dependencia nueva.**
 5. **Paridad byte a byte.** Replayar el adaptador contra la MISMA captura y
-   comparar campo a campo; cualquier diferencia se corrige o se documenta con
-   evidencia. Las mejoras deliberadas se justifican midiendo (§5).
-6. **Pruebas por capas** + doble ciclo contra PostgreSQL real + provisión opt-in.
-7. **Apagado local** y actualización del inventario.
+   comparar campo a campo; cada diferencia se corrige o se documenta con
+   evidencia. Las mejoras deliberadas se justifican midiendo (§8).
+6. **Pruebas por capas** (unitarias del parser, integración con PostgreSQL real
+   en doble ciclo, provisión) + `provision_<fuente>.py` con scope DESHABILITADO.
+7. **Apagado local** (registro, `SOURCES_DECIDED_IN_ADVANCE` en SwissJob;
+   `SourceSpec` + desconexión en Portfolio) e inventario: `core_adapter: true`,
+   `state` sin tocar.
 8. **Suites completas, lint, ratchets y CI.** Commit funcional estrecho, push de
-   la rama feature, y sólo después el commit documental con la CI ya verde.
-9. **Checkpoint** en DEUDA_TECNICA con el siguiente paso exacto.
+   la rama, y sólo después el commit documental con la CI ya verde.
+9. **Checkpoint** en DEUDA_TECNICA con el siguiente paso exacto, y este fichero
+   al día.
 
 ### Comandos que se usan de verdad
 
@@ -125,154 +255,143 @@ python3 scripts/check_no_secrets.py
 cd /tmp/reactportfolio-dt144-free-gate
 python3 scripts/check_local_harvest_ownership.py
 /tmp/dt144-backend-venv/bin/python -m pytest tests -q
+# commits allí: git -c core.hooksPath=/dev/null commit …  (el hook pide black)
 ```
 
-El entorno `/tmp/dt144-backend-venv` tiene `bs4`, `aiohttp`, `pydantic-settings`,
-`black` y `pytest-timeout`: es el que permite replayar los productores legados
-fuera de Docker. El entorno de pruebas versionado de ReactPortfolio está en su
-`tests/conftest.py`; sin esas variables `Settings` no importa.
+Lanzar suites largas en segundo plano desde la RAÍZ del repo (desde otro cwd el
+compose no se encuentra) y esperar por el log:
+`until grep -qE "[0-9]+ (passed|failed)" suite.log; do sleep 30; done`.
 
-## 4. Cómo se comprueba la CI
+## 7. Cómo se verifica la CI
 
-`The_Swiss_Job` **responde a la API anónima de GitHub**, así que la CI se puede
-verificar sin credencial:
+`The_Swiss_Job` **responde a la API anónima de GitHub**:
 
 ```bash
-curl -sS https://api.github.com/repos/VRicardoP/The_Swiss_Job/actions/runs/<id>
+curl -sS https://api.github.com/repos/VRicardoP/The_Swiss_Job/actions/runs?branch=feat/fase-a-core&per_page=3
 curl -sS https://api.github.com/repos/VRicardoP/The_Swiss_Job/actions/runs/<id>/jobs
 ```
 
+Nueve trabajos: `source-ownership`, `backend-lint`, `core-lint`, `backend-test`,
+`core-test`, `frontend-lint`, `frontend-test`, `compose-config`,
+`docker-build`. Los dos `*-test` tardan 15-20 min. Todos los runs de la tabla
+§4 están verdes 9/9; el último verificado es `38696733154` (`020469e`). Los
+commits documentales posteriores (`80785d2`, `bc1ba91`, éste) no tocan código.
+
 `ReactPortfolioServer` **es privado y aquí no hay token**: su CI NO se puede
-comprobar desde este host. No se declara verde por reproducir su mandato en
-local. Pendiente de confirmar por el propietario o con un token de lectura: los
-runs de `04a020d` y `ffcc0ba`.
+leer desde este host y no se declara verde por reproducir su mandato en local.
+**Pendiente de confirmar por el propietario**: runs de `04a020d`, `ffcc0ba`
+y `5f03c68`.
 
-Los nueve trabajos del CI de SwissJob son `source-ownership`, `backend-lint`,
-`core-lint`, `backend-test`, `core-test`, `frontend-lint`, `frontend-test`,
-`compose-config` y `docker-build`. `backend-test` y `core-test` tardan ~15-20
-min: son los últimos en cerrar.
-
-## 5. Decisiones de diseño ya tomadas (no re-litigar sin evidencia)
+## 8. Decisiones de diseño ya tomadas (no re-litigar sin evidencia)
 
 - **Core no reproduce el early-stop por cursor de los scrapers.** Barre el
-  presupuesto declarado y deja que el sink resuelva identidad («emisión total»).
-  Medido en myScience: el early-stop del productor dejaba **cuatro ofertas de 26
-  invisibles** detrás de una página ya conocida.
-- **Nada de dependencias de parseo en Core.** `TagStackParser`
-  (`jobhunt_core/harvest/providers/html_response.py`) reproduce `select()` lo
-  bastante para estos portales. Cierra implícitamente lo que quedó abierto,
-  descarta cierres huérfanos y excluye `script`/`style`/`template`/`noscript`.
-  Existe porque un parser que suponía etiquetas balanceadas **cortó una
-  descripción real siete párrafos antes del final**.
-- **En una watchlist, un barrido vacío es el estado NORMAL.** Los adaptadores de
-  portales de empleo LANZAN cuando no encuentran nada, porque ahí significa
-  parser roto. Los ocho colegios hacen lo contrario: bajan la página, la
-  RECONOCEN por su título (y por el marcador de vacío donde el portal lo tiene)
-  y sólo entonces reportan cero como sano. Si escribes una fuente de este tipo,
-  no copies el `raise`.
-- **`0 == 0` no prueba un parser.** Tres de los cinco tableros escolares están
-  vacíos hoy, así que se compararon contra el parser legado sobre fixtures
-  construidos con la estructura que sus propios selectores declaran.
-- **Un SPA no obliga a un navegador.** `jobs.admin.ch` parecía exigir Playwright
-  y resultó ser un React sobre una API JSON pública que su propio bundle
-  declara. Antes de dar por necesario un navegador: bajar el cascarón, leer el
-  bundle y buscar su `baseUrl`. Core no lleva Chromium y no debe llevarlo.
-- **`published_at` sólo del dato del portal.** Si no hay fecha utilizable se
-  OMITE la clave: una cadena vacía llega al agregado como `published_at` vacío,
-  que no es lo mismo que «desconocido».
-- **Identidad estable y no derivada de campos mutables.** Donde el portal expone
-  un id propio se usa (`id:<n>`), no la URL cuyo slug lleva el título.
-- **Las descripciones no se recortan para que quepan en un cursor.** En
-  myScience llegan a 9.866 caracteres: truncarlas alteraría cinco de 26 ofertas
-  en cada ciclo, así que se paga el detalle por barrido.
-- **Error ≠ vacío, siempre.** Un 200 ilegible es un fallo VISIBLE
-  (`ProviderResponseError` o `error=` en el `FetchResult`), nunca «0 ofertas».
-  El caso canónico es el veredicto de cinco vías de gastrojob.
-- **Un barrido que no devuelve nada falla.** El productor conservaba su caché
-  anterior en ese caso; Core, en silencio, archivaría un corpus vivo.
+  presupuesto declarado y deja que el sink resuelva identidad. Medido en
+  myScience: el early-stop dejaba **4 ofertas de 26 invisibles**.
+- **Nada de dependencias de parseo en Core.** `TagStackParser` cierra
+  implícitamente lo abierto, descarta cierres huérfanos y excluye
+  `script`/`style`/`template`/`noscript`. Existe porque un parser que suponía
+  etiquetas balanceadas **cortó una descripción real siete párrafos antes**.
+- **En una watchlist, un barrido vacío es el estado NORMAL.** Los adaptadores
+  de portales de empleo LANZAN cuando no encuentran nada (parser roto). Los
+  ocho colegios bajan la página, la RECONOCEN por su título (y por el marcador
+  de vacío donde el portal lo tiene) y sólo entonces reportan cero como sano.
+- **`0 == 0` no prueba un parser.** Los tableros vacíos se compararon contra el
+  parser legado sobre fixtures construidos con la estructura que sus propios
+  selectores declaran.
+- **Un SPA no obliga a un navegador.** `jobs.admin.ch` parecía exigir
+  Playwright y era un React sobre una API JSON pública declarada en su bundle.
+  Antes de dar por necesario un navegador: bajar el cascarón, leer el bundle,
+  buscar su `baseUrl`. **Core no lleva Chromium y no debe llevarlo.**
+- **Error ≠ vacío, siempre.** Un 200 ilegible es un fallo VISIBLE, nunca «0
+  ofertas». Canónico: veredicto de cinco vías de gastrojob.
+- **Un barrido que no devuelve nada falla** (en portales de empleo): el
+  productor conservaba su caché anterior; Core archivaría un corpus vivo.
+- **`published_at` sólo del dato del portal.** Sin fecha utilizable se OMITE la
+  clave (una cadena vacía llega al agregado como `published_at` vacío).
+- **Identidad estable del id propio del portal**, no de la URL con slug.
+- **Las descripciones no se recortan para que quepan en un cursor** (myScience
+  llega a 9.866 caracteres).
+- **Presupuestos declarados en params del scope**, no en código (schuljobs 4
+  páginas de 26: ampliarlo es un cambio de params validado).
+- **El kill-switch clasifica por la cadena de excepciones**: si un adaptador
+  hace `raise X` sin `from`, el 403 del transporte no se verá.
 
-## 6. Las dos que faltan, y por qué no son código
+## 9. Trampas ya pisadas (no repetirlas)
 
-| Fuente | Estado MEDIDO el 2026-10-15 | Decisión pendiente |
-|---|---|---|
-| `proz` | **Managed challenge de Cloudflare en TODA la zona** (también `robots.txt`), con cualquier cabecera y desde cuatro redes; el muro se levantó entre junio y julio de 2026; 46 errores seguidos | retirar con la evidencia; o el propietario comprueba con su cuenta si el **feed de miembro** queda exento (un minuto); o navegador stealth de pago |
-| `remoteco` | **El feed no existe desde 2025-12-21** (antes de escribir el provider) **y** el edge es Akamai Bot Manager conductual: sirve a quien parece navegador hasta que su puntuación cae, y a nadie de forma estable sin el sensor JS; 54 errores seguidos | retirar: ni con navegador queda feed que leer; haría falta scraper HTML nuevo + navegador stealth de pago |
+1. **Cambios ajenos permanentes en SwissJob** (`CLAUDE.md`, documentos
+   históricos/unificación, auditorías sin seguimiento). No añadirlos ni
+   restaurarlos: seleccionar fichero a fichero en cada commit.
+2. **Los bucles de espera con `pgrep` se auto-detectan.** Esperar por el LOG.
+3. **No editar el árbol mientras corre una suite** que lo monta.
+4. **Dos pytest contra la MISMA base se vacían las tablas entre sí.** BFF y
+   núcleo SÍ pueden ir a la vez; dos del BFF no.
+5. **`JOB_TAGS` es una taxonomía de idiomas y docencia**, no de tecnologías.
+   «Python Developer» no produce tags. «Zürich» no está en la tabla de países.
+   Ejecutar antes de escribir una expectativa.
+6. **ReactPortfolio se formatea con `black`** (línea 100); hay deriva previa
+   en tres ficheros: no mezclarla ni añadir nueva (comparar contra `HEAD`).
+7. **El hook de pre-commit de ReactPortfolio** necesita black instalado;
+   `-c core.hooksPath=/dev/null` y ejecutar sus dos comprobaciones a mano.
+8. **Un `<meta content="…">` no pasa por la pila de elementos**: leerlo en
+   `on_void`.
+9. **`int()` lanza con más de 4.300 dígitos**: capturarlo.
+10. **Módulos multi-fuente** (colegios) declaran `SOURCE_NAMES`, o el ratchet
+    los cuenta como desajuste.
+11. **Suites en segundo plano desde el scratchpad mueren al instante**
+    (compose no encontrado): lanzar desde la raíz del repo.
+12. **Una sonda es una foto, no una condición estática.** «El servidor nunca
+    responde» de remote.co era la acción de Akamai para un cliente concreto en
+    un momento; probar varias cabeceras, varias redes y el archivo antes de
+    sentenciar.
 
-Migrarlas sin resolver eso sería inverificable por construcción: la metodología
-exige línea base viva y paridad campo a campo, y ninguna de las dos ha producido
-nunca una cosecha contra la que medir. Evidencia:
-[sonda de proz/remoteco](../audits/2026-10-15-dt144-proz-remoteco-probe.json).
+## 10. Lo que queda: el corte agrupado (TODO es del propietario)
 
-Los ocho `swiss_schools_*` ya tienen adaptador. Nota para quien opere el corte:
-**hoy publican observaciones al núcleo** por `POST /v1/schools/{monitor_id}/jobs`.
-El núcleo ya era dueño del corpus escolar, su ciclo de vida, el feedback y las
-candidaturas; lo que no era dueño es de la CAPTURA. Al habilitar sus scopes, la
-captura pasa a Core y ese empuje desde SwissJob debe apagarse en el mismo corte,
-o el corpus escolar recibiría las mismas ofertas por dos caminos.
+Nada de esto se ejecuta sin aprobación explícita. Orden sugerido, derivado del
+contrato §6 (fases 8-10) y de lo medido:
 
-## 7. Trampas ya pisadas (no repetirlas)
+1. **Decidir `proz` y `remoteco`** (§5). Si se retiran: `state: retired`,
+   quitar del registro de providers de SwissJob y del `.env`, evidencia en el
+   inventario. Si proz se resuelve por feed de miembro: adaptador RSS como
+   `native_rss`, misma receta.
+2. **Confirmar la CI de ReactPortfolio** (`04a020d`, `ffcc0ba`, `5f03c68`).
+3. **Credenciales a Core en el NAS**: `CORE_ADZUNA_APP_ID/APP_KEY`,
+   `CORE_JSEARCH_RAPIDAPI_KEY` (hoy en el `.env` del Portfolio).
+4. **Fusionar las dos ramas** en sus `main` (aprobación explícita) y desplegar
+   Core PRIMERO (`scripts/deploy_nas.sh core`), luego BFF y Portfolio.
+5. **Provisionar y habilitar los 24 scopes** con los `provision_*.py`
+   (`provision_exact(session, source, SCOPE_PARAMS, enabled=True)`); los
+   colegios se provisionan juntos (`provision_swiss_schools.py` +
+   `provision_isp_workday.py`) y en el mismo paso se apaga el empuje escolar
+   legado (`SchoolProducer`).
+6. **Drenar y retirar los productores locales**: con la rama desplegada ya no
+   se construyen; borrar entonces los módulos legados, `CompositeCatalog` y
+   `FallbackCatalog`, y los tests que los fijaban.
+7. **Sondas productivas** (`probe_core_final.py`, `probe_swissjob_final.py`,
+   `probe_portfolio_final.py`, en `docs/audits/2026-10-10-optimization/`) y
+   censo de salud: cero `local_pending`, cero
+   `apagados_por_bloqueo` inesperados, oferta nueva sólo por Core.
+8. **Inventario al SHA desplegado**: `state: core_primary`/`local_removed`,
+   ratchet esperado `{"core_owned":40,"local_pending":0,…}`, y cerrar DT-144 en
+   DEUDA_TECNICA.
 
-1. **Cambios ajenos permanentes en SwissJob.** `CLAUDE.md`, varios documentos
-   históricos y de unificación y algunas auditorías sin seguimiento están
-   modificados o sin versionar desde antes de DT-144. **No añadirlos, no
-   restaurarlos, no reformatearlos**: seleccionar fichero a fichero en cada
-   commit.
-2. **Los bucles de espera con `pgrep` se auto-detectan** (ya está en
-   DEUDA_TECNICA §4.3): el propio `bash -c` contiene el patrón y el bucle no
-   termina nunca. Esperar por el LOG (`until grep -qE "[0-9]+ (passed|failed)"`).
-3. **No editar el árbol mientras corre una suite** que lo monta: el resultado
-   deja de ser atribuible a un candidato. Congelar, lanzar, esperar.
-4. **Dos pytest contra la MISMA base se vacían las tablas entre sí.** La suite
-   del BFF (`swissjobhunter_test`) y la del núcleo (otra base) SÍ pueden ir a la
-   vez; dos del BFF no.
-5. **`JOB_TAGS` no es una taxonomía de tecnologías**, es de idiomas y docencia
-   (99 términos). Una oferta de «Python Developer» no produce tags. Comprobarlo
-   ejecutando antes de escribir una expectativa.
-6. **ReactPortfolio se formatea con `black`** (línea 100), no con `ruff format`,
-   y su CI no linta. Hay deriva preexistente de black en tres ficheros: no
-   mezclarla, pero no añadir deriva nueva (comparar contra `HEAD`).
-7. **El hook de pre-commit de ReactPortfolio** sólo bloquea `.env` y ejecuta
-   black. Si se omite, ejecutar sus dos comprobaciones a mano.
-8. **Un `<meta content="…">` no pasa por la pila de elementos.** Leer un
-   `itemprop` sólo en etiquetas de apertura no encuentra nada: va en `on_void`.
-9. **`int()` lanza con más de 4.300 dígitos.** Un contador patológico que pasa un
-   `[0-9]+` revienta igual; hay que capturarlo.
+Rollback hasta el paso 6: revertir el commit del portal reconecta su productor;
+después del paso 6, el §11 del contrato (incidencia registrada, temporal).
 
-## 8. Los cuatro residuos estructurales (CERRADOS el 2026-10-15)
+## 11. Mapa de ficheros
 
-No eran de ningún portal y los cuatro bloqueaban la definición de terminado.
-Evidencia completa en su checkpoint de DEUDA_TECNICA; resumen:
-
-1. `jobicy` y `remoteok` ya no registran caché ni actualizador al importarse, y
-   el censo vacío de los dos registros está fijado por una prueba.
-2. Los barridos de fidelidad G7/G8 saltaban con «got empty parameter set» al
-   quedarse sin cachés locales. Ahora saltan **con motivo**, y su garantía se
-   prueba donde el dato vive: un agregado hostil del núcleo (número no finito,
-   surrogate, NUL también como CLAVE de contador) contra TODAS las rutas
-   públicas de las 18 fuentes del adaptador.
-3. La costura ya no construye un catálogo Core + local: sin fuente local propia
-   devuelve `CoreCatalog()` directamente. El compuesto se queda SÓLO como vía de
-   rollback y su borrado pertenece al corte final.
-4. **Core tiene su propio portero de bloqueo** (`core0055`): `BLOCK_STATUSES =
-   {403, 429, 503}` —la lista exacta del legacy—, tres bloqueos seguidos apagan
-   el scope, sellan `disabled_by_blocks_at` y gritan; una cosecha COMPLETA borra
-   el contador; re-encender es manual a propósito; y el censo de salud publica
-   `apagados_por_bloqueo` en cada pasada para que el apagado no se lea como
-   silencio. La clasificación recorre la cadena de excepciones, así que no hubo
-   que tocar ningún adaptador.
-
-**Para quien migre un scraper a partir de ahora:** ya existe el kill-switch, así
-que un portal que empiece a bloquear apaga su scope en tres barridos. Si tu
-adaptador traga el error del transporte sin dejar rastro (`raise X` sin cadena),
-el clasificador no lo verá: deja que `__context__` o `__cause__` lleve el
-`httpx.HTTPStatusError`.
-
-## 9. Lo que NO se ha hecho a propósito
-
-- No se ha creado **ningún scope productivo** ni se ha habilitado ninguna
-  cosecha nueva: todos los provisionadores nacen deshabilitados.
-- No se ha desplegado nada. El corte en producción va **agrupado** al final y
-  exige la aprobación explícita del propietario.
-- Los dos `main` no se han tocado y se revalidan tras cada push.
-- Los productores locales migrados siguen en el árbol, desconectados, como vía
-  de rollback: revertir el commit del portal los reconecta.
+- Contrato: `docs/unificacion/CONTRATO_CENTRALIZACION_TOTAL.md`
+- Ledger de ejecución: `docs/unificacion/DEUDA_TECNICA.md` §DT-144 (checkpoints
+  por portal; punto de reanudación al inicio)
+- Inventario: `docs/unificacion/source_ownership.json`; ratchet
+  `scripts/check_source_ownership.py`; secretos `scripts/check_no_secrets.py`
+- Evidencia: `docs/audits/2026-10-1[45]-dt144-*.json` (uno por portal, más
+  métricas de producción del día 14, sonda y análisis de proz/remoteco)
+- Adaptadores: `jobhunt_core/harvest/providers/native_*.py`; registro en
+  `providers/__init__.py`, `registry.py`, `admission.py`
+- Provisión: `jobhunt_core/provision_<fuente>.py` (todos deshabilitados)
+- Kill-switch: `jobhunt_core/harvest/runner.py`, `provider.py`, `health.py`,
+  migración `core0055`
+- Apagado local SwissJob: `backend/scrapers/__init__.py` (vacío),
+  `backend/providers/__init__.py`, `backend/services/harvest_window.py`
+- Portfolio: `services/core_source_compat.py`, `routers/core_source_compat.py`,
+  `services/catalog/seam.py`, `scripts/check_local_harvest_ownership.py`
