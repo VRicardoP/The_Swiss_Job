@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "objective": "Core is the sole external job-offer publisher; SwissJob and ReactPortfolio are consumers.",
-  "verified_at": "2026-10-15",
+  "verified_at": "2026-10-16",
   "ratchet": {
     "min_core_owned_sources": 40,
     "min_inventory_verified_sources": 58,

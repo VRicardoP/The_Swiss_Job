@@ -9,13 +9,10 @@
 > ha hecho, cómo, en qué estado está respecto al objetivo final y qué queda**,
 > para que no haya que reconstruirlo leyendo veinte checkpoints.
 >
-> Última actualización: **2026-10-15, corrección final de runtime validada en
-> local**. Core `5b3bf3d` está desplegado y su sonda final pasa; las retiradas
-> físicas ya están fusionadas en ambos `main`. El despliegue de los consumidores
-> aún no ha empezado: se detuvo antes de transferir ninguna imagen al NAS al
-> detectar un residuo de Chromium en el Dockerfile de SwissJob. La corrección
-> está preparada y probada en `fix/dt144-runtime-residue`; JSearch continúa
-> deshabilitado y no se ha reintentado.
+> Última actualización: **2026-10-16, DT-144 cerrada**. Core es el único
+> cosechador y publicador externo; SwissJob y ReactPortfolio consumen su corpus.
+> Las tres sondas productivas y el inventario operativo pasan. JSearch continúa
+> manualmente deshabilitado y no se ha reintentado.
 
 ---
 
@@ -30,17 +27,38 @@
 7. Cómo se verifica la CI
 8. Decisiones de diseño ya tomadas
 9. Trampas ya pisadas
-10. Lo que queda: el corte agrupado (propietario)
+10. Corte agrupado ejecutado
 11. Mapa de ficheros
 
 ---
 
-## 0.1 Checkpoint vivo del corte (2026-10-15)
+## 0.1 Cierre operativo (2026-10-16)
 
-Este bloque **prevalece sobre las fotografías anteriores de este documento**
-hasta el siguiente checkpoint:
+Este bloque **prevalece sobre las fotografías anteriores de este documento**.
 
-### Checkpoint más reciente · fusiones terminadas, producción sin tocar
+### Cierre final · objetivo contractual cumplido
+
+- **Propiedad:** 40 fuentes operativas en `local_removed`, 18 retiradas, cero
+  `local_pending`/`core_shadow` y cero publicadores locales. Core es el único
+  productor externo.
+- **Producción:** Core `5b3bf3d`/`core0055`; SwissJob BFF/worker
+  `point5-5002445`; ReactPortfolio backend/worker `board-c47b7a3`. El
+  transformador aplicado al Compose vivo está fusionado en `f381979`.
+- **Sondas:** las tres terminan con código 0. Core: 49/49 scopes ejecutables,
+  colas y staging drenados, cero alertas; JSearch 1 scope manualmente
+  deshabilitado y 0 ejecuciones desde la dispensa. SwissJob: cero productores,
+  registros, credenciales o dependencias locales. Portfolio: seis capacidades
+  `core_primary` y cero residuos locales.
+- **Operación:** el worker SwissJob ejecuta y confirma sólo las colas
+  `default,ai`; los Compose vivos de ambos consumidores tienen cero marcadores
+  locales. CI final de la corrección: PR/push
+  `38811880988`/`38811859394`; `main` `38813007893`, todos 9/9 verdes.
+- **Continuidad:** no queda migración pendiente. El historial inferior explica
+  los abortos seguros, hallazgos y correcciones para una auditoría futura; no
+  constituye trabajo abierto. Recibo estructurado:
+  [`2026-10-16-dt144-final-cutover.json`](../audits/2026-10-16-dt144-final-cutover.json).
+
+### Checkpoint anterior · fusiones terminadas, producción sin tocar
 
 - **Fusiones:** ReactPortfolio PR 4 está en `main` como `c47b7a3` y su CI de
   `main` `38794582363` terminó verde. SwissJob PR 13 está en `main` como
@@ -530,67 +548,46 @@ hasta el siguiente checkpoint:
 
 ## 1. En una frase
 
-Core debe ser el único propietario de la captura externa de ofertas; SwissJob y
-ReactPortfolio deben consumir el corpus común sin cosechar, sin credenciales de
-portal y sin tráfico hacia ellos. Cada portal se migra como unidad vertical
-completa (sección 7.1 del contrato) y **nada se corta en producción** hasta la
-fusión final aprobada por el propietario.
+Core es el único propietario de la captura externa de ofertas; SwissJob y
+ReactPortfolio consumen el corpus común sin cosechar, sin credenciales de portal
+y sin tráfico hacia ellos.
 
-## 2. Estado exacto (2026-10-15)
+## 2. Estado exacto (2026-10-16)
 
-| Repositorio | Rama de trabajo | Cabeza | `main` remoto (INTACTO) |
-|---|---|---|---|
-| SwissJob/Core (`The_Swiss_Job`, GitHub público) | `feat/fase-a-core` | `bc1ba91` + este commit documental | `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` |
-| ReactPortfolio (`ReactPortfolioServer`, GitHub privado) | `feat/dt144-free-gate` | `5f03c68` | `5bf457afbde5b44a995acce4ef241324f066f836` |
+| Repositorio | `main` fusionado | Release/imagen viva |
+|---|---|---|
+| SwissJob/Core (`The_Swiss_Job`) | `f381979` | Core `point5-5b3bf3d`; BFF/worker `point5-5002445` |
+| ReactPortfolio (`ReactPortfolioServer`) | `c47b7a3` | backend/worker `board-c47b7a3` |
 
-- El worktree de ReactPortfolio está en `/tmp/reactportfolio-dt144-free-gate`
-  (**`/tmp` es volátil**: si no existe, `git worktree add
-  /tmp/reactportfolio-dt144-free-gate feat/dt144-free-gate` desde
-  `/home/lothar/Public/ReactPortfolio/backend`; el remoto se llama `github`,
-  no `origin`).
-- El entorno `/tmp/dt144-backend-venv` (bs4, aiohttp, pydantic-settings, black,
-  pytest-timeout) permite replayar productores legados fuera de Docker. Si se
-  perdió, recrearlo con esas cinco dependencias.
-- Las capturas selladas de cada portal vivían en el scratchpad de la sesión
-  (volátil). Sus huellas SHA-256 están en los JSON de `docs/audits/`: con ellas
-  se puede demostrar que una nueva captura es la misma o no.
-- Suites en la cabeza: **Core 1.952 passed**, **backend SwissJob 1.916 passed +
-  4 xfailed**, ReactPortfolio **2.256 passed + 3 skipped** (en `5f03c68`).
-  Ratchets: `check_no_secrets` 0 hallazgos; `check_source_ownership` devuelve
-  `{"core_owned":16,"local_pending":24,"sources":58}` tras retirar
-  `proz`/`remoteco`.
-
-**Inventario: 58 fuentes · 16 `local_removed` · 24 `local_pending` · 18
-`retired`.** Esas cifras **describen producción** y por eso no se mueven al
-migrar en rama: una fuente migrada conserva `state=local_pending` con
-`core_adapter: true` hasta el corte agrupado. Las 24 `local_pending` siguen
-cosechando en local AHORA MISMO (11 de ReactPortfolio, 14 de SwissJob, `jobicy`
-en los dos).
-
-Registros locales en rama: SwissJob `_SCRAPER_CLASSES` **VACÍO**; SwissJob
-`_PROVIDER_CLASSES` con 7 nombres `retired` inertes (`careerjet`, `jooble` y
-los cinco partner restringidos). ReactPortfolio sin
-productores locales: `services/catalog/seam.py` devuelve `CoreCatalog()`
-directamente.
+- Inventario: **58 fuentes = 40 `local_removed` + 18 `retired`; cero
+  `local_pending`, `core_shadow` o publicadores locales**.
+- Ratchet: `{"core_owned":40,"local_pending":0,"sources":58}`; fecha de
+  verificación 2026-10-16.
+- Suites de retirada: SwissJob **783 passed, 4 warnings**; ReactPortfolio
+  **1740 passed, 1 skipped**. Los CI finales y las sondas están en §0.1.
+- Registros de providers y scrapers locales vacíos; los paquetes retirados no
+  son importables en las imágenes. Portfolio resuelve sus seis capacidades a
+  `core_primary`.
+- El worker SwissJob escucha sólo `default,ai`. Core observa 49/49 scopes
+  ejecutables; JSearch es la única dispensa manual y registra cero ejecuciones
+  desde ella.
 
 ## 3. Dónde estamos respecto a la definición de terminado (§10)
 
-| Condición del §10 | Estado | Qué falta |
+| Condición del §10 | Estado final | Evidencia |
 |---|---|---|
-| 100 % de fuentes operativas en `core_primary` o `local_removed` | **NO** · 16 de 40 | el corte agrupado (§10 de este doc) mueve 24; `proz`/`remoteco` están retirados |
-| Sin `local_pending` ni `core_shadow` | **NO** · 24 `local_pending` | ídem |
-| Cero productores externos activos en ambos productos | **En rama SÍ; en producción NO** | desplegar la rama tras la fusión |
-| Sin secretos ni tráfico de portales en los productos | **En rama SÍ** (`check_no_secrets` 0) · en producción las credenciales de Adzuna/JSearch siguen en el `.env` del Portfolio | rotarlas a `CORE_ADZUNA_APP_ID/APP_KEY` y `CORE_JSEARCH_RAPIDAPI_KEY` en el core del NAS y retirarlas del Portfolio en el corte |
-| Sin catálogo compuesto ni fallback local | **NO** · `CompositeCatalog` y `FallbackCatalog` existen pero no se construyen (vía de rollback) | borrarlos en el corte final |
-| Toda oferta nueva entra sólo por Core | **NO** | activar los scopes y apagar los productores locales en el mismo despliegue |
-| Ambos productos pasan sus recorridos sobre el corpus común | **En rama SÍ** (suites + fidelidad G7/G8 sobre 18 rutas) | repetir contra producción tras el corte |
-| Sondas productivas confirman invariantes | **NO ejecutadas** (no hay nada desplegado) | `probe_core_final.py` y afines tras el corte |
-| Contrato, inventario y checks atados al SHA fusionado y desplegado | **NO** | fusión aprobada + despliegue + actualizar `source_ownership.json` al SHA |
+| 100 % de fuentes operativas en `core_primary` o `local_removed` | **CUMPLE** | 40 `local_removed`; 18 `retired` explícitas |
+| Sin `local_pending` ni `core_shadow` | **CUMPLE** | inventario y ratchet 40/0/58 |
+| Cero productores externos activos en ambos productos | **CUMPLE** | sondas: cero módulos/registros; imágenes sin productores |
+| Sin secretos ni tráfico de portales en los productos | **CUMPLE** | sondas y Compose: cero credenciales/marcadores locales |
+| Sin catálogo compuesto ni fallback local | **CUMPLE** | retirada física de `CompositeCatalog`/`FallbackCatalog`; seis capacidades Portfolio en `core_primary` |
+| Toda oferta nueva entra sólo por Core | **CUMPLE** | Core 49/49 scopes ejecutables; publicadores locales 0 |
+| Ambos productos pasan sus recorridos sobre el corpus común | **CUMPLE** | suites completas y sondas productivas verdes |
+| Sondas productivas confirman invariantes | **CUMPLE** | Core, SwissJob y Portfolio terminan con código 0 el 2026-10-16 |
+| Contrato, inventario y checks atados a SHAs fusionados/desplegados | **CUMPLE** | Core `5b3bf3d`, SwissJob `5002445` + Compose `f381979`, Portfolio `c47b7a3`; CI final verde |
 
-Lectura honesta: **la parte de ingeniería está terminada y verificada; la parte
-de operación no ha empezado**, y no debe empezar sin el propietario (contrato
-§6 fase -1: «no se fusiona ni despliega antes de completar DT-144 y obtener la
-aprobación final»).
+Lectura final: **ingeniería y operación están terminadas y verificadas**. No
+queda una excepción local ni una acción pendiente de migración.
 
 ## 4. Todo lo migrado, fuente a fuente
 
@@ -602,7 +599,7 @@ aprobación final»).
 Cortadas en el corte nativo del 2026-09-22 (`docs/audits/POINT4_CUTOVER_2026-09-22.md`).
 No se tocaron en DT-144.
 
-### 4.2 Oleada ReactPortfolio (11 · `local_pending` con adaptador)
+### 4.2 Oleada ReactPortfolio (11 · hoy `local_removed`)
 
 Todas tienen: adaptador Core, `provision_<fuente>.py` (scope nace DESHABILITADO),
 `SourceSpec` en `services/core_source_compat.py` del Portfolio (conserva las
@@ -629,13 +626,12 @@ ya no registran caché ni actualizador; barridos G7/G8 saltan con motivo y
 prueban un agregado hostil sobre las 18 rutas; la costura sirve `CoreCatalog()`
 sin compuesto.
 
-### 4.3 Oleada SwissJob (14 · `local_pending` con adaptador)
+### 4.3 Oleada SwissJob (14 · hoy `local_removed`)
 
-Aquí no hay rutas por fuente que conservar: el BFF ya lee el feed del núcleo sin
-lista blanca, así que el traspaso es apagar el productor (`_SCRAPER_CLASSES`
-vacío; cada fuente añadida a `SOURCES_DECIDED_IN_ADVANCE` en
-`backend/services/harvest_window.py`). Los módulos legados siguen en el árbol
-como rollback.
+Aquí no había rutas por fuente que conservar: el BFF ya leía el feed del núcleo
+sin lista blanca. Durante la oleada el traspaso vació `_SCRAPER_CLASSES` y marcó
+las fuentes decididas; en la retirada final desaparecieron también esos
+módulos, registros y el código de ventana local.
 
 | Fuente | Core | CI | Mecanismo y hallazgo clave | Evidencia |
 |---|---|---|---|---|
@@ -670,7 +666,7 @@ Infraestructura transversal añadida en esta oleada:
 `medjobs`, `reliefweb`, `translatorscafe`, `undpjobs`, `untalent` y los cinco
 partner restringidos (`jobcloud_partner`, `linkedin_authorized`,
 `indeed_partner`, `glassdoor_partner`, `xing_partner`). Cero publicadores, cero
-credenciales; las clases que quedan registradas no emiten peticiones.
+credenciales y cero clases locales registradas.
 
 ## 5. Lo que NO está migrado y por qué
 
@@ -684,11 +680,10 @@ Evidencia: [`2026-10-15-dt144-proz-remoteco-analysis.json`](../audits/2026-10-15
 intentó resolver desafíos ni usar navegador o proxy: se midió si una petición
 conforme funciona, y no.
 
-**Nota para el corte sobre los colegios:** los ocho `swiss_schools_*` tienen
-adaptador, pero HOY el colector legado publica observaciones al núcleo
-(`backend/services/schools/producer.py` → `POST /v1/schools/{monitor_id}/jobs`).
-Al habilitar sus scopes en Core, ese empuje debe apagarse **en el mismo corte**
-o el corpus escolar recibiría las mismas ofertas por dos caminos.
+**Corte escolar ejecutado:** los ocho `swiss_schools_*` tienen adaptador Core y
+el antiguo empuje `backend/services/schools/producer.py` fue retirado en el
+mismo corte. La sonda final confirma `CoreSchools`, cero scrapers escolares y
+cero productores locales.
 
 ## 6. Cómo se migra un portal (receta ya rodada)
 
@@ -840,36 +835,29 @@ autenticado de solo lo necesario para comprobar Actions. Verificados como
     un momento; probar varias cabeceras, varias redes y el archivo antes de
     sentenciar.
 
-## 10. Lo que queda: el corte agrupado (TODO es del propietario)
+## 10. Corte agrupado ejecutado
 
-Nada de esto se ejecuta sin aprobación explícita. Orden sugerido, derivado del
-contrato §6 (fases 8-10) y de lo medido:
+1. **HECHO · `proz` y `remoteco` retirados:** decisión explícita, inventario y
+   registros actualizados.
+2. **HECHO · CI de ambos repositorios:** suites, lint, builds, Compose y
+   ratchets verdes; ejecuciones finales enumeradas en §0.1.
+3. **HECHO · credenciales:** las necesarias viven en Core; los consumidores no
+   contienen credenciales de portales. JSearch quedó manualmente deshabilitado
+   por decisión del propietario y sin reintento.
+4. **HECHO · fusiones y despliegue:** Core `5b3bf3d`, Portfolio `c47b7a3`,
+   SwissJob `5002445`; corrección de Compose `f381979` aplicada con candidato
+   validado y rollback conservado.
+5. **HECHO · scopes:** 49/49 scopes ejecutables habilitados, observados y con
+   estado; JSearch es la única dispensa y no cuenta como ejecutable habilitado.
+6. **HECHO · retirada local:** 100 módulos, 87 pruebas puramente locales,
+   dependencias, fallbacks, cachés, credenciales y cola `scraping` retirados.
+7. **HECHO · sondas productivas:** Core, SwissJob y Portfolio pasan; cero
+   fallos declarados y cero productores locales importables.
+8. **HECHO · inventario/cierre:** 40 `local_removed`, 18 `retired`, ratchet
+   40/0/58, contrato y DT-144 cerrados el 2026-10-16.
 
-1. **HECHO · `proz` y `remoteco` retirados** (§5): `state: retired`, fuera del
-   registro de providers de SwissJob y decisión registrada en el inventario.
-2. **Confirmar la CI de ReactPortfolio** (`04a020d`, `ffcc0ba`, `5f03c68`).
-3. **Credenciales a Core en el NAS**: `CORE_ADZUNA_APP_ID/APP_KEY`,
-   `CORE_JSEARCH_RAPIDAPI_KEY` (hoy en el `.env` del Portfolio).
-4. **Fusionar las dos ramas** en sus `main` (aprobación explícita) y desplegar
-   Core PRIMERO (`scripts/deploy_nas.sh core`), luego BFF y Portfolio.
-5. **Provisionar y habilitar los 24 scopes** con los `provision_*.py`
-   (`provision_exact(session, source, SCOPE_PARAMS, enabled=True)`); los
-   colegios se provisionan juntos (`provision_swiss_schools.py` +
-   `provision_isp_workday.py`) y en el mismo paso se apaga el empuje escolar
-   legado (`SchoolProducer`).
-6. **Drenar y retirar los productores locales**: con la rama desplegada ya no
-   se construyen; borrar entonces los módulos legados, `CompositeCatalog` y
-   `FallbackCatalog`, y los tests que los fijaban.
-7. **Sondas productivas** (`probe_core_final.py`, `probe_swissjob_final.py`,
-   `probe_portfolio_final.py`, en `docs/audits/2026-10-10-optimization/`) y
-   censo de salud: cero `local_pending`, cero
-   `apagados_por_bloqueo` inesperados, oferta nueva sólo por Core.
-8. **Inventario al SHA desplegado**: `state: core_primary`/`local_removed`,
-   ratchet esperado `{"core_owned":40,"local_pending":0,…}`, y cerrar DT-144 en
-   DEUDA_TECNICA.
-
-Rollback hasta el paso 6: revertir el commit del portal reconecta su productor;
-después del paso 6, el §11 del contrato (incidencia registrada, temporal).
+Desde este punto cualquier reactivación local sólo puede seguir el rollback de
+incidencia temporal del §11 del contrato o una ADR que cumpla su §12.
 
 ## 11. Mapa de ficheros
 
@@ -879,7 +867,8 @@ después del paso 6, el §11 del contrato (incidencia registrada, temporal).
 - Inventario: `docs/unificacion/source_ownership.json`; ratchet
   `scripts/check_source_ownership.py`; secretos `scripts/check_no_secrets.py`
 - Evidencia: `docs/audits/2026-10-1[45]-dt144-*.json` (uno por portal, más
-  métricas de producción del día 14, sonda y análisis de proz/remoteco)
+  métricas de producción del día 14, sonda y análisis de proz/remoteco) y
+  `docs/audits/2026-10-16-dt144-final-cutover.json` (cierre productivo)
 - Adaptadores: `jobhunt_core/harvest/providers/native_*.py`; registro en
   `providers/__init__.py`, `registry.py`, `admission.py`
 - Provisión: `jobhunt_core/provision_<fuente>.py` (todos deshabilitados)

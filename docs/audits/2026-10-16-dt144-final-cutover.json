@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-10-16",
+  "status": "complete",
+  "objective": "Core is the sole external job-offer publisher; SwissJob and ReactPortfolio are consumers.",
+  "inventory": {
+    "sources": 58,
+    "local_removed": 40,
+    "retired": 18,
+    "local_pending": 0,
+    "core_shadow": 0,
+    "active_local_publishers": 0
+  },
+  "releases": {
+    "core": {
+      "image": "swissjob-core:point5-5b3bf3d",
+      "release": "5b3bf3d",
+      "alembic": "core0055"
+    },
+    "swissjob": {
+      "backend_image": "swissjob-backend:point5-5002445",
+      "worker_image": "swissjob-worker:point5-5002445",
+      "compose_transform_main": "f381979"
+    },
+    "reactportfolio": {
+      "backend_image": "portfolio-backend:board-c47b7a3",
+      "worker_image": "portfolio-backend:board-c47b7a3"
+    }
+  },
+  "ci": {
+    "reactportfolio_main": 38794582363,
+    "swissjob_removal_main": 38794769320,
+    "swissjob_runtime_main": 38801340232,
+    "swissjob_live_compose_main": 38804569607,
+    "swissjob_docker_context_main": 38809368125,
+    "swissjob_worker_queue_pull_request": 38811880988,
+    "swissjob_worker_queue_push": 38811859394,
+    "swissjob_worker_queue_main": 38813007893,
+    "conclusion": "success"
+  },
+  "probes": {
+    "core": {
+      "failures": [],
+      "ready": {
+        "status": "ready",
+        "authoritative": true,
+        "release": "5b3bf3d",
+        "alembic": "core0055"
+      },
+      "harvest": {
+        "enabled": 49,
+        "observed": 49,
+        "with_state": 49,
+        "disabled_by_blocks": 0,
+        "alerts": []
+      },
+      "delivery": {
+        "delivered": 26193,
+        "dead_total": 0,
+        "oldest_pending_s": 0.0
+      },
+      "pending_staging": 0,
+      "capture_slot_exists": false,
+      "jsearch_waiver": {
+        "scopes": 1,
+        "enabled": 0,
+        "manually_disabled": 1,
+        "disabled_by_blocks": 0,
+        "runs_since_waiver": 0
+      }
+    },
+    "swissjob": {
+      "failures": [],
+      "authorities": {
+        "catalog": "CoreCatalog",
+        "matching": "CoreMatching",
+        "profiles": "LocalProfile",
+        "schools": "CoreSchools"
+      },
+      "local_producer_modules_present": [],
+      "registered_providers": [],
+      "registered_scrapers": [],
+      "school_scrapers": 0,
+      "portal_credentials_present": [],
+      "forbidden_distributions_present": [],
+      "active_snapshot_errors": 0,
+      "pending_snapshots": 0,
+      "active_users": 2,
+      "linked_active_users": 2
+    },
+    "reactportfolio": {
+      "failures": [],
+      "routing_modes": {
+        "applications": [
+          "core_primary"
+        ],
+        "catalog": [
+          "core_primary"
+        ],
+        "documents": [
+          "core_primary"
+        ],
+        "matching": [
+          "core_primary"
+        ],
+        "saved_searches": [
+          "core_primary"
+        ],
+        "schools": [
+          "core_primary"
+        ]
+      },
+      "local_modules_present": [],
+      "portal_credentials_present": [],
+      "forbidden_direct_requirements_present": [],
+      "forbidden_distributions_present": [],
+      "background_schedulers_enabled": true
+    }
+  },
+  "operational_inventory": {
+    "swissjob_worker_queues": [
+      "default",
+      "ai"
+    ],
+    "swissjob_compose_forbidden_markers": 0,
+    "reactportfolio_compose_forbidden_markers": 0
+  },
+  "physical_removal": {
+    "swissjob_modules": 60,
+    "swissjob_local_only_tests": 58,
+    "reactportfolio_modules": 40,
+    "reactportfolio_local_only_tests": 29
+  },
+  "suite_reference": {
+    "swissjob": "783 passed, 4 warnings",
+    "reactportfolio": "1740 passed, 1 skipped"
+  },
+  "notes": [
+    "JSearch was not retried and remains manually disabled.",
+    "The Core tree was byte-identical to the deployed 5b3bf3d release, so Core was not rebuilt or recreated.",
+    "The SwissJob worker Compose candidate was validated before promotion; the previous Compose backup was retained for incident rollback."
+  ]
+}
