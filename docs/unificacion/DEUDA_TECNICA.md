@@ -111,8 +111,9 @@ continuar sin rediseñarlo.
   ni permite retirar, simular o marcar como saludable ese scope.
 - El primer ciclo se acepta como 49/49 scopes ejecutables `ok`, cero en curso y
   un único fallo externo conocido: JSearch `http_429`. Su scope permanece
-  configurado en Core pero se deshabilita temporalmente hasta el reset para que
-  el beat no efectúe otra petición durante el corte. Debe ser el único scope
+  configurado en Core pero permanece deshabilitado manualmente para que el beat
+  no efectúe otra petición. DT-144 no espera ni programa un reintento; una
+  reactivación futura será una actuación separada. Debe ser el único scope
   deshabilitado y no llevar marca de autoapagado; cualquier otro fallo vuelve a
   cerrar la puerta.
 - La validación posterior exigirá un segundo ciclo nativo 49/49 con ventana
@@ -207,6 +208,25 @@ continuar sin rediseñarlo.
   Portfolio y ninguna otra causa de rojo: las seis rutas están en
   `core_primary`, no hay providers registrados ni credenciales de portal y los
   schedulers de producto permanecen activos con cosecha diaria deshabilitada.
+- Auditoría transitiva posterior: los recuentos 41/37 medían sólo el primer
+  corte directo. El alcance completo y verificable es **60 módulos SwissJob**
+  (paquete `providers`, 41 productores/tareas y 18 helpers/modelos usados sólo
+  por ellos) y **40 módulos Portfolio** (los 37 anteriores más
+  `circuit_breaker`, `job_matcher` y el registro local vacío). Se conservan las
+  piezas con consumidores reales: `models.Job`,
+  `scrapers.swiss_schools_config`, `utils.text`, y en Portfolio
+  `beautifulsoup4`/`SCRAPER_PROXY_URL` para detalle y colegios.
+- Optimización exigida en la imagen limpia: retirar de SwissJob
+  `beautifulsoup4`, `playwright`, la instalación de Chromium y su configuración
+  Compose; retirar de Portfolio `sentence-transformers`, `scikit-learn`,
+  `numpy`, `torch` y la precarga del modelo. Las sondas finales ya fallan si
+  estos módulos o distribuciones siguen instalados. Los endpoints públicos de
+  estado/warmup se preservan con semántica Core-only, sin motor local.
+- Decisión prevalente del propietario en este checkpoint: continuar ahora, sin
+  esperar al 2 de noviembre y **sin el reintento seguro de JSearch**. JSearch
+  queda configurado y deshabilitado; no vuelve a ser una puerta de DT-144.
+  Reanudación exacta: aprobación informada del borrado ampliado, retirada y
+  migración de pruebas, suites/CI, fusión, despliegue limpio y sondas finales.
 
 ### Checkpoint 2026-10-15 · Decisión de retirada y comienzo del corte
 

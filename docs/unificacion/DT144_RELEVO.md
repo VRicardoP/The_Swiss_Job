@@ -12,11 +12,10 @@
 > Última actualización: **2026-10-15, corte en curso**. Las dos ramas iniciales
 > y la corrección de redacción están fusionadas; Core `5b3bf3d` está desplegado.
 > Los 33 scopes DT-144 están habilitados, SwissJob local está detenido y
-> Portfolio local está verificablemente quiescente. El primer ciclo válido es
-> el ciclo nativo de las 12:10 Europe/Zurich: 49 de 50 scopes terminaron `ok` y
-> JSearch quedó pendiente por agotamiento comprobado de su cuota externa. El
-> propietario ordenó continuar sin esperar al reset ni reintentar JSearch; la
-> excepción y sus límites están al comienzo de §0.1.
+> Portfolio local está verificablemente quiescente. El segundo ciclo nativo ya
+> terminó con **49/49 scopes ejecutables `ok`**, delivery drenado y cero filas de
+> JSearch. El propietario ordenó continuar sin esperar al reset ni reintentar
+> JSearch; la excepción y sus límites están al comienzo de §0.1.
 
 ---
 
@@ -49,10 +48,10 @@ hasta el siguiente checkpoint:
   aceptado como **49/49 scopes ejecutables `ok` + JSearch configurado en Core
   con un único fallo externo conocido `http_429`**. No se acepta ningún otro
   error, scope ausente, ejecución pendiente, autoapagado, cola pendiente o
-  tráfico local. Para impedir que el beat contradiga la orden y lo reintente en
-  la siguiente ventana, JSearch se deshabilita temporalmente hasta el reset de
-  cuota; no se elimina y su validación positiva queda diferida, sin bloquear el
-  cierre de DT-144.
+  tráfico local. Para impedir que el beat contradiga la orden, JSearch permanece
+  deshabilitado manualmente. DT-144 no programa ni espera ningún reintento: una
+  futura reactivación será una actuación separada, deliberada y no condiciona
+  este cierre.
 - El segundo gate se ejecutará sobre los mismos 49 scopes habilitados, mediante
   el dispatcher nativo y una ventana nueva. Debe producir 49/49 `ok`; JSearch
   debe constar como el único scope deshabilitado, por decisión del propietario
@@ -75,8 +74,9 @@ hasta el siguiente checkpoint:
   cambian código operativo: la autoridad para la cabeza documental es siempre
   `github/main`, que debe actualizarse con `git fetch github main` al reanudar;
   ningún SHA documental de este párrafo es un objetivo de despliegue. Las dos
-  preparaciones están fusionadas, pero **no se han desplegado** porque el gate
-  JSearch sigue en 49/50.
+  preparaciones se fusionaron y sus consumidores fueron desplegados después;
+  la fotografía viva y los SHAs actuales se detallan en el checkpoint de
+  limpieza final de esta misma sección.
 - Core productivo: cuatro contenedores en `swissjob-core:point5-5b3bf3d`,
   `/v1/ready` publica `ready`, `authoritative=true`, Alembic `core0055`; los
   cuatro procesos comparten release y el worker de cosecha nuevo no ha
@@ -248,10 +248,14 @@ hasta el siguiente checkpoint:
   registro vacío pasan. La colección de pytest demuestra que quedan por migrar
   pruebas históricas que importan esos módulos; no desactivar CI ni ocultarlas.
 - SwissJob se prepara en `/tmp/swissjob-dt144-deploy-a2ba944`, rama
-  `feat/dt144-final-cleanup`. La retirada física exacta incluye 41 módulos
-  locales y sus pruebas; aún no se aplicó. Es una operación recuperable por
-  Git, pero exige la aprobación informada específica anotada en el turno que la
-  ejecute.
+  `feat/dt144-final-cleanup`. La primera lista incluía 41 productores directos;
+  el trazado transitivo elevó el alcance correcto a **60 módulos**: el paquete
+  `providers`, los 41 directos y 18 helpers/modelos cuyo único consumidor es la
+  cosecha local. También quedan sin uso `beautifulsoup4`, `playwright`, la capa
+  de instalación de Chromium y sus variables de Compose. Se conservan
+  `models.Job`, `scrapers.swiss_schools_config` y `utils.text` porque tienen
+  consumidores de producto comprobados. La retirada aún no se aplicó y es
+  recuperable por Git, pero exige aprobación informada específica.
 - Segundo ciclo nativo: terminó con 49/49 scopes `ok`, cero tareas en curso o
   en error y cero filas JSearch. El censo total es 79 scopes, 49 habilitados;
   los otros scopes deshabilitados son sombras/históricos y JSearch es la
@@ -354,6 +358,22 @@ hasta el siguiente checkpoint:
   exactamente `core_primary`; su única causa de rojo son los 37 módulos locales
   que enumera nominalmente. Coinciden con las eliminaciones preparadas en el
   worktree, de modo que el gate y el diff físico tienen el mismo alcance.
+- El segundo trazado nominal/transitivo evita cerrar con implementaciones
+  inaccesibles todavía instaladas. En SwissJob, la sonda final enumera ahora
+  nominalmente los 60 módulos y exige además que `beautifulsoup4` y `playwright`
+  no estén en la imagen. En Portfolio, el alcance pasa de 37 a **40 módulos** al
+  incluir `circuit_breaker`, el matcher local y su registro vacío; la sonda exige
+  también la ausencia de `sentence-transformers`, `scikit-learn`, `numpy` y
+  `torch`. El router conservará `/ai-match/status` y `/warmup` como contrato
+  Core-only, sin cargar el modelo local. `beautifulsoup4` y `SCRAPER_PROXY_URL`
+  de Portfolio se conservan: siguen siendo usados por detalle/colegios y no son
+  residuos de cosecha.
+- **Punto vigente de reanudación:** no ejecutar ni programar JSearch. Obtener la
+  aprobación informada sobre el alcance ampliado (60 módulos SwissJob, 40
+  módulos Portfolio, sus pruebas exclusivas y las dependencias anteriores),
+  aplicar la retirada, migrar sólo las pruebas de invariantes Core-only, pasar
+  suites/CI, fusionar, desplegar las imágenes limpias y ejecutar las tres sondas
+  finales. El gate operativo de Core ya está cerrado en 49/49.
 
 ---
 
