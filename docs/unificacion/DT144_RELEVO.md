@@ -248,21 +248,19 @@ hasta el siguiente checkpoint:
   registro vacío pasan. La colección de pytest demuestra que quedan por migrar
   pruebas históricas que importan esos módulos; no desactivar CI ni ocultarlas.
 - SwissJob se prepara en `/tmp/swissjob-dt144-deploy-a2ba944`, rama
-  `feat/dt144-final-cleanup`, limpia y sin cambios de código: la retirada
-  física propuesta (39 módulos, cuatro tareas/producer, registro y scheduler)
-  aún no se aplicó. Es una operación recuperable por Git, pero exige la
-  aprobación informada específica anotada en el turno que la ejecute.
-- Segundo ciclo nativo: una lectura de sólo consulta tomada durante la ventana
-  mostró 25 scopes ya despachados, 24 `ok` y Arbeitnow todavía `running`;
-  JSearch no fue despachado. El censo total es 79 scopes, 49 habilitados. Los
-  otros scopes deshabilitados son sombras/históricos; entre los scopes nativos
-  esperados, JSearch es la excepción manual. Repetir la lectura sólo cuando el
-  ciclo haya terminado y exigir 49 terminales `ok`; no llamar a JSearch.
+  `feat/dt144-final-cleanup`. La retirada física exacta incluye 41 módulos
+  locales y sus pruebas; aún no se aplicó. Es una operación recuperable por
+  Git, pero exige la aprobación informada específica anotada en el turno que la
+  ejecute.
+- Segundo ciclo nativo: terminó con 49/49 scopes `ok`, cero tareas en curso o
+  en error y cero filas JSearch. El censo total es 79 scopes, 49 habilitados;
+  los otros scopes deshabilitados son sombras/históricos y JSearch es la
+  excepción nativa manual verificada.
 - Reanudación exacta: (1) obtener la aprobación informada para borrar código y
   pruebas locales recuperables por Git; (2) completar las dos limpiezas y
-  migrar las pruebas a invariantes Core-only; (3) esperar el terminal 49/49;
-  (4) suites, commits, PR/CI y fusión; (5) desplegar Core final, SwissJob
-  BFF+worker y Portfolio; (6) sondas finales, inventario/ratchet y cierre.
+  migrar las pruebas a invariantes Core-only; (3) suites, commits, PR/CI y
+  fusión; (4) desplegar Core final, SwissJob BFF+worker y Portfolio; (5) sondas
+  finales, inventario/ratchet y cierre. El terminal 49/49 ya está verificado.
 - Checkpoint `2026-10-15T19:14+02:00`: el PR 13 de relevo quedó completamente
   verde. Su único fallo inicial, `docker-build`, fue un `BrokenPipeError`
   descargando PyTorch; se repitió sólo ese job sobre el mismo SHA `c6bd5af` y
@@ -320,10 +318,11 @@ hasta el siguiente checkpoint:
   `2026-10-15T15:54:15Z`. La ejecución productiva por stdin es de sólo lectura y
   terminó con `failures: []`: readiness autoritativo, 49/49, delivery/staging
   drenados y slot de captura ausente. No llama a ningún proveedor.
-- La lectura posterior del segundo ciclo contiene 42 filas: 41 `ok` y
-  `zentraljob` todavía `running`, cero errores y cero filas JSearch. La sonda de
-  estado global ya pasa, pero el gate de ciclo permanece abierto hasta que las
-  49 tareas de esa ventana estén terminales `ok`.
+- La lectura terminal del segundo ciclo contiene 49 filas y las 49 están `ok`,
+  sin tareas activas o erróneas y sin filas JSearch. La sonda de estado global
+  pasa también después de drenar las ocho entregas nuevas; ambas puertas quedan
+  cerradas. Evidencia:
+  `docs/audits/2026-10-15-dt144-second-cycle-production.json`.
 - La CI de `dcc653a` diagnosticó el límite de la retirada parcial: backend
   ejecutó 1.919 casos, con 1.895 aprobados, 15 fallos, 11 errores y 4 `xfail`.
   Todos salvo el caso de timeout de carta LLM pertenecen a pruebas de providers,

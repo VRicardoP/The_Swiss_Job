@@ -179,8 +179,11 @@ continuar sin rediseñarlo.
   posteriores a `2026-10-15T17:54:15+02:00`. Ejecutada por stdin y en sólo
   lectura contra producción, pasa sin fallos: Core `ready`/autoritativo,
   delivery y staging drenados, y slot de captura ausente. El gate independiente
-  del segundo ciclo avanzó a 41 `ok` + `zentraljob` en curso, cero errores y
-  cero ejecuciones de JSearch; todavía no se declara 49/49 terminal.
+  del segundo ciclo terminó después con 49/49 `ok`, cero tareas en curso o en
+  error y cero ejecuciones de JSearch. Esta puerta operativa queda cerrada sin
+  esperar al 2 de noviembre ni efectuar el reintento dispensado.
+  Evidencia saneada:
+  `docs/audits/2026-10-15-dt144-second-cycle-production.json`.
 - La CI de `dcc653a` deja verdes lint, Compose, Docker, frontend, ratchet y la
   primera suite Core. Backend llega a 1.895 aprobadas, pero queda rojo por 15
   fallos y 11 errores: salvo un timeout de carta LLM pendiente de reproducir en
