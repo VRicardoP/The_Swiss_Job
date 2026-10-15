@@ -14,8 +14,9 @@
 > Los 33 scopes DT-144 están habilitados, SwissJob local está detenido y
 > Portfolio local está verificablemente quiescente. El primer ciclo válido es
 > el ciclo nativo de las 12:10 Europe/Zurich: 49 de 50 scopes terminaron `ok` y
-> JSearch quedó pendiente por agotamiento comprobado de su cuota externa, como
-> detalla §0.1.
+> JSearch quedó pendiente por agotamiento comprobado de su cuota externa. El
+> propietario ordenó continuar sin esperar al reset ni reintentar JSearch; la
+> excepción y sus límites están al comienzo de §0.1.
 
 ---
 
@@ -39,6 +40,30 @@
 
 Este bloque **prevalece sobre las fotografías anteriores de este documento**
 hasta el siguiente checkpoint:
+
+- **Decisión operativa prevalente del propietario:** continuar el corte sin
+  esperar al `2026-11-02` y sin volver a llamar a JSearch. Quedan supersedidas
+  únicamente las instrucciones anteriores que exigían reintentar JSearch y
+  obtener 50/50 antes de avanzar; se conserva su evidencia histórica.
+- La dispensa no oculta ni convierte el fallo en éxito: el primer ciclo queda
+  aceptado como **49/49 scopes ejecutables `ok` + JSearch configurado en Core
+  con un único fallo externo conocido `http_429`**. No se acepta ningún otro
+  error, scope ausente, ejecución pendiente, autoapagado, cola pendiente o
+  tráfico local. Para impedir que el beat contradiga la orden y lo reintente en
+  la siguiente ventana, JSearch se deshabilita temporalmente hasta el reset de
+  cuota; no se elimina y su validación positiva queda diferida, sin bloquear el
+  cierre de DT-144.
+- El segundo gate se ejecutará sobre los mismos 49 scopes habilitados, mediante
+  el dispatcher nativo y una ventana nueva. Debe producir 49/49 `ok`; JSearch
+  debe constar como el único scope deshabilitado, por decisión del propietario
+  y sin marca de autoapagado. Después se mantienen sin rebaja las sondas de los
+  dos consumidores, la retirada física, inventarios, suites, CI y sondas finales.
+- Ejecución de la dispensa a las `2026-10-15T17:54:15+02:00`: se bloqueó la
+  fila única de JSearch, se comprobó que estaba habilitada y sin marca del
+  kill-switch, y se deshabilitó sólo ese scope. La lectura posterior devuelve
+  49 habilitados/con estado, cero autoapagados, `alertas=[]`, delivery sin
+  pendientes ni *dead-letter* y JSearch deshabilitado, sin cosecha completa y
+  con sus dos fallos históricos. No se hizo ninguna llamada al proveedor.
 
 - Fusiones de código verificadas: `ReactPortfolioServer/main` incorporó
   `682a3e589d137fe180c2b905a508250e6f0d1e10` (PR 2, CI de `main`
@@ -181,14 +206,15 @@ hasta el siguiente checkpoint:
   inspección posterior a las fusiones confirma que producción no se
   autodesplegó: BFF/worker siguen en `4017081`, Portfolio en `444f072` y Core en
   `5b3bf3d`; cero reinicios y los productores locales permanecen quiescentes.
-- Punto exacto de reanudación: no contar este ciclo como superado hasta obtener
-  50/50 `ok`. Cuando la cuota esté disponible —o se aporte otra credencial
-  válida sin coste— reejecutar **sólo JSearch** con la misma clave determinista
-  de la ventana; después desplegar BFF/worker de SwissJob y backend/worker de
-  Portfolio, sondar ambos consumidores, lanzar un segundo dispatcher nativo con
-  ventana única y exigir otro 50/50. Sólo entonces retirar físicamente
-  productores, credenciales, `CompositeCatalog` y `FallbackCatalog`, actualizar
-  el inventario y repetir suites, CI, despliegues y sondas finales.
+- Punto exacto de reanudación: deshabilitar JSearch explícitamente por cuota;
+  desplegar BFF/worker de SwissJob y backend/worker de Portfolio desde
+  worktrees limpios de sus `main`; sondar ambos consumidores; lanzar un segundo
+  ciclo nativo con ventana única para los 49 scopes restantes y exigir 49/49.
+  Sólo entonces
+  retirar físicamente productores, credenciales, `CompositeCatalog` y
+  `FallbackCatalog`, actualizar el inventario y repetir suites, CI, despliegues
+  y sondas finales. No efectuar una llamada de prueba a JSearch durante este
+  corte.
 
 ---
 
