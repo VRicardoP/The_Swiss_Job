@@ -51,9 +51,7 @@ async def main() -> int:
             "observed": health.get("scopes"),
             "enabled": health.get("censo", {}).get("habilitados"),
             "with_state": health.get("censo", {}).get("con_estado"),
-            "disabled_by_blocks": health.get("censo", {}).get(
-                "apagados_por_bloqueo"
-            ),
+            "disabled_by_blocks": health.get("censo", {}).get("apagados_por_bloqueo"),
             "alerts": health.get("alertas", []),
         },
         "delivery": delivery,

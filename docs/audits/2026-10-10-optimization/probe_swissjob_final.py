@@ -4,6 +4,7 @@
 import asyncio
 import importlib.util
 import json
+import os
 
 from sqlalchemy import func, select
 
@@ -20,36 +21,73 @@ from services.profiles import LocalProfile, resolve_profiles
 from services.schools import CoreSchools, resolve_schools
 
 
-EXPECTED_PROVIDERS = {
-    "adzuna",
-    "careerjet",
-    "glassdoor_partner",
-    "indeed_partner",
-    "jobcloud_partner",
-    "jobicy",
-    "jooble",
-    "jsearch",
-    "linkedin_authorized",
-    "proz",
-    "remoteco",
-    "xing_partner",
+LOCAL_PRODUCER_MODULES = {
+    *(
+        f"providers.{name}"
+        for name in (
+            "adzuna",
+            "authenticjobs",
+            "careerjet",
+            "dailyremote",
+            "himalayas",
+            "ictjobs",
+            "ilojobs",
+            "impactpool",
+            "jobicy",
+            "jooble",
+            "jsearch",
+            "proz",
+            "reliefweb",
+            "remoteco",
+            "remoteok",
+            "restricted",
+            "swisstechjobs",
+            "translatorscafe",
+            "undpjobs",
+            "untalent",
+        )
+    ),
+    *(
+        f"scrapers.{name}"
+        for name in (
+            "gastrojob",
+            "medjobs",
+            "myscience",
+            "schuljobs",
+            "stelle_admin",
+            "swiss_schools_base",
+            "swiss_schools_ecolint",
+            "swiss_schools_hautlac",
+            "swiss_schools_inspired",
+            "swiss_schools_isb",
+            "swiss_schools_iscs",
+            "swiss_schools_isp",
+            "swiss_schools_nae",
+            "swiss_schools_zis",
+            "tes",
+        )
+    ),
+    "services.harvest_persist",
+    "services.schools.producer",
+    "tasks.fetch_tasks",
+    "tasks.pipeline_tasks",
+    "tasks.scraping_tasks",
 }
-EXPECTED_SCRAPERS = {
-    "gastrojob",
-    "myscience",
-    "schuljobs",
-    "stelle_admin",
-    "tes",
-    "swiss_schools_ecolint",
-    "swiss_schools_hautlac",
-    "swiss_schools_inspired",
-    "swiss_schools_isb",
-    "swiss_schools_iscs",
-    "swiss_schools_isp",
-    "swiss_schools_nae",
-    "swiss_schools_zis",
+PORTAL_CREDENTIAL_NAMES = {
+    "ADZUNA_APP_ID",
+    "ADZUNA_APP_KEY",
+    "CAREERJET_AFFID",
+    "GLASSDOOR_PARTNER_KEY",
+    "INDEED_PARTNER_KEY",
+    "JOBCLOUD_PARTNER_API_KEY",
+    "JOOBLE_API_KEY",
+    "JSEARCH_RAPIDAPI_KEY",
+    "LINKEDIN_PARTNER_TOKEN",
+    "XING_PARTNER_TOKEN",
 }
-RETIRED_MODULES = {
+
+# Historical modules already removed before DT-144 must stay absent too.
+PREVIOUSLY_RETIRED_MODULES = {
     *(
         f"providers.{name}"
         for name in (
@@ -132,11 +170,12 @@ async def main() -> int:
             "schools": type(await resolve_schools(session, sample_user)).__name__,
         }
 
-    present_retired = sorted(
+    present_local_producers = sorted(
         module
-        for module in RETIRED_MODULES
+        for module in LOCAL_PRODUCER_MODULES | PREVIOUSLY_RETIRED_MODULES
         if importlib.util.find_spec(module) is not None
     )
+    portal_credentials_present = sorted(PORTAL_CREDENTIAL_NAMES & os.environ.keys())
     result = {
         "flags": {
             "profile_sync": settings.CORE_PROFILE_SYNC_ENABLED,
@@ -151,7 +190,8 @@ async def main() -> int:
         "registered_providers": sorted(provider_names),
         "registered_scrapers": sorted(scraper_names),
         "school_scrapers": len(school_scrapers),
-        "retired_modules_present": present_retired,
+        "local_producer_modules_present": present_local_producers,
+        "portal_credentials_present": portal_credentials_present,
     }
     failures = []
     if result["flags"] != {"profile_sync": True, "feedback": True, "facets": True}:
@@ -170,12 +210,14 @@ async def main() -> int:
         "schools": CoreSchools.__name__,
     }:
         failures.append("authority_seams_not_fixed")
-    if provider_names != EXPECTED_PROVIDERS:
-        failures.append("provider_registry_mismatch")
-    if scraper_names != EXPECTED_SCRAPERS or len(school_scrapers) != 8:
-        failures.append("scraper_registry_mismatch")
-    if present_retired:
-        failures.append("retired_modules_still_importable")
+    if provider_names:
+        failures.append("provider_registry_not_empty")
+    if scraper_names or school_scrapers:
+        failures.append("scraper_registry_not_empty")
+    if present_local_producers:
+        failures.append("local_producer_modules_still_importable")
+    if portal_credentials_present:
+        failures.append("portal_credentials_still_present")
     result["failures"] = failures
     print(json.dumps(result, sort_keys=True))
     return int(bool(failures))

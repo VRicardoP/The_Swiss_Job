@@ -256,6 +256,37 @@ continuar sin rediseñarlo.
   apareció ninguna segunda causa. Tras completar ese scope con la misma clave
   de ventana, esta sonda debe quedar verde antes de avanzar.
 
+### Checkpoint 2026-10-15 · Fusión segura de Portfolio y líneas base de consumidores
+
+- ReactPortfolio PR 2 se fusionó en `main` como
+  `682a3e589d137fe180c2b905a508250e6f0d1e10` después de dos ejecuciones
+  Backend CI completas y verdes. La fusión prepara la política final
+  (`BACKGROUND_SCHEDULERS_ENABLED=true`, cosecha diaria `false` y retirada de
+  tres credenciales del Compose); no se ha desplegado y no altera el gate
+  vigente 49/50.
+- SwissJob PR 5 conserva verdes tests backend/Core/frontend, builds, Compose y
+  ratchet. Los dos jobs `backend-lint` fallaron únicamente porque
+  `probe_core_final.py` no llevaba el formato Ruff esperado. La corrección
+  mecánica ya pasa localmente `ruff check scripts docs` y
+  `ruff format --check scripts docs`; se publica junto con las sondas finales
+  actualizadas antes de considerar fusionable la PR.
+- `probe_swissjob_final.py` ya representa el estado terminado: registros de
+  providers y scrapers vacíos, cero módulos productores importables y cero
+  nombres de credenciales de portal. Ejecutada por stdin y sin escritura en el
+  BFF vivo confirma las cuatro autoridades correctas, 2/2 perfiles enlazados y
+  cero snapshots pendientes/erróneos; falla, como debe, por 12 providers, 13
+  scrapers, 39 módulos locales y cinco nombres de credencial aún presentes.
+- `probe_portfolio_final.py` exige registro local vacío, cosecha diaria apagada,
+  ausencia de módulos productores y de `CompositeCatalog`/`FallbackCatalog`,
+  cero nombres de credenciales de portal y las seis capacidades exactamente
+  en `core_primary`. En el backend vivo verifica el routing 6/6 pero falla por
+  11 providers, 23 módulos locales, cosecha diaria todavía habilitada y tres
+  nombres de credencial. Ninguna sonda imprime valores secretos.
+- Este checkpoint no adelanta la retirada física: JSearch debe completar el
+  primer 50/50, después se despliegan y sondan consumidores, se exige un
+  segundo 50/50 y sólo entonces se eliminan los residuos que ahora enumeran
+  las sondas.
+
 ### Checkpoint 2026-10-14 · Fase -1 parcialmente completada
 
 - Inventario reconciliado: 58 fuentes, 16 `local_removed`, 26

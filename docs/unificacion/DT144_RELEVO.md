@@ -40,11 +40,13 @@
 Este bloque **prevalece sobre las fotografías anteriores de este documento**
 hasta el siguiente checkpoint:
 
-- Fusiones verificadas: `ReactPortfolioServer/main` = `8b38ddd5aefb36ca4e07d1ffceded93a04ba593b`
-  (CI `38706379993`, verde) y `The_Swiss_Job/main` =
-  `5b3bf3dad27a8575ab6d8f380d4343ba4f540ae3`. Esta última cabeza incluye la
-  corrección de redacción/despliegue de la PR 2; su run de `main`
-  `38715523686` terminó entero en verde.
+- Fusiones verificadas: `ReactPortfolioServer/main` =
+  `682a3e589d137fe180c2b905a508250e6f0d1e10`. La PR 2 de preparación del
+  consumidor se fusionó el 2026-10-15 tras dos CI verdes; **no se ha
+  desplegado** porque el gate JSearch sigue en 49/50. `The_Swiss_Job/main` =
+  `7f0c2da6fe3905915b29e0c7282b0b7ab5b1e84e`; la PR 5 de preparación sigue
+  abierta hasta publicar la corrección de formato de su sonda y obtener CI
+  completamente verde.
 - Core productivo: cuatro contenedores en `swissjob-core:point5-5b3bf3d`,
   `/v1/ready` publica `ready`, `authoritative=true`, Alembic `core0055`; los
   cuatro procesos comparten release y el worker de cosecha nuevo no ha
@@ -117,6 +119,16 @@ hasta el siguiente checkpoint:
   delivery drenado, staging drenado, slot de captura ausente y censo 50/50;
   falla únicamente por la alerta de JSearch sin ciclo completo. La sonda queda
   roja por la misma puerta real, no por expectativas obsoletas.
+- Las sondas finales de ambos consumidores ya exigen el objetivo final, no el
+  estado de rollback. La línea base viva de SwissJob confirma autoridades
+  `CoreCatalog`/`CoreMatching`/`LocalProfile`/`CoreSchools`, 2/2 perfiles
+  enlazados y cero snapshots pendientes o erróneos; permanece roja por 12
+  providers, 13 scrapers, 39 módulos productores importables y cinco nombres
+  de credencial local. Portfolio confirma sus seis capacidades exactamente en
+  `core_primary`; permanece rojo por cosecha diaria habilitada, 11 providers,
+  23 módulos productores/fallback importables y tres nombres de credencial.
+  Las sondas sólo enumeran nombres, nunca valores, y convierten estos residuos
+  en condiciones ejecutables del corte final.
 - Punto exacto de reanudación: no contar este ciclo como superado hasta obtener
   50/50 `ok`. Cuando la cuota esté disponible —o se aporte otra credencial
   válida sin coste— reejecutar **sólo JSearch** con la misma clave determinista
