@@ -9,8 +9,8 @@
 > está haciendo**, qué trampas ya se pisaron y qué queda, para que no haya que
 > reconstruirlo leyendo veinte checkpoints.
 >
-> Última actualización: **2026-10-15** (cuatro residuos cerrados; 13 portales
-> pendientes, todos de SwissJob).
+> Última actualización: **2026-10-15** (cuatro residuos cerrados; tes y
+> stelle_admin centralizados; 11 portales pendientes, todos de SwissJob).
 
 ---
 
@@ -26,8 +26,8 @@ fusión final aprobada por el propietario.
 
 | Repositorio | Rama de trabajo | Cabeza | `main` remoto (INTACTO) |
 |---|---|---|---|
-| SwissJob/Core (`The_Swiss_Job`) | `feat/fase-a-core` | `0725a42` | `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` |
-| ReactPortfolio (`ReactPortfolioServer`) | `feat/dt144-free-gate` | `ffcc0ba` | `5bf457afbde5b44a995acce4ef241324f066f836` |
+| SwissJob/Core (`The_Swiss_Job`) | `feat/fase-a-core` | `82c742d` | `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` |
+| ReactPortfolio (`ReactPortfolioServer`) | `feat/dt144-free-gate` | `5f03c68` | `5bf457afbde5b44a995acce4ef241324f066f836` |
 
 El worktree de ReactPortfolio está en `/tmp/reactportfolio-dt144-free-gate`
 (**`/tmp` es volátil**: si no existe, recrearlo con `git worktree add` desde
@@ -43,12 +43,12 @@ conserva `state=local_pending` con `core_adapter: true` hasta el corte agrupado.
 
 Jobicy, RemoteOK, Himalayas, SwissTechJobs, ICTJobs, SwissDevJobs, Job-Room,
 Adzuna, JSearch, DynamiteJobs, JobScout24 (los once de ReactPortfolio) más
-myScience y gastrojob (los dos primeros de SwissJob).
+myScience, gastrojob, tes y stelle_admin (los cuatro primeros de SwissJob).
 
-### Faltan 13, todos de SwissJob
+### Faltan 11, todos de SwissJob
 
-`tes`, los ocho `swiss_schools_*`, `stelle_admin`, `proz`, `remoteco` y
-`schuljobs`. Sus condiciones particulares están en §6.
+Los ocho `swiss_schools_*`, `schuljobs`, y `proz` y `remoteco` a la espera de
+decisión del propietario. Sus condiciones particulares están en §6.
 
 ## 3. Cómo se migra un portal (receta ya rodada)
 
@@ -150,6 +150,10 @@ min: son los últimos en cerrar.
   descarta cierres huérfanos y excluye `script`/`style`/`template`/`noscript`.
   Existe porque un parser que suponía etiquetas balanceadas **cortó una
   descripción real siete párrafos antes del final**.
+- **Un SPA no obliga a un navegador.** `jobs.admin.ch` parecía exigir Playwright
+  y resultó ser un React sobre una API JSON pública que su propio bundle
+  declara. Antes de dar por necesario un navegador: bajar el cascarón, leer el
+  bundle y buscar su `baseUrl`. Core no lleva Chromium y no debe llevarlo.
 - **`published_at` sólo del dato del portal.** Si no hay fecha utilizable se
   OMITE la clave: una cadena vacía llega al agregado como `published_at` vacío,
   que no es lo mismo que «desconocido».
@@ -166,15 +170,26 @@ min: son los últimos en cerrar.
 
 ## 6. Los 13 que faltan, con su condición real
 
-| Fuente | Estado medido | Nota para quien la coja |
+| Fuente | Estado MEDIDO el 2026-10-15 | Nota para quien la coja |
 |---|---|---|
-| `tes` | sano, `__NEXT_DATA__`, 1 oferta por página | el siguiente de la lista |
-| `swiss_schools_nae`, `_isp`, `_iscs`, `_ecolint`, `_hautlac` | sanos | misma receta |
-| `swiss_schools_inspired`, `_isb`, `_zis` | tablero vacío | **preservar la semántica de «vacío verificado»**: un cero verificado no es un cero silencioso |
-| `stelle_admin` | sano, Playwright | la imagen de Core **no lleva Chromium**; decisión del propietario: reimplementar sin navegador si es factible |
-| `proz` | 46 errores seguidos, **ninguna cosecha correcta** | investigar si hay transporte funcional antes de migrar: sin línea base no hay paridad que medir |
-| `remoteco` | 54 errores seguidos, **ninguna cosecha correcta** | igual que `proz` |
+| `swiss_schools_hautlac` | 1 oferta en el tablero | **empezar por aquí**: con ISCS son los dos únicos con paridad medible hoy |
+| `swiss_schools_iscs` | 2 ofertas | ídem |
+| `swiss_schools_zis`, `_isb`, `_ecolint`, `_inspired`, `_nae` | **tablero vacío, página 200** | el cero es el estado NORMAL de una watchlist: hace falta el «vacío verificado» (marcador estructural por tablero), no un `raise` |
+| `swiss_schools_inspired`, `_nae` | además, varios colegios por fuente | cada uno con su URL de carreras y filtro por nombre sobre un ATS de terceros; un bloqueo NO debe reportarse N veces |
+| `swiss_schools_isp` | no usa la base compartida | 467 líneas con su propio `normalize` (Workday) y URL dinámica |
 | `schuljobs` | último intento sin desenlace, cursor sin bootstrap completo | resolver paridad antes de migrar |
+| `proz` | **403 con challenge de Cloudflare** en feed Y portada; 46 errores seguidos, ninguna cosecha jamás | NO implementable con cliente conforme; decisión del propietario: retirar o pagar navegador stealth |
+| `remoteco` | **TCP y TLS completan, el servidor NO responde nunca**; 54 errores seguidos, ninguna cosecha jamás | ídem |
+
+Evidencia medida de los tres casos:
+[preflight de colegios](../audits/2026-10-15-dt144-swiss-schools-preflight.json)
+y [sonda de proz/remoteco](../audits/2026-10-15-dt144-proz-remoteco-probe.json).
+
+**La regla que los colegios invierten:** los cinco adaptadores escritos hasta
+ahora LANZAN cuando un barrido no encuentra nada, porque en un portal de empleo
+eso significa parser roto. En una watchlist significa lo normal. Para los
+colegios hay que bajar la estructura, RECONOCERLA y sólo entonces reportar cero
+como sano.
 
 Los ocho `swiss_schools_*` tienen además una particularidad: **hoy publican
 observaciones al núcleo** por `POST /v1/schools/{monitor_id}/jobs`. El núcleo ya

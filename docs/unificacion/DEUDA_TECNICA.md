@@ -58,20 +58,21 @@ continuar sin rediseñarlo.
    también está centralizado en rama. Todos sus scopes productivos permanecen
    deshabilitados y ambos `main` intactos: el corte vivo continúa agrupado con
    la fusión final aprobada por el propietario.
-5. Los últimos portales cerrados son gastrojob (`280bfc2`, CI `38635097926`
-   verde) y myScience (`244f15e`, CI `38624702577` verde), y antes JobScout24:
-   Core/SwissJob `33a804d` y ReactPortfolio `04a020d` + `ffcc0ba`, con el
-   productor local desconectado en rama. DynamiteJobs quedó cerrado antes (`9ec6901` /
+5. Los últimos portales cerrados son stelle_admin (`82c742d`, CI `38657167787`
+   verde, **reimplementado sin navegador**) y tes (`9e62bd5`, CI `38655779623`
+   verde); antes gastrojob
+   (`280bfc2`), myScience (`244f15e`) y JobScout24 (`33a804d` + ReactPortfolio
+   `04a020d`/`ffcc0ba`). Los cuatro residuos estructurales están cerrados
+   (`5f03c68` en ReactPortfolio y `c7d5388` en Core). DynamiteJobs quedó cerrado antes (`9ec6901` /
    `1a0db8d`, CI `38607230379` y `38608902811` verdes), igual que JSearch y
    Adzuna en los commits de sus checkpoints. No se ha desplegado ninguno.
-6. Quedan **13 portales** por implementar en las ramas, **todos de SwissJob**:
-   `proz`, `remoteco`, `schuljobs`, `stelle_admin`, `tes` y los ocho
-   `swiss_schools_*`. ReactPortfolio no conserva ningún cosechador local en
-   rama. Sigue `tes`; `stelle_admin` exige decisión del propietario (Playwright,
-   y la imagen de Core no lleva Chromium) y `proz`, `remoteco` y `schuljobs`
-   arrastran bloqueos propios ya anotados en el inventario. No escribir
-   adaptador antes de contrastar código, runtime, disponibilidad y línea base
-   real.
+6. Quedan **11 portales** por implementar en las ramas, todos de SwissJob: los
+   ocho `swiss_schools_*`, `schuljobs`, y `proz` y `remoteco` a la espera de una
+   decisión del propietario (medido el 2026-10-15: no son implementables con un
+   cliente conforme desde este host; ver su checkpoint). Sigue la familia de
+   colegios, cuyo preflight ya está medido y cuya regla de diseño es el «vacío
+   verificado». No escribir adaptador antes de contrastar código, runtime,
+   disponibilidad y línea base real.
 7. **Relevo operativo verificado el 2026-10-14:** SwissJob/Core continúa en
    `feat/fase-a-core`, cabeza funcional `33a804d`; ReactPortfolio continúa en
    `feat/dt144-free-gate`, cabeza `ffcc0ba`. Los remotos `main` siguen
@@ -1957,6 +1958,132 @@ cuatro bloqueaban la definición de terminado del contrato (§10).
   `FallbackCatalog`. Mientras producción siga cosechando en local, el código
   antiguo es la vía de rollback que el propio contrato exige (§7.7); su borrado
   pertenece al corte agrupado final, junto con el de los productores locales.
+
+### Checkpoint de relevo 2026-10-15 · tes y stelle_admin centralizados; proz, remoteco y los colegios, investigados
+
+#### tes centralizado en rama (`9e62bd5`, CI `38655779623` verde 9/9)
+
+- Las ofertas viajan dentro de `__NEXT_DATA__`, en
+  `props.pageProps.initialData` — **el mismo objeto** que el scraper lee de la
+  caché tRPC en la página 1 (comprobado sobre la captura sellada) y el único que
+  sobrevive en las páginas siguientes.
+- Paridad byte a byte: las 20 ofertas coinciden en los doce campos comparados,
+  identidad incluida. Huella
+  `8748ff87cea0d33869ca627116f9edb7965bacf88436de3289d4934a43430d15` en ambos
+  lados.
+- **La cota REAL del portal, medida y no heredada:** `?page=N` se ignora en
+  servidor. La página 2 renderiza los datos de la 1 (`currentPage: 1`), así que
+  las ocho ofertas que `numFound` anuncia más allá de las veinte primeras **no
+  son alcanzables** desde el payload renderizado. El scraper paginaba contra ese
+  mismo parámetro ignorado y las perdía en silencio; su comentario
+  `PAGE_SIZE = 1` («server enforces limit=1») está obsoleto: hoy sirve veinte
+  por página.
+- El barrido pide la página 2 UNA vez —si el portal empezara a honrar el
+  parámetro, lo seguiría—, para, registra el déficit y publica
+  `announced`/`harvested`/`shortfall` en el cursor. El run sigue COMPLETO: una
+  limitación permanente del portal no debe congelar `last_complete_at` y
+  convertir la alerta de obsolescencia en ruido.
+- Identidad: el id propio del portal, que cada fila trae y con el que termina
+  cada URL canónica, en vez de un hash de `title|company|url`.
+- La lectura de `__NEXT_DATA__` pasa a `next_data`, compartido con financejobs,
+  conservando sus tres mensajes de fallo. Suite de financejobs verde 25/25 tras
+  el cambio.
+
+#### stelle_admin reimplementado SIN navegador (`82c742d`, CI `38657167787` verde 9/9)
+
+- **La pregunta era si jobs.admin.ch se puede cosechar sin Chromium, que la
+  imagen de Core no lleva a propósito. Sí se puede, y lo dice el propio portal:**
+  su cascarón SPA son 2.220 bytes con un `#root` vacío; su único script de módulo
+  declara `baseUrl = https://ohws.prospective.ch/public/v1/medium/1000624`; y ese
+  endpoint responde 200 con `{total, jobs[]}` a un cliente HTTP normal. Sin
+  credencial, sin token, sin navegador.
+- **La paridad campo a campo es imposible Y no deseable**, y eso está medido: el
+  scraper conduce un navegador y adivina el DOM con seis selectores
+  especulativos («Common patterns for government portals»). Lo que produce en
+  producción, sobre 43 filas: título, URL y la CONSTANTE «Swiss Federal
+  Administration»; ubicación, descripción, `published_at` y tags están vacíos en
+  **todas** (field presence `[43,0,0,43,0,0]`).
+- La API da **431 ofertas en cinco peticiones**, todas con la unidad
+  contratante real, el lugar de trabajo, la fecha de publicación del portal, el
+  pensum, los textos de tareas y requisitos, y una bandera de home office que
+  hace de `remote` un dato y no una suposición (181 de 431). 201 resuelven
+  cantón y 430 traen grupo profesional. 486.675 caracteres de descripción donde
+  antes había cero.
+- Lo que SÍ se conserva: la identidad es el id propio del portal más su enlace
+  canónico, **el host del enlace se valida** (una API que cambiara el enlace no
+  puede persistir una URL ajena como oferta clicable), y una respuesta ilegible
+  es un fallo VISIBLE, nunca «0 ofertas».
+- Evidencia:
+  [`2026-10-15-dt144-stelle-admin-baseline.json`](../audits/2026-10-15-dt144-stelle-admin-baseline.json),
+  con los cuatro pasos por los que se encontró la API.
+
+#### proz y remoteco: NO son implementables desde esta infraestructura
+
+- **proz**: el feed RSS y la portada devuelven **403 con challenge de
+  Cloudflare** (`/cdn-cgi/challenge-platform`, «Just a moment...»). No es un
+  feed seco: es el dominio entero rechazando a este cliente.
+- **remoteco**: `remote.co` resuelve a Akamai, **el TCP conecta en 0,17 s y el
+  TLS completa**, y después el servidor **no responde nunca** (timeout de
+  lectura; con HTTP/2, `INTERNAL_ERROR`). No está caído: acepta la conexión y
+  descarta la petición. Es mitigación por huella de cliente.
+- Producción concuerda: 46 y 54 errores seguidos y **ninguna cosecha correcta
+  jamás**.
+- **Por qué migrarlas aun así sería un error:** la metodología exige línea base
+  viva reproducible y paridad campo a campo contra el productor. Ninguna de las
+  dos ha producido nunca una cosecha, así que no hay nada contra lo que medir:
+  el adaptador sería inverificable por construcción, y además el nuevo
+  kill-switch de bloqueo lo apagaría en tres barridos.
+- **Recomendación: retirarlas explícitamente con esta evidencia** (§10 lo
+  permite: una fuente bloqueada se resuelve o se retira, nunca desaparece del
+  recuento). Retirar quita dos fuentes del corpus de forma permanente y cambia
+  el registro de producción, así que **es decisión del propietario**. La
+  alternativa que el propio proyecto documenta es pagar un navegador stealth
+  remoto y activar `SCRAPER_BROWSER_CDP_URL`, lo que cambia también la postura
+  de compliance. Evidencia:
+  [`2026-10-15-dt144-proz-remoteco-probe.json`](../audits/2026-10-15-dt144-proz-remoteco-probe.json).
+- Límite de esta sonda, dicho explícitamente: describe ESTE host y ESTE momento.
+  Otra IP de salida o un navegador de pago podrían dar otra respuesta — que es
+  justo la decisión que se entrega, no una que se asume.
+
+#### Los ocho colegios: preflight medido, adaptador NO escrito
+
+- Captura en vivo de los siete tableros alcanzables por una sola URL (todos 200)
+  y replay del parser legado de cada uno sobre ella. **Resultado: seis publican
+  CERO ofertas ahora mismo**; sólo haut-lac (1) e ISCS (2) tienen algo. Eso es
+  el estado NORMAL de una watchlist: un colegio publica una vacante cada varios
+  meses.
+- **Eso invierte una regla de diseño de todos los adaptadores anteriores:** los
+  cinco escritos hasta ahora LANZAN cuando un barrido no encuentra nada, porque
+  en un portal de empleo un barrido vacío significa parser roto. Para los
+  colegios eso haría fallar seis de ocho fuentes todos los días. Lo que hay que
+  conservar es el «vacío verificado» del legacy: la página se bajó, su
+  estructura se RECONOCIÓ, y sólo entonces el cero se reporta como sano. Core
+  necesita por tanto un **marcador estructural por colegio**: presente y sin
+  ofertas ⇒ barrido completo y vacío; ausente ⇒ fallo visible.
+- Complicaciones ya identificadas para quien lo escriba: `inspired` y `nae` no
+  son un tablero cada uno —barren VARIOS colegios por fuente, cada uno con su
+  URL de carreras y un filtro por nombre de colegio sobre portales ATS de
+  terceros—, y un bloqueo en uno no debe reportarse N veces (el legacy corta el
+  run en el primero por eso mismo); `isp` no usa la base compartida (467 líneas
+  con su propio `normalize`); y `ecolint` declara cinco páginas pero la 1 y la 2
+  de la captura son byte-idénticas, el mismo caso que myScience.
+- Evidencia:
+  [`2026-10-15-dt144-swiss-schools-preflight.json`](../audits/2026-10-15-dt144-swiss-schools-preflight.json).
+
+#### Estado tras este checkpoint
+
+- Validación: Core **1.846 aprobadas** (1.807 → +21 de tes → 1.823 → +23 de
+  stelle_admin) y backend SwissJob **1.916 aprobadas y 4 `xfail`** en las dos
+  tandas, los recuentos de siempre. Lint del repo completo, `diff --check`,
+  `check_no_secrets` y ratchet `{"core_owned":16,"local_pending":26,"sources":58}`
+  verdes.
+- Quedan **11 portales** por implementar en ramas: los ocho `swiss_schools_*`,
+  `schuljobs`, y `proz` y `remoteco` a la espera de decisión.
+- **Siguiente paso exacto si hay relevo:** escribir el adaptador de los colegios
+  con el marcador estructural por tablero descrito arriba —empezando por
+  haut-lac e ISCS, que son los dos que hoy tienen ofertas y por tanto los únicos
+  con paridad medible—, y después `schuljobs`, que arrastra un cursor sin
+  bootstrap completo. No tocar producción, los `main` ni activar scopes.
 
 ### Registro cerrado · Forgejo no forma parte de DT-144
 
