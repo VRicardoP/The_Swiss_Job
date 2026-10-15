@@ -1,0 +1,145 @@
+{
+  "source_family": "swiss_schools (seven sources, ten boards)",
+  "captured_at_utc": "2026-10-14T23:58:07+00:00",
+  "sources": [
+    "swiss_schools_zis",
+    "swiss_schools_isb",
+    "swiss_schools_ecolint",
+    "swiss_schools_hautlac",
+    "swiss_schools_iscs",
+    "swiss_schools_nae",
+    "swiss_schools_inspired"
+  ],
+  "method": "Both the retiring scrapers and the new Core adapter were replayed offline against the SAME sealed capture. Because three of the five boards are empty today, those three were ALSO compared on fixtures built from the structure their own selectors declare — 0 == 0 proves nothing.",
+  "capture": {
+    "zis": {
+      "url": "https://www.zis.ch/one-zis-community/employment",
+      "status": 200,
+      "bytes": 84049,
+      "sha256": "c4277aba4b078b02f6730c3b96ba964b771b13697ed6daa8ad2778031f6514d5"
+    },
+    "isb": {
+      "url": "https://www.isbasel.ch/connect/news/?board=employment-public-job-postings",
+      "status": 200,
+      "bytes": 61222,
+      "sha256": "8bf0e8e779401c6a3db318b9368883a47a34fcef510e1560ad8b63bffcb7451f"
+    },
+    "ecolint": {
+      "url": "https://www.ecolint.ch/en/job-opportunities?page=2",
+      "status": 200,
+      "bytes": 66552,
+      "sha256": "b77952f75bd1e0a9e3c3f20448bc370b2ef68c7714218ce091c7271922fbd540"
+    },
+    "hautlac": {
+      "url": "https://info.haut-lac.ch/jobs-and-career",
+      "status": 200,
+      "bytes": 37217,
+      "sha256": "b4f2dfaa29b5405d887c99c40ef20d1cb4b921b36a208d8d700163cd9032c5ce"
+    },
+    "iscs": {
+      "url": "https://iscs-zug.ch/employment/",
+      "status": 200,
+      "bytes": 221511,
+      "sha256": "ca7d09ea10266c90dd7924befcb7b608b176a2c65541894df619410c3b427ef3"
+    },
+    "inspired": {
+      "url": "https://jobs.inspirededu.com/search/",
+      "status": 200,
+      "bytes": 393530,
+      "sha256": "35a10426c43802e772bc98059078cbc7c5f9385f3177a5962bab2e22842f5767"
+    },
+    "nae": {
+      "url": "https://careers.nordangliaeducation.com/search/",
+      "status": 200,
+      "bytes": 344162,
+      "sha256": "28076b84e2f448253f89005fcbad364095f89ad39f0eedd3a94f452025cfb8a6"
+    }
+  },
+  "live_board_state": {
+    "zis": 0,
+    "isb": 0,
+    "ecolint": 0,
+    "hautlac": 1,
+    "iscs": 2,
+    "inspired": 0,
+    "nae": 0
+  },
+  "parity": {
+    "live_rows_compared": 16,
+    "live_differences": 0,
+    "fixture_rows_compared": 6,
+    "fixture_differences": 0,
+    "note": "haut-lac (1) and ISCS (2) carry vacancies today and match field for field; zis, isb and ecolint are empty today and match field for field on fixtures. Nord Anglia adds 13 live rows across three schools; Inspired's two boards are empty today."
+  },
+  "verified_empty_rule": {
+    "why": "A watchlist board publishes a vacancy every few months: six of the eight family boards are empty right now. Every other adapter in Core raises when a sweep finds nothing, which would make most of this family fail every day.",
+    "how": "Recognition first: the page title must name the school's board, and where the portal has a container or an emptiness marker it is honoured too (ISB renders fsElementEmpty, 'No post to display'). Recognised and empty is a COMPLETE sweep with zero listings; unrecognised is a visible failure.",
+    "proved_by": "test_an_empty_board_is_a_verified_empty_not_a_failure, test_the_portal_saying_it_is_empty_is_also_verified, a visible-failure test per board, and an integration test where three empty sweeps in a row leave consecutive_failures=0, consecutive_blocks=0 and a confirmed last_complete_at."
+  },
+  "preserved_quirks": [
+    "haut-lac and ISCS have no per-vacancy link: the synthetic anchor stays part of the URL, because sharing the board URL left only ONE vacancy per school alive against the unique-URL constraint (class VD.1).",
+    "ZIS normalises the non-breaking space its links carry and deduplicates the repeated job id.",
+    "ISB reads both post shapes (article.fsArticle and .fsPost) and trusts the portal's own empty marker.",
+    "ISCS keeps the keyword list and the bold-title requirement that separate a vacancy from navigation.",
+    "haut-lac keeps both templates (highlighted h3 and grey card) and drops the section headings that are not vacancies."
+  ],
+  "deliberate_improvement": {
+    "what": "canton, derived from the school's own city",
+    "evidence": "4 of the 5 cities resolve (ZH, BS, GE, ZG); Saint-Légier-La Chiésaz does not and stays absent",
+    "effect": "the producer knew the city and never used it; absent still means unknown"
+  },
+  "notes": [
+    "No credential exists for any board and none was created.",
+    "The artifact carries no personal data: only byte counts, hashes and counts.",
+    "One source of the family is NOT in this commit: isp does not use the shared base (467 lines with its own normalize over Workday)."
+  ],
+  "shared_career_portals": {
+    "captured_at_utc": "2026-10-15T06:10:08+00:00",
+    "why_they_are_different": "Nord Anglia (three schools) and Inspired (two) do not have their own board: they publish on a shared SuccessFactors career portal, one query per school. The portal's search is FUZZY, so a query for one school returns other schools' vacancies and the tile's own school field is what decides.",
+    "capture": {
+      "champittet_nyon": {
+        "url": "https://careers.nordangliaeducation.com/search/?q=champittet",
+        "status": 200,
+        "bytes": 163346,
+        "sha256": "23efab76fc03d7bd964ed505bedf6708328e1734e339325610513c18b97eb1f4"
+      },
+      "beausoleil_villars": {
+        "url": "https://careers.nordangliaeducation.com/search/?q=beau+soleil",
+        "status": 200,
+        "bytes": 83356,
+        "sha256": "b28127718b97a5fcf74212f5d37ed48a1b1b6d9762ee973c21174ca9ce166a82"
+      },
+      "lcis_aubonne": {
+        "url": "https://careers.nordangliaeducation.com/search/?q=la+cote",
+        "status": 200,
+        "bytes": 222565,
+        "sha256": "4a88c98ec31682e5a04df19f032a64d67a9c7d9f41f2b41e2535c9a4f02f36a7"
+      },
+      "ges_versoix": {
+        "url": "https://jobs.inspirededu.com/search/?optionsFacetsDD_facility=Geneva+English+School",
+        "status": 200,
+        "bytes": 57322,
+        "sha256": "5c82e62112b13e301d72c2ac72fa12c0fdb1527d7ec27f0d51ba308a0bea945e"
+      },
+      "stgeorges_montreux": {
+        "url": "https://jobs.inspirededu.com/search/?optionsFacetsDD_facility=St.+George%27s+International+School",
+        "status": 200,
+        "bytes": 56908,
+        "sha256": "025b567f37ea2eafdc5851b58bd92ef14adc272edb4fce866bb65da2140e6113"
+      }
+    },
+    "live_state": {
+      "champittet_nyon": 8,
+      "beausoleil_villars": 1,
+      "lcis_aubonne": 4,
+      "ges_versoix": 0,
+      "stgeorges_montreux": 0
+    },
+    "parity": {
+      "rows_compared": 13,
+      "differences": 0,
+      "note": "La Côte's query returns 13 tiles and only 4 are its own: the filter is what makes the difference, and both parsers agree on which 4."
+    },
+    "block_handling": "The producer stops the run at the first block because the N schools share a HOST and N reports in one run would hit the kill-switch over one transient episode. In Core the sweep raises on the first failure, which stops it for the same reason, and the new block kill-switch counts ONE block per run."
+  }
+}

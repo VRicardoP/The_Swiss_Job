@@ -239,7 +239,6 @@ _POLICIES: dict[str, HarvestPolicy] = {
         FULL,
         "INCIERTO: sin API key no sondeable (doc sugiere job_posted_at_datetime_utc)",
     ),
-    "proz": HarvestPolicy(FULL, "INCIERTO: feed muerto/bloqueado en la sonda"),
     # Feeds RETIRADOS por el portal (VD.6, re-sondeados 2026-08-14) — fuera del
     # registro de providers. Decisión conservada por si el portal republica.
     "translatorscafe": HarvestPolicy(
@@ -252,7 +251,6 @@ _POLICIES: dict[str, HarvestPolicy] = {
         FULL,
         "RETIRADA VD.6 (2026-08-14): feed de empleo eliminado; /feed/ es el blog",
     ),
-    "remoteco": HarvestPolicy(FULL, "INCIERTO: feed muerto/bloqueado en la sonda"),
     # Reclasificada de FULL ("INCIERTO: fuente muda hoy, sin sonda posible")
     # en VD.4b: el endpoint AJAX del listado imprime la primera activación de
     # cada anuncio y el detalle la confirma como datePosted de la microdata.
@@ -294,7 +292,23 @@ SOURCES_DECIDED_IN_ADVANCE: frozenset[str] = frozenset(
         "remoteok",
         "ictjobs",
         "swisstechjobs",
+        "jobicy",
         # FULL inciertas, deshabilitadas hoy
+        "myscience",
+        "gastrojob",
+        "tes",
+        "stelle_admin",
+        "swiss_schools_zis",
+        "swiss_schools_isb",
+        "swiss_schools_ecolint",
+        "swiss_schools_hautlac",
+        "swiss_schools_iscs",
+        "swiss_schools_nae",
+        "swiss_schools_inspired",
+        "swiss_schools_isp",
+        "schuljobs",
+        "adzuna",
+        "jsearch",
         "undpjobs",
         "ilojobs",
         "impactpool",

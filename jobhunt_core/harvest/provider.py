@@ -43,6 +43,31 @@ class ProviderResponseError(RuntimeError):
     """
 
 
+# Statuses the retiring engine counted as a BLOCK, not as a generic failure
+# (backend/services/scraper_engine.py:BLOCK_STATUS). 503 is in the list because
+# the adapters already retry it: when it still surfaces, the portal has been
+# answering "unavailable" for the whole retry window.
+BLOCK_STATUSES = frozenset({403, 429, 503})
+
+
+def blocking_status(exc: BaseException | None) -> int | None:
+    """The blocking HTTP status behind a failure, or None.
+
+    The chain is walked, not just the exception: adapters wrap the transport
+    error in `ProviderResponseError`, and `raise … from None` only hides the
+    cause from the traceback — `__context__` still carries it.
+    """
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+        if isinstance(status, int) and status in BLOCK_STATUSES:
+            return status
+        exc = exc.__cause__ or exc.__context__
+    return None
+
+
 class BaseProvider(ABC):
     """Una fuente Tier 0/1 (API/feed). Sin estado: el cursor viene del scope."""
 

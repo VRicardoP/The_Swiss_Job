@@ -1,0 +1,66 @@
+{
+  "source": "swisstechjobs",
+  "status": "centralized_on_feature_branches_ci_green",
+  "production_changed": false,
+  "capture": {
+    "requests": [
+      {"page": 1, "per_page": 100, "status": 200},
+      {"page": 2, "per_page": 100, "status": 400, "terminal_code": "rest_post_invalid_page_number"}
+    ],
+    "sha256": {
+      "page1": "dd60e788a7d69df486dc3b32c56af2e486d16101657144ccdfbade568506f99d",
+      "page2": "b6714928c361e00376c3eda08eef1f4fcc3343bd71d9be2bde61ca1eee190c26"
+    },
+    "rows": 8,
+    "unique_ids": 8,
+    "x_wp_total": 8,
+    "x_wp_total_pages": 1
+  },
+  "field_parity": {
+    "rows": 8,
+    "matched": 8,
+    "mismatches": [],
+    "counts_match": true,
+    "visible_sha256": "2738c0da2a666c257d1605428747438937bd0eff2f49331c39248b8ea5b55c07",
+    "preserved_quirk": "legacy substring skill matching includes the one-letter r tag"
+  },
+  "shadow": {
+    "cycles": [
+      {"status": "ok", "listings_received": 8, "pages": 2},
+      {"status": "ok", "listings_received": 8, "pages": 2}
+    ],
+    "stored": {
+      "external_ids": 8,
+      "listings": 8,
+      "raw_revisions": 8,
+      "offer_revisions": 8
+    },
+    "aggregate": {
+      "total": 8,
+      "enabled_scopes": 1,
+      "observed_scopes": 1,
+      "max_consecutive_failures": 0,
+      "published_dates": 8,
+      "locations": 7,
+      "tags": 17,
+      "companies": 8,
+      "salary_strings": 6,
+      "apply_urls": 8
+    }
+  },
+  "validation": {
+    "core_focused": "66 passed",
+    "core_full": "1579 passed, 1 skipped, 1 warning",
+    "ruff_focused": "passed",
+    "source_ownership": {"core_owned": 16, "local_pending": 26, "sources": 58},
+    "core_commit": "a7016a6317d7ddb6541acc3135e8da9750ca6174",
+    "core_ci": "38557077146: success (9/9 jobs)",
+    "reactportfolio_focused": "371 passed",
+    "reactportfolio_full": "2159 passed, 1 skipped, 115 warnings",
+    "reactportfolio_local_harvesters": 7,
+    "reactportfolio_commit": "f3baba8730d701211c3cf9a5f5240df6108373c4",
+    "reactportfolio_ci": "38557887736: success"
+  },
+  "rollback": "Production and both main branches are unchanged. The ReactPortfolio legacy module remains in the feature branch without router, provider, cache or update registration and can be explicitly reconnected if branch rollback is required.",
+  "next_step": "Trace and capture ICTJobs before extending the shared WordPress implementation."
+}

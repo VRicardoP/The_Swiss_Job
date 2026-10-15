@@ -22,6 +22,7 @@ def test_daily_backup_fails_closed_and_releases_lock(tmp_path, failure):
 set -eu
 printf '%s\\n' "$*" >> "$CALLS"
 case "$*" in
+  *"inspect swissjob-core-api-r5"*) echo swissjob-core:point5-a1b2c3d ;;
   *pg_dump*) test "$FAILURE" != dump; echo synthetic-archive ;;
   *pg_restore*) test "$FAILURE" != verify; cat >/dev/null ;;
   *"python -c"*) echo '{"synthetic":"inventory"}' ;;
@@ -57,6 +58,7 @@ esac
     else:
         assert result.returncode == 0, result.stderr
         assert log.count("--kind backup") == 3
+        assert "swissjob-core:point5-a1b2c3d" in log
         assert "--apply" in log
         assert len(list(ops.glob("daily-*/*.dump"))) == 3
         assert (ops / "last-backup-success").is_file()

@@ -17,6 +17,21 @@ from jobhunt_core.harvest.providers.native_thehub import TheHubProvider
 from jobhunt_core.harvest.providers.native_jobgether import JobgetherProvider
 from jobhunt_core.harvest.providers.native_financejobs import FinancejobsProvider
 from jobhunt_core.harvest.providers.native_irishjobs import IrishJobsProvider
+from jobhunt_core.harvest.providers.native_swissdevjobs import SwissDevJobsProvider
+from jobhunt_core.harvest.providers.native_jobroom import JobRoomProvider
+from jobhunt_core.harvest.providers.native_adzuna import AdzunaProvider
+from jobhunt_core.harvest.providers.native_jsearch import JSearchProvider
+from jobhunt_core.harvest.providers.native_dynamitejobs import DynamiteJobsProvider
+from jobhunt_core.harvest.providers.native_jobscout24 import JobScout24Provider
+from jobhunt_core.harvest.providers.native_myscience import MyScienceProvider
+from jobhunt_core.harvest.providers.native_gastrojob import GastrojobProvider
+from jobhunt_core.harvest.providers.native_tes import TESProvider
+from jobhunt_core.harvest.providers.native_stelle_admin import StelleAdminProvider
+from jobhunt_core.harvest.providers.native_swiss_schools import (
+    providers as swiss_school_providers,
+)
+from jobhunt_core.harvest.providers.native_isp_workday import ISPWorkdayProvider
+from jobhunt_core.harvest.providers.native_schuljobs import SchulJobsProvider
 
 _PROVIDERS: dict[str, BaseProvider] = {
     ArbeitnowProvider.name: ArbeitnowProvider(),
@@ -29,6 +44,19 @@ _PROVIDERS: dict[str, BaseProvider] = {
     JobgetherProvider.name: JobgetherProvider(),
     FinancejobsProvider.name: FinancejobsProvider(),
     IrishJobsProvider.name: IrishJobsProvider(),
+    SwissDevJobsProvider.name: SwissDevJobsProvider(),
+    JobRoomProvider.name: JobRoomProvider(),
+    AdzunaProvider.name: AdzunaProvider(),
+    JSearchProvider.name: JSearchProvider(),
+    DynamiteJobsProvider.name: DynamiteJobsProvider(),
+    JobScout24Provider.name: JobScout24Provider(),
+    MyScienceProvider.name: MyScienceProvider(),
+    GastrojobProvider.name: GastrojobProvider(),
+    TESProvider.name: TESProvider(),
+    StelleAdminProvider.name: StelleAdminProvider(),
+    **{provider.name: provider for provider in swiss_school_providers()},
+    ISPWorkdayProvider.name: ISPWorkdayProvider(),
+    SchulJobsProvider.name: SchulJobsProvider(),
 }
 
 

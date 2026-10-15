@@ -1,0 +1,167 @@
+"""Jobicy metadata that was part of ReactPortfolio's public responses."""
+
+from functools import lru_cache
+import re
+
+TECH_TAGS = (
+    "developer",
+    "software engineer",
+    "programmer",
+    "full stack",
+    "backend",
+    "frontend",
+    "mobile developer",
+    "web developer",
+    "senior developer",
+    "junior developer",
+    "lead developer",
+    "python",
+    "javascript",
+    "java",
+    "php",
+    "ruby",
+    "go",
+    "rust",
+    "c++",
+    "c#",
+    "swift",
+    "kotlin",
+    "scala",
+    "typescript",
+    "r",
+    "react",
+    "angular",
+    "vue.js",
+    "node.js",
+    "django",
+    "flask",
+    "spring",
+    "laravel",
+    "express",
+    "fastapi",
+    "rails",
+    "asp.net",
+    "data scientist",
+    "machine learning",
+    "ai engineer",
+    "devops",
+    "cloud engineer",
+    "cybersecurity",
+    "blockchain",
+    "qa engineer",
+    "test automation",
+    "ui/ux",
+    "game developer",
+    "mobile engineer",
+    "sql",
+    "postgresql",
+    "mysql",
+    "mongodb",
+    "redis",
+    "elasticsearch",
+    "firebase",
+    "oracle",
+    "sqlite",
+    "cassandra",
+    "docker",
+    "kubernetes",
+    "aws",
+    "azure",
+    "gcp",
+    "jenkins",
+    "git",
+    "linux",
+    "terraform",
+    "ansible",
+    "grafana",
+    "product manager",
+    "technical lead",
+    "engineering manager",
+    "cto",
+    "architect",
+    "scrum master",
+    "team lead",
+)
+
+WORLDWIDE = {
+    "worldwide",
+    "remote",
+    "anywhere",
+    "global",
+    "n/a",
+    "-",
+    "various",
+    "multiple countries",
+    "all regions",
+    "international",
+    "any location",
+    "work from home",
+    "wfh",
+    "distributed",
+    "location independent",
+    "remote work",
+    "telecommute",
+    "virtual",
+    "online",
+    "digital nomad",
+}
+
+COUNTRIES = {
+    "usa": "United States",
+    "us": "United States",
+    "america": "United States",
+    "uk": "United Kingdom",
+    "britain": "United Kingdom",
+    "england": "United Kingdom",
+    "uae": "United Arab Emirates",
+    "usa/canada": "North America",
+    "us/canada": "North America",
+    "eu": "Europe",
+    "european union": "Europe",
+    "de": "Germany",
+    "fr": "France",
+    "es": "Spain",
+    "it": "Italy",
+    "nl": "Netherlands",
+    "au": "Australia",
+    "ca": "Canada",
+    "br": "Brazil",
+    "in": "India",
+    "sg": "Singapore",
+    "jp": "Japan",
+    "kr": "South Korea",
+    "lu": "Luxembourg",
+    "dk": "Denmark",
+    "is": "Iceland",
+    "no": "Norway",
+    "ie": "Ireland",
+    "be": "Belgium",
+    "at": "Austria",
+    "nz": "New Zealand",
+    "se": "Sweden",
+    "ee": "Estonia",
+    "fi": "Finland",
+    "ae": "United Arab Emirates",
+}
+
+
+def normalize_location(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    location = value.strip()
+    folded = location.lower()
+    if folded in WORLDWIDE:
+        return "Worldwide"
+    return COUNTRIES.get(folded, location.title())
+
+
+@lru_cache(maxsize=None)
+def _word_pattern(tag):
+    return re.compile(rf"(?<![\w+#&]){re.escape(tag)}(?![\w+#&])")
+
+
+def extract_tech_skills(title, description, *, word_boundaries=False):
+    text = f"{title or ''} {description or ''}".lower()
+    if word_boundaries:
+        return [tag for tag in TECH_TAGS if _word_pattern(tag).search(text)]
+    return [tag for tag in TECH_TAGS if tag in text]

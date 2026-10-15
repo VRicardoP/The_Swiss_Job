@@ -69,7 +69,8 @@ if [[ -n "$(git status --short -- "$ARBOL")" ]]; then
   exit 1
 fi
 
-SHA="$(git rev-parse --short HEAD)"
+FULL_SHA="$(git rev-parse HEAD)"
+SHA="${FULL_SHA:0:7}"
 D=/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker
 C=/share/Public/swissjob/bin-docker-compose
 E=/share/CACHEDEV1_DATA/Public/unification-e15-20260914
@@ -121,6 +122,12 @@ echo "== servicio=$SERVICIO  modo=${MODO:---release}  imagen=$IMAGEN  compose=$C
 if [[ "$MODO" == "--dry-run" ]]; then
   echo "(dry-run: no se construye ni se toca el NAS)"
   exit 0
+fi
+
+read -r GITHUB_MAIN _ < <(git ls-remote --exit-code github refs/heads/main)
+if [[ "$FULL_SHA" != "$GITHUB_MAIN" ]]; then
+  echo "ABORTA: sólo se despliega el SHA exacto de github/main ($GITHUB_MAIN)" >&2
+  exit 1
 fi
 
 if [[ "$MODO" != "--config-only" ]]; then

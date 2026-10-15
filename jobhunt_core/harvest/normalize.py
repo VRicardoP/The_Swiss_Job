@@ -14,6 +14,7 @@ salario/location NO altera el text_hash → NO re-embebe.
 import hashlib
 import json
 import logging
+import math
 from typing import Callable
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,8 @@ CONTENT_FIELDS = (
 # salary/location text at the canonical boundary. TEXT_FIELDS stays unchanged.
 SEARCH_TEXT_FIELDS = ("canton", "language", "seniority", "contract_type")
 SEARCH_AMOUNT_FIELDS = ("salary_min_chf", "salary_max_chf")
+DISPLAY_TEXT_FIELDS = ("salary_currency", "employment_type", "prof_group")
+DISPLAY_AMOUNT_FIELDS = ("salary_min", "salary_max")
 # Campos que definen el TEXTO embebible (ADR-02): salario/location fuera.
 TEXT_FIELDS = ("title", "company", "description", "tags")
 
@@ -90,6 +93,23 @@ def normalize_offer(source_name: str, raw: dict) -> dict | None:
         # Same non-negative integer domain as the legacy CHF columns; bool
         # and numeric strings must not become fabricated salary bounds.
         if type(value) is int and 0 <= value <= 2**31 - 1:
+            content[field] = value
+    for field in DISPLAY_TEXT_FIELDS:
+        value = _text(picked.get(field))
+        if value is not None:
+            content[field] = value
+    # Himalayas exposes an empty string as part of its public logo contract.
+    # Keep strings byte-for-byte here; None and non-strings still mean absent.
+    logo = picked.get("logo")
+    if isinstance(logo, str):
+        content["logo"] = logo
+    for field in DISPLAY_AMOUNT_FIELDS:
+        value = picked.get(field)
+        if (
+            type(value) in {int, float}
+            and math.isfinite(value)
+            and 0 <= value <= 2**31 - 1
+        ):
             content[field] = value
     return content
 

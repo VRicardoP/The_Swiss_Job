@@ -42,11 +42,13 @@ Una nota de progreso, un cierre anterior o el nombre `core_primary` no acreditan
 el cumplimiento si sigue existiendo un productor local, una mezcla Core + local
 o una conexión directa desde un BFF a un portal.
 
-Ningún fichero es técnicamente inmutable para una persona con permisos de
-administración. Por ello, el blindaje requerido consiste en revisión de
-propietario, historial Git, comprobaciones obligatorias y bloqueo de despliegue.
-La implantación de esos controles forma parte de la Fase -1 y no se presume
-completada por la mera ratificación de este texto.
+El propietario ha fijado GitHub Free como único forge. Todo el trabajo se
+realiza en ramas de feature, `main` permanece intacta hasta que DT-144 esté
+completa y la fusión final requiere su aprobación explícita. El control se
+completa con historial Git, CI en cada push y un bloqueo que impide desplegar
+cualquier SHA distinto del `github/main` vigente. No se instala un segundo
+forge ni se presenta este flujo como una protección de rama que GitHub Free no
+ofrece al repositorio privado.
 
 ## 3. Estado que motivó la reapertura
 
@@ -176,18 +178,20 @@ Reglas del inventario:
 - Publicar este contrato como documento canónico.
 - Crear el inventario único de propietarios y estados.
 - Añadir comprobaciones CI del inventario y de las invariantes estructurales.
-- Proteger contrato, inventario, reglas CI, registros de Core y manifiestos con
-  revisión obligatoria del propietario.
+- Ejecutar CI en cada rama de trabajo y conservar `main` sin cambios hasta la
+  aprobación explícita de la fusión final por el propietario.
 - Prohibir nuevas dependencias, credenciales o conexiones de portales en los
   BFF.
-- Añadir un bloqueo de despliegue ante fuentes duplicadas, sin propietario o en
-  regresión.
-- Incorporar a la revisión obligatoria la evidencia exigida por las reglas de la
+- Añadir un bloqueo de despliegue ante fuentes duplicadas, sin propietario, en
+  regresión o cuando el SHA local no coincida exactamente con `github/main`.
+- Incorporar a la revisión final la evidencia exigida por las reglas de la
   sección 4.1, incluida la justificación de código o abstracciones nuevas y las
   mediciones de cualquier optimización declarada.
 
-**Puerta de salida:** controles ejecutándose en las ramas protegidas. No empieza
-una migración de fuente antes de superar esta puerta.
+**Puerta de salida:** CI operativo en las ramas de feature, inventario y
+ratchets activos, y ambos despliegues rechazando el SHA de trabajo mientras no
+sea `github/main`. La migración se desarrolla y valida en esas ramas; no se
+fusiona ni despliega antes de completar DT-144 y obtener la aprobación final.
 
 ### Fase 0 — inventario productivo verificable
 
@@ -328,6 +332,49 @@ Toda fuente debe completar, sin saltos, esta lista:
 No basta con que exista un adaptador ni con que una bandera se llame
 `core_primary`.
 
+### 7.1. Metodología verificable de ejecución y relevo
+
+Cada portal se trabaja como una unidad vertical completa y repetible. No se
+empieza el siguiente ocultando una diferencia sin explicar en el actual:
+
+1. **Preflight Git y producción.** Leer rama, upstream, remotos, SHA de ambos
+   `main`, worktrees y cambios ajenos. Conservar los cambios preexistentes y
+   trabajar sólo en las ramas DT-144 de GitHub Free.
+2. **Trazado real de extremo a extremo.** Localizar productor, registro,
+   scheduler, rutas, caché, persistencia, credenciales, manifiesto, tráfico
+   saliente y consumidores. Contrastar código y configuración con el runtime;
+   un módulo presente no demuestra que esté activo.
+3. **Línea base reproducible.** Capturar una respuesta real saneada, registrar
+   fecha, parámetros, volumen, huellas SHA-256, identidad, campos, orden,
+   duplicados y comportamiento ante vacío/fallo. No versionar secretos ni datos
+   personales innecesarios.
+4. **Core mínimo.** Reutilizar el provider, normalizador, sink, agregado y
+   provisionador existentes; añadir sólo la capacidad que el contrato real del
+   portal exige. El scope nace deshabilitado y no toca producción.
+5. **Pruebas por capas.** Cubrir entrada válida, envoltorio inválido, vacío,
+   fallo parcial, paginación, identidad, raw, campos visibles, idempotencia y
+   provisión. Ejecutar después el doble ciclo sobre PostgreSQL aislado.
+6. **Paridad explicada.** Comparar campo a campo y comprobar volumen, vigencia,
+   orden funcional y deduplicación. Toda diferencia se corrige o se documenta
+   como mejora deliberada con evidencia; nunca se acepta por intuición.
+7. **Consumidor y apagado local.** Mantener las rutas públicas mediante el
+   adaptador Core compartido, desconectar registros/imports locales, bloquear
+   backend y worker mediante el manifiesto y reducir el ratchet. El código
+   antiguo queda desconectado sólo como rollback hasta la observación final.
+8. **Validación y publicación.** Ejecutar pruebas focales, suites completas,
+   comprobaciones estructurales y diff. Crear commits estrechos, publicar sólo
+   las ramas feature y comprobar todos los jobs de CI de GitHub.
+9. **Checkpoint antes de avanzar.** Registrar estados, archivos, resultados,
+   SHA, CI, evidencia, diferencias, rollback, cambios ajenos preservados y el
+   siguiente comando o edición exactos. Si el trabajo queda a medias, marcarlo
+   expresamente como tal.
+
+Por decisión del propietario, las maniobras productivas de los puntos 3 y 7 a
+11 de la sección 7 se ensayan de forma aislada durante el desarrollo, pero se
+ejecutan agrupadas sólo después de terminar todas las fuentes y aprobar la
+fusión final. Hasta entonces el inventario sigue describiendo producción y los
+`main` no cambian.
+
 ## 8. Comprobaciones ejecutables
 
 Durante la migración, CI debe impedir:
@@ -382,8 +429,8 @@ DT-144 solo puede cerrarse cuando se cumplan a la vez estas condiciones:
 - toda oferta nueva entra exclusivamente por Core;
 - ambos productos pasan sus recorridos sobre el corpus común;
 - las sondas productivas confirman las mismas invariantes;
-- el contrato, el inventario y los checks están asociados a revisiones
-  desplegadas exactas.
+- el contrato, el inventario y los checks están asociados al SHA exacto
+  aprobado, fusionado en GitHub y desplegado.
 
 Las fuentes bloqueadas no desaparecen del recuento. Deben resolverse o retirarse
 explícitamente con evidencia. La frase «alcance autorizado completado» no puede

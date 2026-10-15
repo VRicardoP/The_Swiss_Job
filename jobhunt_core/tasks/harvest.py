@@ -28,13 +28,39 @@ logger = logging.getLogger(__name__)
 
 
 @celery_app.task(name="jobhunt.harvest.run_scope", bind=True, max_retries=1)
-def run_scope_task(self, scope_id: str, run_key: str | None = None) -> dict[str, Any]:
-    try:
-        result = asyncio.run(
-            _run_scope_impl(scope_id)
-            if run_key is None
-            else _run_scope_impl(scope_id, run_key=run_key)
+def run_scope_task(
+    self,
+    scope_id: str,
+    run_key: str | None = None,
+    jsearch_query: str | None = None,
+) -> dict[str, Any]:
+    provider_override = None
+    if jsearch_query is not None:
+        from jobhunt_core.harvest.providers.native_jsearch import (
+            DEFAULT_COUNTRY,
+            DEFAULT_DATE_POSTED,
+            DEFAULT_NUM_PAGES,
+            DEFAULT_PAGE,
+            JSearchProvider,
+            SearchParams,
         )
+
+        provider_override = JSearchProvider(
+            SearchParams(
+                query=jsearch_query,
+                country=DEFAULT_COUNTRY,
+                date_posted=DEFAULT_DATE_POSTED,
+                page=DEFAULT_PAGE,
+                num_pages=DEFAULT_NUM_PAGES,
+            )
+        )
+    try:
+        impl_kwargs = {}
+        if run_key is not None:
+            impl_kwargs["run_key"] = run_key
+        if provider_override is not None:
+            impl_kwargs["provider_override"] = provider_override
+        result = asyncio.run(_run_scope_impl(scope_id, **impl_kwargs))
     except (UnknownProviderError, ProviderConfigError) as exc:
         # Config PERMANENTE (provider desconocido / params inválidos, rev. 2ª
         # #3): excepciones CONCRETAS — un KeyError interno cualquiera no debe
@@ -241,7 +267,7 @@ async def _enabled_native_scope_ids() -> list[str]:
 
 
 async def _run_scope_impl(
-    scope_id: str, claim_token=None, *, run_key=None
+    scope_id: str, claim_token=None, *, run_key=None, provider_override=None
 ) -> ScopeRunResult:
     from jobhunt_core import runs
 
@@ -269,7 +295,11 @@ async def _run_scope_impl(
             )
         if not scope.enabled:
             return ScopeRunResult(scope_id=scope_id, status="skipped")
-        provider = get_provider(scope.name)
+        if provider_override is not None and provider_override.name != scope.name:
+            raise ProviderConfigError(
+                f"provider override {provider_override.name!r} != source {scope.name!r}"
+            )
+        provider = provider_override or get_provider(scope.name)
         # run_all supplies and renews its token. Standalone/manual tasks need
         # the SAME scope-wide exclusion, not a second locking mechanism.
         owned_run = None

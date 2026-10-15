@@ -3,13 +3,8 @@
 import logging
 
 from config import settings
-from providers.adzuna import AdzunaProvider
 from providers.careerjet import CareerjetProvider
-from providers.jobicy import JobicyProvider
 from providers.jooble import JoobleProvider
-from providers.jsearch import JSearchProvider
-from providers.proz import ProzProvider
-from providers.remoteco import RemoteCoProvider
 from providers.restricted import (
     GlassdoorPartnerProvider,
     IndeedPartnerProvider,
@@ -22,25 +17,18 @@ from services.job_service import BaseJobProvider
 logger = logging.getLogger(__name__)
 
 _PROVIDER_CLASSES: dict[str, type[BaseJobProvider]] = {
-    "adzuna": AdzunaProvider,
     "careerjet": CareerjetProvider,
     "jooble": JoobleProvider,
-    "jsearch": JSearchProvider,
-    "remoteco": RemoteCoProvider,
-    "proz": ProzProvider,
     "jobcloud_partner": JobCloudPartnerProvider,
     "linkedin_authorized": LinkedInAuthorizedProvider,
     "indeed_partner": IndeedPartnerProvider,
     "glassdoor_partner": GlassdoorPartnerProvider,
     "xing_partner": XingPartnerProvider,
-    "jobicy": JobicyProvider,
 }
 
 _KEY_REQUIREMENTS: dict[str, str] = {
-    "adzuna": "ADZUNA_APP_ID",
     "careerjet": "CAREERJET_AFFID",
     "jooble": "JOOBLE_API_KEY",
-    "jsearch": "JSEARCH_RAPIDAPI_KEY",
     "jobcloud_partner": "JOBCLOUD_PARTNER_API_KEY",
     "linkedin_authorized": "LINKEDIN_PARTNER_TOKEN",
     "indeed_partner": "INDEED_PARTNER_KEY",

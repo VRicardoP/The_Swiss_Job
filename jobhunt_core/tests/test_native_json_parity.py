@@ -24,7 +24,7 @@ def test_invalid_neighbor_is_partial_error_not_complete():
     assert result.complete is False and result.error == "invalid_json_items"
 
 
-@pytest.mark.parametrize("source", ["remotive", "workingnomads", "jobicy"])
+@pytest.mark.parametrize("source", ["remotive", "workingnomads", "jobicy", "remoteok"])
 def test_legacy_extracted_skills_survive(source):
     row = {
         "id": 1,
@@ -36,9 +36,24 @@ def test_legacy_extracted_skills_survive(source):
         "tags": ["ENGLISH", "Writing"],
         "category_name": "Education",
     }
-    result, _ = fetch(source, [row] if source == "workingnomads" else {"jobs": [row]})
+    body = (
+        [row]
+        if source == "workingnomads"
+        else [{"legal": "metadata"}, row]
+        if source == "remoteok"
+        else {"jobs": [row]}
+    )
+    if source == "remoteok":
+        row["position"] = row["title"]
+        row["company"] = "School"
+    result, _ = fetch(source, body)
     content = normalize_offer(source, result.listings[0].payload)
-    assert {"english", "spanish", "tefl"} <= {tag.lower() for tag in content["tags"]}
+    if source == "remoteok":
+        assert content["tags"] == ["ENGLISH", "Writing"]
+    else:
+        assert {"english", "spanish", "tefl"} <= {
+            tag.lower() for tag in content["tags"]
+        }
     if source == "workingnomads":
         assert content["tags"][0] == "Education"
         assert content["location"] == "Remote / Worldwide"

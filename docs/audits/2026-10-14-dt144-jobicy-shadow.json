@@ -1,0 +1,41 @@
+{
+  "captured_at": "2026-10-14T09:48:06Z",
+  "scope": "DT-144 Jobicy isolated Core shadow",
+  "privacy": "Only aggregate counts and SHA-256 digests are retained; no offers, URLs, titles, companies, personal data, errors or credentials are stored.",
+  "production_mutations": false,
+  "environment": {
+    "database": "disposable PostgreSQL database created and dropped by the Core test harness",
+    "network": "httpx MockTransport; no upstream calls during either cycle",
+    "core_commit": "7d4181a33b914873433513030a98315b2b8e4fba"
+  },
+  "root_cause": {
+    "swissjob_symptom": "69 fetched, 0 persisted, 17 consecutive unstored runs",
+    "reproduction": "50 of 50 current broad-feed rows used an array in jobType; the legacy normalizer attempted to join nested list values and raised TypeError for every row",
+    "classification": "SwissJob local normalization defect; neither age nor the title filter caused the zero persistence"
+  },
+  "inputs": [
+    {"params": {}, "sha256": "4c58f6b7d5305f162af93374153879341656d132070f99e5c5ec4bd61356e6ee"},
+    {"params": {"tag": "python"}, "sha256": "0533bdf9547b5505c8b7bbd6a48090944659e933075e3e1e6a03d979f09528c8"},
+    {"params": {"tag": "javascript"}, "sha256": "b207b9ad2c10118766dd2970cb35c773ec361489ab8e852eab95134a7bed986e"},
+    {"params": {"tag": "react"}, "sha256": "0027754dbdcc9d14f36dd6b1b106f6191c8118b57c5dcd0e6354710ee07f7d70"},
+    {"params": {"tag": "customer-success"}, "sha256": "19732e59ff3949c58f4524e0f880e8258b61c92d9e3b8db20dfa0a05f5d97a7f"},
+    {"params": {"tag": "copywriting"}, "sha256": "291f89fa1c177b5c0b9260411b7e037632734080b15d727d21984a93888f744c"},
+    {"params": {"tag": "technical-writing"}, "sha256": "99697263d1ae611fc204e7a7a549c17be654d4a44388b7fe1b0a9b0990bfe390"},
+    {"params": {"tag": "translation"}, "sha256": "363a54ce0dd1f3b114b3c155773a7f99f75d6e47f8649b0eecd0694ac089331a"}
+  ],
+  "results": {
+    "cycles": 2,
+    "received_each_cycle": [204, 204],
+    "unique_listings_after_cycle_1": 158,
+    "unique_listings_after_cycle_2": 158,
+    "raw_revisions": 158,
+    "offer_revisions": 158,
+    "complete_scopes": 8,
+    "max_consecutive_failures": 0,
+    "aggregate_total": 158,
+    "published_items": 158,
+    "category_values": 22,
+    "job_type_values": 3
+  },
+  "conclusion": "The second identical cycle created no listings or revisions. Identity, idempotence, dates, categories and list-valued job types are preserved. This is branch validation, not a production cutover."
+}

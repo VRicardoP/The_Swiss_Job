@@ -1,0 +1,225 @@
+{
+  "source": "jobscout24",
+  "captured_at_utc": {
+    "public_listing_pages": "2026-10-14T18:08:28+00:00",
+    "public_detail_pages": "2026-10-14T18:10:25+00:00"
+  },
+  "method": "Both the retiring ReactPortfolio producer and the new Core adapter were replayed offline against this SAME sealed capture, so the parity below is byte-level and not two independent samples.",
+  "transport_contract": {
+    "listing_url": "https://www.jobscout24.ch/en/jobs/{keyword}/?p={page}&SortIndex=1",
+    "keywords": [
+      "informatik",
+      "software",
+      "python",
+      "javascript",
+      "devops"
+    ],
+    "pages_per_keyword": 2,
+    "credentials": null,
+    "detail_url": "https://www.jobscout24.ch{data-job-detail-url}",
+    "detail_description": "JSON-LD JobPosting, HTML stripped, capped at 500 characters",
+    "bounds_preserved": {
+      "max_recent_jobs": 300,
+      "max_detail_fetches_per_cycle": 20,
+      "visible_tags_per_job": 10,
+      "age_purge_days": 90
+    },
+    "age_purge_note": "The relative card date saturates at '30+ d', so the producer's 90-day purge could never drop a JobScout24 row; the Core path therefore needs no age filter."
+  },
+  "listing_capture": {
+    "pages": 10,
+    "all_status_200": true,
+    "bytes_total": 813913,
+    "per_page": [
+      {
+        "keyword": "informatik",
+        "page": 1,
+        "bytes": 82860,
+        "sha256": "78c05b940cef4df7b5918312bd0d76aa621a9271bc9bacabc6dd3dc284d816d7"
+      },
+      {
+        "keyword": "informatik",
+        "page": 2,
+        "bytes": 81743,
+        "sha256": "32c25cae2b7ab3a9ae87b894a0237b83a42cd7ee01f73c0c0efe74c7c9e0b61f"
+      },
+      {
+        "keyword": "software",
+        "page": 1,
+        "bytes": 85570,
+        "sha256": "f65507dd6ce5f5f29e28e2699d25941b69b05b345e8f7370e3fac7e9f4479d1b"
+      },
+      {
+        "keyword": "software",
+        "page": 2,
+        "bytes": 83775,
+        "sha256": "c7d748b43d4c8c60c79a4d19a925da6f2e471375fbd1366de1c7364c7edd7665"
+      },
+      {
+        "keyword": "python",
+        "page": 1,
+        "bytes": 79523,
+        "sha256": "2d0d607ca9150ff1170d0cb09e2e1751b0ce8de663b5435eb996dd7dab06dd37"
+      },
+      {
+        "keyword": "python",
+        "page": 2,
+        "bytes": 79677,
+        "sha256": "916af77ac987c9ca6665163cb52b3ed22eede68c1e50e5afb5d19075e0744686"
+      },
+      {
+        "keyword": "javascript",
+        "page": 1,
+        "bytes": 79856,
+        "sha256": "a9466fcbaeb70d177730957f5f765b69785fa92ccf89bf95e535b6587a5d5db8"
+      },
+      {
+        "keyword": "javascript",
+        "page": 2,
+        "bytes": 78426,
+        "sha256": "909f4efc881add8ac8d34e3843f8b1f0f96ebc4e6c23b98fa728a8e4b2fdf8ce"
+      },
+      {
+        "keyword": "devops",
+        "page": 1,
+        "bytes": 81178,
+        "sha256": "b7bb03c50af4c66ab2829b8d81fd98d00b4611a5065819bb8d4a6d8eec439cbe"
+      },
+      {
+        "keyword": "devops",
+        "page": 2,
+        "bytes": 81305,
+        "sha256": "cd286fca8ea9b43d8c021ce89ad2b02272574f7530b3e92668ade3627804ff36"
+      }
+    ],
+    "cards_parsed": 231,
+    "unique_ids": 197,
+    "cards_without_detail_url": 0,
+    "blank_locations": 0
+  },
+  "detail_capture": {
+    "pages": 20,
+    "all_status_200": true,
+    "bytes_total": 1464455,
+    "sha256": [
+      "14c5c8667d0c5fdf55a7d82cdefba1024e70d359c7f9c66602c1fc5184fb080e",
+      "1beda9466a8805b5e548e08fb0c49081f37b648dd73dc311fe690110c5a63d14",
+      "54e78e4a13a9222b98d0a1bd2a92e133de76fab7101ac5b546c91540d9614cab",
+      "5a85bc2efff53ec97da6d9cf4e3e19e2e5e6abc4b3232a0a2fd13cacd73a5da9",
+      "3a5e1beb4c17244575a776ca26004c3cd744fceecfc658afc2a243012359b070",
+      "f2005b7d7cf309782157e2db27ea6a87d18d07af354a82196e5b38eb7a4c0704",
+      "d801445a84208ef4494617f6bf6a5807065e3841bf8be89347715b689708b29d",
+      "eb87f4bdaa83745b8873d12b322d893a44fc76ff206a0f2956001940f739101a",
+      "505a56d3328de82a6cf49af801475f32e9cf308072a65c012e4bc910a604ca5e",
+      "1444257d61f4ef0975a1032f577fd20810f85c1024cba58e94aa232e5b860e77",
+      "7c47ae52270dc6ed28887d9452a3e5c0ab4e879365217ed28f0b8efbad0ce5df",
+      "21be1be90797941e3394e96f3e0c8f3526918dd4909f10048a5424282e1d259e",
+      "82e3a8debbb7f33f6041097c1916fa11afe9e160231acd9c83c5a95ef248db43",
+      "a5470c1ae87d4ea6b46c160dc7b438261d07e5cc604dd321e6ab2d740aab9683",
+      "672a4022b476312fbc968c901c297961eada1c079d1a5ad717ec2a5b86ccc09e",
+      "e5744df9ce432242c20dc5269173f75afa659fa15be45dd01c22c13f5b7716cd",
+      "4b54dfafe15d575ccbfd4e290bd23e0c6f71b8f344edfaf769e5ae1121ce0d9c",
+      "a773eb32d4144a0ff72a1e74c2224b4fb323bb2ad73223e140bfe37363eaabc5",
+      "72b3b1abe31366e91183aa6bebf6897337ab63e8e2477b26b139dbd03d0d8286",
+      "009a789228da1eab7b1f8684346f867e87e6a295159d8ae00044ae9e0c30b8bd"
+    ]
+  },
+  "legacy_replay": {
+    "recent_jobs": 197,
+    "total_processed": 197,
+    "successful_requests": 10,
+    "total_requests": 10,
+    "descriptions": 20,
+    "detail_requests": 20,
+    "tags_tracked": 26,
+    "locations_tracked": 85,
+    "remote_jobs": 0,
+    "with_employment_type": 197,
+    "max_tags_on_a_job": 8,
+    "jobs_sha256": "5a1200965d0a9d9f32a23f4d0805fab49c31a191b2c516486fa076ee36b7766b",
+    "tags_sha256": "5c65564c275e401919f5a2d1e3664db9e2341497d36aa67dabf2822c4cfd47ef",
+    "locations_sha256": "ebe36445dd14dac378c73febf2fd28204ae1036bbe613601e27a4d909fa50220"
+  },
+  "core_replay": {
+    "listings": 197,
+    "listing_requests": 10,
+    "detail_requests": 20,
+    "complete": true,
+    "error": null,
+    "cursor": {
+      "items_seen": 197,
+      "recent_items": 197,
+      "details_cached": 20,
+      "detail_attempts": 20,
+      "details_fetched": 20
+    },
+    "jobs_sha256": "74f177b3a2bb27aa5edc5cca194bb09401e7539881bcaacefbde0e52eed6da78",
+    "tags_sha256": "5c65564c275e401919f5a2d1e3664db9e2341497d36aa67dabf2822c4cfd47ef",
+    "locations_sha256": "ebe36445dd14dac378c73febf2fd28204ae1036bbe613601e27a4d909fa50220"
+  },
+  "parity": {
+    "card_parser_differences_over_231_cards": 0,
+    "served_order_identical": true,
+    "tag_counts_identical": true,
+    "location_counts_identical": true,
+    "field_differences": {
+      "rows_compared": 197,
+      "fields_compared_per_row": 10,
+      "differing_rows": 2,
+      "differing_field": "description",
+      "nature": "trailing whitespace only",
+      "cause": "Core's canonical text coercion (jobhunt_core/harvest/normalize.py:_text) strips the offer text, so a description truncated exactly at a space loses that trailing space. It is a central Core invariant, not an adapter choice, and has no visible effect."
+    }
+  },
+  "consumer_parity": {
+    "routes": [
+      "recent",
+      "by-tag",
+      "by-location",
+      "stats",
+      "health"
+    ],
+    "recent_rows": 197,
+    "recent_metadata": {
+      "total_available": 197,
+      "showing": 197,
+      "last_updated": "0 minutes ago"
+    },
+    "recent_order_identical": true,
+    "by_tag_metadata": {
+      "total_jobs": 197,
+      "last_updated": "0 minutes ago",
+      "tags_count": 26,
+      "showing_top": 20
+    },
+    "by_location_entries": 85,
+    "stats_summary": {
+      "total_jobs_processed": 197,
+      "recent_jobs_available": 197,
+      "last_updated": "0 minutes ago",
+      "cache_status": "ready",
+      "success_rate": 100.0,
+      "last_error": null,
+      "locations_tracked": 85,
+      "tags_tracked": 26
+    },
+    "stats_top_tags_identical": true,
+    "stats_top_locations_entries": 10,
+    "health_shape_identical": true,
+    "health": {
+      "status": "healthy",
+      "cache_last_updated": "0 minutes ago",
+      "total_jobs_in_cache": 197,
+      "total_jobs_processed": 197,
+      "update_in_progress": false,
+      "last_error": null,
+      "success_rate": 100.0
+    }
+  },
+  "notes": [
+    "No credential exists for this source and none was created; the sweep is anonymous HTTPS.",
+    "The capture carries no personal data: only byte counts, hashes and aggregate counters.",
+    "A card with an id and a title but no detail URL is dropped and reported as invalid_jobscout24_cards: in Core the URL is listing identity, and two empty URLs would normalize to the same value and merge two different jobs. The producer cached it with an empty URL. The live capture contains none.",
+    "A sweep that yields no cards at all raises instead of persisting nothing: the producer kept its previous cache in that case, and Core would otherwise archive a live corpus in silence."
+  ]
+}

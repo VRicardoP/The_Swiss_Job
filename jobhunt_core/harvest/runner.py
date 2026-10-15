@@ -23,6 +23,7 @@ import logging
 import httpx
 import sqlalchemy as sa
 
+from jobhunt_core.config import settings
 from jobhunt_core.database import SessionLocal
 from jobhunt_core.harvest.admission import (
     ADMISSION_CURSOR_KEY,
@@ -36,6 +37,7 @@ from jobhunt_core.harvest.provider import (
     BaseProvider,
     ListingSink,
     ProviderConfigError,
+    blocking_status,
 )
 from jobhunt_core.harvest.types import ScopeRunResult
 
@@ -134,7 +136,11 @@ async def run_scope(
             raise
         except Exception as exc:
             await _record_failure_safe(
-                session, scope_id, claim_token, state_snapshot=state_snapshot
+                session,
+                scope_id,
+                claim_token,
+                state_snapshot=state_snapshot,
+                blocked_with=blocking_status(exc),
             )
             logger.warning("scope %s: fetch falló: %s", scope_id, exc)
             return ScopeRunResult(
@@ -222,7 +228,12 @@ async def run_scope(
                     "ELSE source_scope_state.last_complete_at END, "
                     "consecutive_failures = CASE WHEN :complete THEN 0 "
                     "WHEN :failed THEN source_scope_state.consecutive_failures + 1 "
-                    "ELSE source_scope_state.consecutive_failures END"
+                    "ELSE source_scope_state.consecutive_failures END, "
+                    # Una cosecha COMPLETA es la prueba de que el portal ya no
+                    # nos bloquea: el contador de bloqueos vuelve a cero aquí y
+                    # sólo aquí (un barrido parcial no lo demuestra).
+                    "consecutive_blocks = CASE WHEN :complete THEN 0 "
+                    "ELSE source_scope_state.consecutive_blocks END"
                 ),
                 {
                     "sid": scope_id,
@@ -330,7 +341,11 @@ async def _still_authoritative(session, scope_id: str, token, state_snapshot) ->
 
 
 async def _record_failure_safe(
-    session, scope_id: str, token=None, state_snapshot=_NO_SNAPSHOT
+    session,
+    scope_id: str,
+    token=None,
+    state_snapshot=_NO_SNAPSHOT,
+    blocked_with: int | None = None,
 ) -> None:
     """Cuenta el fallo SIN tocar el cursor (insumo del backoff, ADR-05).
 
@@ -353,15 +368,68 @@ async def _record_failure_safe(
                 scope_id,
             )
             return
-        await session.execute(
-            sa.text(
-                "INSERT INTO source_scope_state (scope_id, consecutive_failures) "
-                "VALUES (:sid, 1) "
-                "ON CONFLICT (scope_id) DO UPDATE SET "
-                "consecutive_failures = source_scope_state.consecutive_failures + 1"
-            ),
-            {"sid": scope_id},
-        )
+        blocks = (
+            await session.execute(
+                sa.text(
+                    "INSERT INTO source_scope_state "
+                    "(scope_id, consecutive_failures, consecutive_blocks, "
+                    " last_blocked_at) "
+                    "VALUES (:sid, 1, CASE WHEN :blocked THEN 1 ELSE 0 END, "
+                    "        CASE WHEN :blocked THEN now() END) "
+                    "ON CONFLICT (scope_id) DO UPDATE SET "
+                    "consecutive_failures = source_scope_state.consecutive_failures + 1, "
+                    "consecutive_blocks = source_scope_state.consecutive_blocks "
+                    "  + CASE WHEN :blocked THEN 1 ELSE 0 END, "
+                    "last_blocked_at = CASE WHEN :blocked THEN now() "
+                    "  ELSE source_scope_state.last_blocked_at END "
+                    "RETURNING consecutive_blocks"
+                ),
+                {"sid": scope_id, "blocked": blocked_with is not None},
+            )
+        ).scalar_one()
+        if blocked_with is not None and blocks >= int(
+            settings.CORE_HARVEST_BLOCK_THRESHOLD
+        ):
+            await _disable_for_blocks(session, scope_id, blocked_with, blocks)
         await session.commit()
     except Exception:
         logger.exception("scope %s: no se pudo registrar el fallo", scope_id)
+
+
+async def _disable_for_blocks(session, scope_id: str, status: int, blocks: int) -> None:
+    """Apaga el scope que el portal lleva bloqueando y lo DICE en voz alta.
+
+    El portero que el motor legacy tenía: tres bloqueos seguidos y se deja de
+    pedir. Se grita al apagarlo porque la vigilancia de salud sólo mira scopes
+    HABILITADOS — sin este `logger.error` y sin el sello `disabled_by_blocks_at`
+    que lee el censo, el apagado se leería como silencio sano.
+
+    Volver a encenderlo es decisión de un operador: sondear sola a una fuente
+    que nos está bloqueando es justo lo que no se debe automatizar.
+    """
+    disabled = (
+        await session.execute(
+            sa.text(
+                "UPDATE harvest_scopes SET enabled = false "
+                "WHERE id = :sid AND enabled RETURNING id"
+            ),
+            {"sid": scope_id},
+        )
+    ).scalar_one_or_none()
+    if disabled is None:
+        return
+    await session.execute(
+        sa.text(
+            "UPDATE source_scope_state SET disabled_by_blocks_at = now() "
+            "WHERE scope_id = :sid"
+        ),
+        {"sid": scope_id},
+    )
+    logger.error(
+        "harvest_block_killswitch: scope %s DESHABILITADO tras %d bloqueos "
+        "seguidos del portal (último HTTP %d). Core deja de pedirle. "
+        "Re-habilitarlo es una decisión manual: comprueba el portal antes.",
+        scope_id,
+        blocks,
+        status,
+    )

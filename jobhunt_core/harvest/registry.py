@@ -34,6 +34,19 @@ def _altas_exact_match() -> dict:
     )
     from jobhunt_core.harvest.providers import native_nav, native_thehub
     from jobhunt_core.harvest.providers import native_jobgether
+    from jobhunt_core.harvest.providers import native_swissdevjobs
+    from jobhunt_core.harvest.providers import native_jobroom
+    from jobhunt_core.harvest.providers import native_adzuna
+    from jobhunt_core.harvest.providers import native_jsearch
+    from jobhunt_core.harvest.providers import native_dynamitejobs
+    from jobhunt_core.harvest.providers import native_jobscout24
+    from jobhunt_core.harvest.providers import native_myscience
+    from jobhunt_core.harvest.providers import native_gastrojob
+    from jobhunt_core.harvest.providers import native_tes
+    from jobhunt_core.harvest.providers import native_stelle_admin
+    from jobhunt_core.harvest.providers import native_swiss_schools
+    from jobhunt_core.harvest.providers import native_isp_workday
+    from jobhunt_core.harvest.providers import native_schuljobs
 
     return {
         arbeitnow.SOURCE_NAME: arbeitnow.register_handlers,
@@ -46,6 +59,22 @@ def _altas_exact_match() -> dict:
         native_nav.SOURCE_NAME: native_nav.register_handlers,
         native_thehub.SOURCE_NAME: native_thehub.register_handlers,
         native_jobgether.SOURCE_NAME: native_jobgether.register_handlers,
+        native_swissdevjobs.SOURCE_NAME: native_swissdevjobs.register_handlers,
+        native_jobroom.SOURCE_NAME: native_jobroom.register_handlers,
+        native_adzuna.SOURCE_NAME: native_adzuna.register_handlers,
+        native_jsearch.SOURCE_NAME: native_jsearch.register_handlers,
+        native_dynamitejobs.SOURCE_NAME: native_dynamitejobs.register_handlers,
+        native_jobscout24.SOURCE_NAME: native_jobscout24.register_handlers,
+        native_myscience.SOURCE_NAME: native_myscience.register_handlers,
+        native_gastrojob.SOURCE_NAME: native_gastrojob.register_handlers,
+        native_tes.SOURCE_NAME: native_tes.register_handlers,
+        native_stelle_admin.SOURCE_NAME: native_stelle_admin.register_handlers,
+        **{
+            source: native_swiss_schools.register_handlers
+            for source in native_swiss_schools.boards_by_source()
+        },
+        native_isp_workday.SOURCE_NAME: native_isp_workday.register_handlers,
+        native_schuljobs.SOURCE_NAME: native_schuljobs.register_handlers,
     }
 
 

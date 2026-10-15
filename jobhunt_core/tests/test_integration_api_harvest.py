@@ -17,8 +17,8 @@ from jobhunt_core.tests.test_integration_api import (  # noqa: F401
 )
 
 
-def _seed_source(factory, created, *, enabled=True, scopes=2):
-    source = "api_test_" + uuid.uuid4().hex[:12]
+def _seed_source(factory, created, *, enabled=True, scopes=2, source_name=None):
+    source = source_name or "api_test_" + uuid.uuid4().hex[:12]
 
     async def go():
         async with factory() as session:
@@ -208,6 +208,55 @@ def test_dispatch_rejects_missing_enabled_source(db):  # noqa: F811
     enqueue.assert_not_called()
 
 
+def test_dispatch_forwards_jsearch_manual_query(db):  # noqa: F811
+    factory, created = db
+    source, (scope_id,) = _seed_source(
+        factory, created, scopes=1, source_name="jsearch"
+    )
+    _cid, _kid, token = _issue(
+        factory, created, "jsearch-manual-writer", ["harvest:write"]
+    )
+
+    with patch("jobhunt_core.api.v1_harvest.run_scope_task.apply_async") as enqueue:
+        response = _api(
+            factory,
+            f"/v1/harvest/sources/{source}/runs?query=data%20scientist",
+            token=token,
+            method="POST",
+            headers={"Idempotency-Key": "jsearch-data-scientist"},
+        )
+
+    assert response.status_code == 202
+    assert enqueue.call_args.kwargs["kwargs"] == {
+        "scope_id": scope_id,
+        "run_key": enqueue.call_args.kwargs["kwargs"]["run_key"],
+        "jsearch_query": "data scientist",
+    }
+
+
+def test_dispatch_rejects_jsearch_query_for_other_sources(db):  # noqa: F811
+    factory, created = db
+    source, _scope_ids = _seed_source(factory, created, scopes=1)
+    _cid, _kid, token = _issue(
+        factory, created, "non-jsearch-query-writer", ["harvest:write"]
+    )
+
+    with patch("jobhunt_core.api.v1_harvest.run_scope_task.apply_async") as enqueue:
+        response = _api(
+            factory,
+            f"/v1/harvest/sources/{source}/runs?query=data%20scientist",
+            token=token,
+            method="POST",
+            headers={"Idempotency-Key": "non-jsearch-query"},
+        )
+
+    assert (response.status_code, response.json()["code"]) == (
+        400,
+        "unsupported_parameter",
+    )
+    enqueue.assert_not_called()
+
+
 def test_dispatch_reports_live_source_run_as_busy(db):  # noqa: F811
     factory, created = db
     source, (scope_id,) = _seed_source(factory, created, scopes=1)
@@ -294,7 +343,11 @@ def test_source_aggregate_is_bounded_and_uses_latest_raw(db):  # noqa: F811
             "tags": ["Python"],
             "canton": "ZH",
         },
-        raw={"job_types": ["Contract"]},
+        raw={
+            "jobIndustry": ["Education", 4, {"invalid": True}],
+            "jobType": ["Contract", 4, {"invalid": True}],
+            "pubDate": "2026-10-11T12:00:00Z",
+        },
         age_seconds=60,
     )
 
@@ -345,9 +398,11 @@ def test_source_aggregate_is_bounded_and_uses_latest_raw(db):  # noqa: F811
         "locations": {"Berlin": 1, "Zurich": 1},
         "tags": {"API": 1, "Python": 2},
         "companies": {"ACME": 1, "Beta": 1},
-        "categories": {"software-development": 1},
+        "publishers": {},
+        "categories": {"education": 1, "software-development": 1},
         "job_types": {"Contract": 1, "Full-time": 1},
         "cantons": {"ZH": 1},
+        "prof_groups": {},
         "remote": 1,
         "onsite": 1,
     }
@@ -358,6 +413,10 @@ def test_source_aggregate_is_bounded_and_uses_latest_raw(db):  # noqa: F811
     assert newest["job_type"] == "full_time"
     assert newest["category"] == "Software Development"
     assert len(newest["description"]) == 500
+    jobicy_shape = next(item for item in body["items"] if item != newest)
+    assert jobicy_shape["categories"] == ["Education"]
+    assert jobicy_shape["job_types"] == ["Contract"]
+    assert jobicy_shape["published_at"] == "2026-10-11T12:00:00Z"
 
     bounded = _api(
         factory,
@@ -373,6 +432,13 @@ def test_source_aggregate_is_bounded_and_uses_latest_raw(db):  # noqa: F811
         if isinstance(counts, dict)
     )
 
+    expanded = _api(
+        factory,
+        f"/v1/harvest/sources/{source}/aggregate?item_limit=1&top_n=1000",
+        token=token,
+    )
+    assert expanded.status_code == 200
+
     unchanged = _api(
         factory,
         url,
@@ -380,6 +446,118 @@ def test_source_aggregate_is_bounded_and_uses_latest_raw(db):  # noqa: F811
         headers={"If-None-Match": response.headers["etag"]},
     )
     assert unchanged.status_code == 304
+
+
+def test_source_aggregate_preserves_himalayas_display_fields(db):  # noqa: F811
+    factory, created = db
+    source, _scope_ids = _seed_source(factory, created, scopes=1)
+    external_id, _incarnation = _seed_listing(
+        factory,
+        created,
+        source,
+        content={
+            "title": "Remote editor",
+            "company": "School",
+            "description": "<p>Raw HTML</p>",
+            "location": "Worldwide",
+            "remote": True,
+            "tags": ["Writing", "Writing"],
+            "salary_min": 10.5,
+            "salary_max": 20,
+            "salary_currency": "EUR",
+            "employment_type": "Contract",
+            "logo": "https://cdn.example/logo.png",
+        },
+        raw={
+            "categories": ["Content Writing", "Editing"],
+            "pubDate": 1791950000,
+        },
+    )
+    _client_id, _key_id, token = _issue(
+        factory, created, "himalayas-reader", ["vacancies:read"]
+    )
+
+    response = _api(
+        factory,
+        f"/v1/harvest/sources/{source}/aggregate?item_limit=1&top_n=10",
+        token=token,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["counts"]["categories"] == {
+        "content-writing": 1,
+        "editing": 1,
+    }
+    item = body["items"][0]
+    assert item["external_id"] == external_id
+    assert item["categories"] == ["Content Writing", "Editing"]
+    assert item["published_at"] == 1791950000
+    assert item["salary_min"] == 10.5
+    assert item["salary_max"] == 20
+    assert item["salary_currency"] == "EUR"
+    assert item["job_type"] == "Contract"
+    assert item["logo"] == "https://cdn.example/logo.png"
+
+
+def test_source_aggregate_preserves_ictjobs_professional_groups(db):  # noqa: F811
+    factory, created = db
+    source, _scope_ids = _seed_source(factory, created, scopes=1)
+    _external_id, _incarnation = _seed_listing(
+        factory,
+        created,
+        source,
+        content={
+            "title": "System Engineer",
+            "company": "",
+            "location": "Bern",
+            "tags": ["Cloud"],
+            "prof_group": "System Engineering",
+        },
+        raw={"date": "2026-10-14T00:23:00"},
+    )
+    _client_id, _key_id, token = _issue(
+        factory, created, "ictjobs-reader", ["vacancies:read"]
+    )
+
+    response = _api(
+        factory,
+        f"/v1/harvest/sources/{source}/aggregate?item_limit=1&top_n=10",
+        token=token,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["counts"]["prof_groups"] == {"System Engineering": 1}
+    assert body["items"][0]["prof_group"] == "System Engineering"
+
+
+def test_jsearch_aggregate_preserves_raw_description(db):  # noqa: F811
+    factory, created = db
+    source, _scope_ids = _seed_source(factory, created, scopes=1, source_name="jsearch")
+    _seed_listing(
+        factory,
+        created,
+        source,
+        content={
+            "title": "Teacher",
+            "company": "School",
+            "description": "provider spacing",
+            "location": "Remote",
+            "tags": [],
+        },
+        raw={"job_description": "  provider spacing  "},
+    )
+    _client_id, _key_id, token = _issue(
+        factory, created, "jsearch-aggregate-reader", ["vacancies:read"]
+    )
+
+    response = _api(
+        factory,
+        "/v1/harvest/sources/jsearch/aggregate?item_limit=1&top_n=1",
+        token=token,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["description"] == "  provider spacing  "
 
 
 def test_source_aggregate_requires_read_scope_and_known_source(db):  # noqa: F811

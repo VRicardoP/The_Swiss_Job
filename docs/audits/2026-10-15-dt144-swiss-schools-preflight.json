@@ -1,0 +1,108 @@
+{
+  "probed_at_utc": "2026-10-14T23:58:07+00:00",
+  "purpose": "Preflight evidence for the eight swiss_schools_* sources: what each board actually publishes TODAY, before any adapter is written.",
+  "boards": {},
+  "strategies_in_config": {
+    "nae_central": [
+      "champittet_nyon",
+      "beausoleil_villars",
+      "lcis_aubonne"
+    ],
+    "isp_workday": [
+      "mosaic_geneva"
+    ],
+    "inspired_sf": [
+      "ges_versoix",
+      "stgeorges_montreux"
+    ],
+    "schoolspring": [
+      "zis_zurich"
+    ],
+    "abaservices": [
+      "isr_buchs"
+    ],
+    "finalsite_board": [
+      "isb_basel"
+    ],
+    "hubspot_cms": [
+      "hautlac_stlegier"
+    ],
+    "drupal_ecolint": [
+      "ecolint_geneva"
+    ],
+    "html_css": [
+      "riviera_montreux",
+      "iscs_zug",
+      "verbier_vis",
+      "beausoleil_inline"
+    ],
+    "manual": [
+      "bsb_bern",
+      "lagarenne_villars",
+      "wisdomtree_pully"
+    ]
+  },
+  "measured_live_state": {
+    "offers_found": {
+      "zis": 0,
+      "isb": 0,
+      "ecolint": 0,
+      "hautlac": 1,
+      "iscs": 2,
+      "inspired": 0,
+      "nae": 0
+    },
+    "reading": "Six of the seven boards reachable by a single URL publish ZERO offers right now, and that is the NORMAL state of a watchlist: a school posts a vacancy every few months. Only haut-lac (1) and ISCS (2) have anything today."
+  },
+  "why_this_changes_the_adapter_design": "Every adapter written so far RAISES when a sweep finds nothing, because for a job board an empty sweep means a broken parser. For the schools that rule is inverted: an empty board is the expected state, and raising would make six of eight sources fail every day. What must be preserved instead is the legacy's 'verified empty': the page was fetched, its structure was RECOGNISED, and only then is zero reported as healthy. Core therefore needs a per-school structural marker — present and no offers is a complete, empty sweep; absent is a visible failure.",
+  "complications_to_plan_for": [
+    "inspired and nae are NOT one board each: they sweep several schools per source, each with its own careers URL and a facet filter on the school name (SuccessFactors and Nord Anglia portals). A block on one must not be reported N times — the legacy stops the run on the first block for exactly that reason.",
+    "isp does not use the shared base: 467 lines with its own normalize (Workday), and it builds its listing URL dynamically.",
+    "ecolint declares five pages; the capture shows page 1 and page 2 are byte-identical, so its pagination needs the same treatment myScience got.",
+    "The schools are WATCHLIST_SOURCE: the legacy exempts them from the no-news backoff on purpose, because the rare event is the valuable one. Core has no equivalent backoff, so nothing to port, but the cadence decision belongs with the owner."
+  ],
+  "capture": {
+    "zis": {
+      "url": "https://www.zis.ch/one-zis-community/employment",
+      "status": 200,
+      "bytes": 84049,
+      "sha256": "c4277aba4b078b02f6730c3b96ba964b771b13697ed6daa8ad2778031f6514d5"
+    },
+    "isb": {
+      "url": "https://www.isbasel.ch/connect/news/?board=employment-public-job-postings",
+      "status": 200,
+      "bytes": 61222,
+      "sha256": "8bf0e8e779401c6a3db318b9368883a47a34fcef510e1560ad8b63bffcb7451f"
+    },
+    "ecolint": {
+      "url": "https://www.ecolint.ch/en/job-opportunities?page=2",
+      "status": 200,
+      "bytes": 66552,
+      "sha256": "b77952f75bd1e0a9e3c3f20448bc370b2ef68c7714218ce091c7271922fbd540"
+    },
+    "hautlac": {
+      "url": "https://info.haut-lac.ch/jobs-and-career",
+      "status": 200,
+      "bytes": 37217,
+      "sha256": "b4f2dfaa29b5405d887c99c40ef20d1cb4b921b36a208d8d700163cd9032c5ce"
+    },
+    "iscs": {
+      "url": "https://iscs-zug.ch/employment/",
+      "status": 200,
+      "bytes": 221511,
+      "sha256": "ca7d09ea10266c90dd7924befcb7b608b176a2c65541894df619410c3b427ef3"
+    },
+    "inspired": {
+      "url": "https://jobs.inspirededu.com/search/",
+      "status": 200,
+      "bytes": 393530,
+      "sha256": "35a10426c43802e772bc98059078cbc7c5f9385f3177a5962bab2e22842f5767"
+    },
+    "nae": {
+      "url": "https://careers.nordangliaeducation.com/search/",
+      "status": 200,
+      "bytes": 344162,
+      "sha256": "28076b84e2f448253f89005fcbad364095f89ad39f0eedd3a94f452025cfb8a6"
+    }
+  }
+}

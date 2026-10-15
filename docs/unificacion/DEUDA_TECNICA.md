@@ -38,12 +38,89 @@ continuar sin rediseñarlo.
 
 ### Punto de reanudación
 
-1. Ejecutar la Fase -1: inventario legible por máquinas, checks de ratchet y
-   protecciones de revisión/despliegue.
-2. Completar la Fase 0 contra código y producción de los tres componentes.
-3. Usar Jobicy como primer corte de extremo a extremo.
-4. Añadir aquí un checkpoint después de cada fuente u oleada con estados,
-   pruebas, SHA, evidencia viva, rollback y siguiente paso exacto.
+> **Lee primero [DT144_RELEVO.md](DT144_RELEVO.md)**: reúne el estado exacto, la
+> receta de migración ya rodada, los comandos que se usan de verdad, las
+> decisiones de diseño tomadas, la condición real de cada fuente pendiente y las
+> trampas ya pisadas. Esta lista es el punto de reanudación; ese fichero es el
+> contexto.
+
+1. No repetir el inventario ni la Fase 0: las 58 fuentes están verificadas y
+   los ratchets están activos. GitHub Free es el único forge autorizado; no
+   desplegar ni volver a proponer Forgejo, GitLab, Bitbucket o GitHub Pro.
+2. Mantener `ReactPortfolioServer/main` y `The_Swiss_Job/main` intactas
+   durante toda la ejecución. Trabajar sólo en sus ramas DT-144, con CI en cada
+   push, y fusionar al final tras la aprobación explícita del propietario.
+3. Los despliegues reales deben fallar mientras HEAD no sea exactamente el SHA
+   de `github/main`. Esta guarda evita publicar una rama incompleta, pero no se
+   presenta como una protección de rama inexistente en GitHub Free privado.
+4. La Fase 3 de APIs/feeds públicos está implementada en las ramas para
+   RemoteOK, Himalayas, SwissTechJobs, ICTJobs, SwissDevJobs y Job-Room; Jobicy
+   también está centralizado en rama. Todos sus scopes productivos permanecen
+   deshabilitados y ambos `main` intactos: el corte vivo continúa agrupado con
+   la fusión final aprobada por el propietario.
+5. **Ya no queda ningún portal por implementar.** Los últimos cerrados son
+   schuljobs (`020469e`, CI `38696733154` verde), Mosaic en Workday (`2200b56`,
+   CI `38694111472` verde), los dos portales ATS
+   escolares (`287cc18`), los cinco tableros de HTML propio (`72d068d`),
+   stelle_admin (`82c742d`, reimplementado sin navegador) y tes (`9e62bd5`); antes gastrojob
+   (`280bfc2`), myScience (`244f15e`) y JobScout24 (`33a804d` + ReactPortfolio
+   `04a020d`/`ffcc0ba`). Los cuatro residuos estructurales están cerrados
+   (`5f03c68` en ReactPortfolio y `c7d5388` en Core). DynamiteJobs quedó cerrado antes (`9ec6901` /
+   `1a0db8d`, CI `38607230379` y `38608902811` verdes), igual que JSearch y
+   Adzuna en los commits de sus checkpoints. No se ha desplegado ninguno.
+6. **Cero portales pendientes de implementar.** Las 40 fuentes operativas tienen
+   `core_adapter` en rama. `proz` y `remoteco`, no implementables con un cliente
+   conforme (medido el 2026-10-15), fueron retirados definitivamente por
+   decisión explícita del propietario ese mismo día. El registro de scrapers de
+   SwissJob está VACÍO y los módulos legados siguen temporalmente como rollback.
+7. **Relevo operativo verificado el 2026-10-15:** SwissJob/Core continúa en
+   `feat/fase-a-core` (última cabeza funcional `020469e`, CI `38696733154`
+   verde; después sólo commits documentales); ReactPortfolio continúa en
+   `feat/dt144-free-gate`, cabeza `5f03c68`. Los remotos `main` siguen
+   exactamente en `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
+   `5bf457afbde5b44a995acce4ef241324f066f836`. El estado condición a condición
+   frente al §10 del contrato, el corte agrupado paso a paso y el diagnóstico
+   completo de `proz`/`remoteco` (con lo que lo arreglaría) están en
+   [DT144_RELEVO.md](DT144_RELEVO.md) §3, §5 y §10.
+8. **Los cuatro residuos estructurales están CERRADOS** (checkpoint del
+   2026-10-15): `jobicy` y `remoteok` ya no registran caché ni actualizador y el
+   censo vacío está fijado; los barridos G7/G8 saltan con motivo y su garantía
+   se prueba ahora sobre las 18 rutas servidas desde Core con un agregado
+   hostil; la costura sirve `CoreCatalog()` directamente cuando no hay fuente
+   local; y Core tiene su propio kill-switch de bloqueo (`core0055`, tres
+   bloqueos 403/429/503 apagan el scope, con censo que lo canta). Lo único
+   diferido a propósito al corte final es el BORRADO de `CompositeCatalog` y
+   `FallbackCatalog`: son la vía de rollback mientras producción cosecha en
+   local.
+9. El worktree ReactPortfolio estaba limpio. En SwissJob/Core ya existían
+   cambios ajenos a DT-144 en `CLAUDE.md`, documentación histórica y de
+   unificación, además de documentos/auditorías sin seguimiento. No añadirlos,
+   restaurarlos ni reformatearlos: comprobar `git status` y seleccionar para
+   cada commit sólo los archivos DT-144 modificados por el agente.
+10. La metodología obligatoria es la sección 7.1 del contrato: preflight; trazado
+   extremo a extremo y contraste con runtime; línea base viva saneada y con
+   huellas; implementación mínima en Core; pruebas por capas y doble ciclo
+   aislado; paridad explicada; adaptación del consumidor y apagado local;
+   suites/CI; y checkpoint de relevo antes de avanzar al portal siguiente.
+
+### Checkpoint 2026-10-15 · Decisión de retirada y comienzo del corte
+
+- El propietario confirmó la retirada definitiva de `proz` y `remoteco` y
+  autorizó continuar con fusión, despliegue, activación de scopes, retirada de
+  código local y sondas finales.
+- Ambos quedan fuera de `_PROVIDER_CLASSES`, sin publicador activo y en estado
+  `retired`. La evidencia histórica se conserva; nunca almacenaron una oferta
+  productiva (46 y 54 errores consecutivos respectivamente).
+- El inventario pasa a 58 fuentes: 16 `local_removed`, 24 `local_pending` y 18
+  `retired`; el ratchet se endurece a un máximo de 24 pendientes y 25
+  publicadores locales (Jobicy todavía cuenta dos veces hasta el corte).
+- Siguiente puerta: pruebas estrechas y ratchets, commit/push y CI verde antes
+  de fusionar. Los módulos físicos se borran con todo el legado después de que
+  Core esté desplegado y sus scopes hayan completado ciclos correctos.
+- Primera CI del corte (`38703963650`): Core y otros siete trabajos verdes;
+  backend detectó correctamente dos políticas huérfanas de `proz`/`remoteco`.
+  Se eliminan de `_POLICIES` porque una fuente retirada no es una fuente viva ni
+  una pre-decisión de cosecha. Repetir CI antes de fusionar.
 
 ### Checkpoint 2026-10-14 · Fase -1 parcialmente completada
 
@@ -258,6 +335,1931 @@ continuar sin rediseñarlo.
   credencial, conexión, scope ni despliegue. La puerta de Fase -1 sigue
   **NO SUPERADA** porque no existe una sesión administrativa GitHub autenticada
   con la que demostrar y fijar los checks obligatorios y la revisión CODEOWNER.
+
+### Checkpoint 2026-10-14 · protección parcial y línea base Jobicy
+
+- Se autenticó GitHub CLI mediante el flujo OAuth oficial como `VRicardoP`, con
+  permisos administrativos comprobados en ambos repositorios. No se extrajeron
+  cookies ni contraseñas del navegador y el cliente se ejecuta desde `/tmp`.
+- `The_Swiss_Job/main` estaba 276 commits detrás de la rama operativa, sin
+  divergencia. Se adelantó por fast-forward de `1af39b8` a `e59283b`; el SHA
+  ya había terminado 9/9 checks en `feat/fase-a-core` y el push no dispara
+  ningún despliegue automático. El CI específico de `main`, run
+  `38520384241`, terminó con sus 9/9 jobs en `success`.
+- La protección de `The_Swiss_Job/main` quedó aplicada y leída de vuelta:
+  exige los nueve checks `source-ownership`, lint/test de backend, frontend y
+  Core, `compose-config` y `docker-build`; rama al día, una aprobación, revisión
+  CODEOWNER, conversaciones resueltas y cumplimiento también para
+  administradores; force-push y borrado están deshabilitados.
+- GitHub Free no ofrece protección administrativa para
+  `ReactPortfolioServer/main` mientras el backend siga privado. El frontend
+  público es otro repositorio y no altera esta limitación. No se cambia la
+  visibilidad ni se contrata un plan: la mitigación vigente es trabajar sólo en
+  la rama DT-144, ejecutar CI en cada push, bloquear despliegues cuyo SHA no sea
+  el de `github/main` y exigir al propietario la aprobación final de la fusión.
+- Línea base Jobicy de solo lectura:
+  [`2026-10-14-dt144-jobicy-baseline.json`](../audits/2026-10-14-dt144-jobicy-baseline.json).
+  Los dos productores locales usan ocho consultas únicas en conjunto: feed
+  general y siete tags. Un solo scope genérico perdería categorías visibles.
+- ReactPortfolio conserva 40 ofertas Jobicy, 40/40 normalizadas y completas en
+  los once campos medidos, con dos colisiones tanto de clave estable como de
+  título/empresa. SwissJob descargó 69 en el último ciclo pero no conserva
+  ninguna fila y acumula 17 ciclos con cero persistidas; sus logs del ciclo ya
+  no existen porque el worker actual arrancó después. Esa causa debe resolverse
+  o clasificarse con evidencia antes del corte, nunca asumirse.
+- No se creó fuente ni scope Core, no se ejecutó una sombra, no se detuvo ningún
+  productor y no cambió producción en este checkpoint. La puerta se adaptó
+  después al mecanismo GitHub Free ratificado por el propietario sin reducir la
+  definición de terminado.
+
+### Decisión vigente del propietario 2026-10-14 · sólo GitHub Free
+
+- GitHub Free es el único alojamiento y flujo Git autorizado; el coste debe
+  permanecer en 0 €. `ReactPortfolioServer` continúa privado y su frontend
+  continúa público. No se contratarán planes ni se instalarán forges
+  alternativos.
+- Toda implementación de DT-144 vive en ramas de feature. Los dos `main`
+  permanecen intactos hasta que la centralización completa esté validada y el
+  propietario apruebe expresamente la fusión final.
+- CI se ejecuta en cada push. Los scripts de despliegue sólo aceptan el SHA
+  exacto de `github/main`; por tanto una rama incompleta no puede llegar al
+  NAS aunque carezca de protección administrativa.
+- Forgejo, sus repositorios duplicados, integración, backup, imagen y datos ya
+  fueron retirados. No debe volver a proponerse ni desplegarse.
+- Esta decisión cambia el mecanismo de trabajo, no la definición de terminado:
+  Core debe seguir siendo el único cosechador y ambos productos deben perder
+  productores, credenciales, conexiones y persistencia local de ofertas.
+
+### Checkpoint 2026-10-14 · Forgejo retirado y flujo GitHub Free validado
+
+- Se retiraron del NAS el contenedor `dt144-forgejo`, su imagen, el directorio
+  de datos, el único archivo de backup y su entrada exacta del registro de
+  retención. La comprobación posterior devolvió `FORGEJO_ABSENT`: no queda
+  contenedor, imagen, ruta, backup, registro ni referencia en el script vivo.
+  Los datos eliminados no son recuperables desde el NAS; el código continúa en
+  las ramas publicadas de GitHub.
+- Antes de retirar el servicio se instaló atómicamente el backup diario sin la
+  dependencia Forgejo. La copia versionada y la viva comparten SHA-256
+  `d1e21e88baa77aaaf482a78c07ff3727d3b2b245c6989fa7e9ba7fe1d7f19073`;
+  además resuelve y valida la imagen Core efectiva en vez de fijar una etiqueta
+  histórica.
+- Los repositorios de GitHub conservaron sus referencias: SwissJob
+  `main=e59283b`, rama DT-144 `fd643cb`; ReactPortfolioServer `main=5bf457a`,
+  rama DT-144 `72478d8`. Ningún `main` se modificó durante la retirada.
+- La protección gratuita de `The_Swiss_Job/main` se leyó de vuelta: PR y rama
+  actualizada, nueve checks obligatorios, conversaciones resueltas, aplicación
+  a administradores, y force-push y borrado prohibidos. Las aprobaciones quedan
+  en cero y CODEOWNER desactivado porque el único propietario no puede aprobar
+  su propia PR. `ReactPortfolioServer`, al ser privado, no ofrece protección de
+  rama en GitHub Free; esta limitación está declarada, no simulada.
+- El CI sigue ejecutándose en cada push y ambos despliegues comparan el commit
+  completo con `github/main`. La prueba negativa real de esas guardas y los
+  runs CI de los commits de retirada deben registrarse después de publicarlos;
+  hasta entonces la Fase -1 continúa **NO SUPERADA**.
+- Validación local previa al commit: backup SwissJob 3/3, sintaxis Bash y
+  formato/diff limpios; suite completa ReactPortfolioServer 2.129 aprobadas,
+  1 omitida. Siguiente paso exacto: publicar la retirada en ambas ramas,
+  comprobar sus CI, ejecutar las dos pruebas negativas de despliegue y después
+  iniciar la sombra Core de Jobicy sin tocar `main`.
+- Revalidación de continuidad del 2026-10-14: los únicos remotos configurados
+  en ambos repositorios son `github`; el NAS no devuelve contenedor, imagen,
+  directorio de datos ni backup Forgejo. El script de backup vivo tampoco lo
+  referencia y comparte con la copia versionada el SHA-256
+  `d1e21e88baa77aaaf482a78c07ff3727d3b2b245c6989fa7e9ba7fe1d7f19073`.
+  La rama ReactPortfolio `feat/dt144-free-gate` quedó enlazada explícitamente
+  con `github/feat/dt144-free-gate`, no con `github/main`.
+
+### Checkpoint 2026-10-14 · Fase -1 superada y piloto Jobicy en rama
+
+- La Fase -1 queda **SUPERADA** conforme a la puerta vigente de GitHub Free:
+  SwissJob `57f161e`, run `38539018069`, terminó 9/9 controles en `success`;
+  ReactPortfolio `cb99f39`, run `38539017146`, terminó su CI en `success`.
+  Las pruebas negativas reales rechazaron desplegar ambos SHA de feature porque
+  no coincidían con `github/main`. Las ramas principales continúan exactamente
+  en `e59283b` y `5bf457a`.
+- La causa del histórico SwissJob `69 descargadas / 0 persistidas / 17 ciclos`
+  quedó reproducida: el feed actual entrega `jobType` como lista y el
+  normalizador local intentaba unir valores anidados; 50/50 filas del feed
+  amplio lanzaron `TypeError`. No era el filtro tech ni la ventana de edad.
+- Core incorpora ocho scopes Jobicy exactos e idempotentes. El aprovisionador
+  crea scopes deshabilitados y sólo cambia activación con `--enable` o
+  `--disable` explícitos; un scope extra, parámetros distintos o propietario
+  incorrecto hacen fallar la transacción.
+- Dos ciclos sombra, sin red y sobre PostgreSQL desechable, recibieron 204
+  filas cada uno y estabilizaron en 158 ofertas, 158 revisiones raw y 158
+  revisiones normalizadas. El segundo ciclo no añadió oferta ni revisión;
+  8/8 scopes completaron, con cero fallos, 158 fechas, 22 categorías y tres
+  tipos de contrato. Evidencia saneada y hashes de entrada:
+  [`2026-10-14-dt144-jobicy-shadow.json`](../audits/2026-10-14-dt144-jobicy-shadow.json).
+- La comparación del contrato visible detectó y cerró antes del corte tres
+  diferencias no cubiertas inicialmente: países `USA/UK/Anywhere`, taxonomía
+  técnica de `/by-tag` y el parámetro histórico `geo_filter`. Core preserva
+  además `jobIndustry`, `jobType` y `pubDate` cuando llegan como listas/campo
+  nativo; el agregado evita contar a la vez el valor singular y su lista.
+- ReactPortfolio `0d1cc26` + `9390071` deja Jobicy fuera de su registro local,
+  mantiene las rutas históricas como adaptador exclusivo de Core y declara la
+  fuente deshabilitada en backend y worker. SwissJob deja Jobicy fuera de
+  `_PROVIDER_CLASSES`; su buscador ya usa `CoreCatalog`, por lo que no necesita
+  un segundo adaptador de lectura.
+- Validación local: ReactPortfolio completa 2.127 aprobadas y una omitida;
+  batería focal de compatibilidad 257 aprobadas. Core completa 1.549 aprobadas
+  y una omitida; Jobicy/Core focal 36 aprobadas; registro SwissJob 85 aprobadas;
+  ratchet cruzado `{"core_owned":16,"local_pending":26,"sources":58}`.
+- No se desplegó ni se creó fuente/scope en producción. La ficha permanece
+  `local_pending` porque describe el estado vivo, mientras el código de rama
+  conserva las clases antiguas únicamente para rollback. Se borrarán después
+  de la observación productiva final, no antes.
+- Siguiente paso exacto: terminar el CI de los SHA Jobicy publicados, confirmar
+  el commit de desconexión SwissJob y avanzar a las fuentes públicas de Fase 3.
+  No fusionar, desplegar ni habilitar Jobicy hasta completar todas las fuentes
+  y recibir la aprobación final del propietario.
+
+### Checkpoint 2026-10-14 · RemoteOK centralizado en rama
+
+- Se cerró primero el checkpoint anterior: los tres commits Core/SwissJob de
+  Jobicy terminaron en `success`; el último fue `8efa7b4`, run
+  `38545188502`. ReactPortfolio `9390071`, run `38544602348`, también terminó
+  en `success`. Los dos `main` y producción siguen intactos.
+- La API pública real de RemoteOK devolvió un objeto de metadatos y 99 ofertas:
+  99/99 con identidad, URL, `apply_url` y fecha; 19 con ambos límites
+  salariales. No existe paginación ni filtro que conservar: el catálogo exacto
+  es un scope global determinista
+  `d2d5b74e-56ea-5745-8ecb-8bac403b9613`, creado deshabilitado y activable sólo
+  mediante orden explícita.
+- Core reutiliza el productor JSON nativo y conserva el raw, `id`, URL de
+  portal, URL de candidatura, fecha, todos los tags —incluidos orden y
+  duplicados—, ubicación histórica, descripción y salarios USD. El agregado
+  transporta los importes visibles sin etiquetarlos como CHF. La comparación
+  campo a campo detectó primero el recorte a 15 tags y la deduplicación de un
+  tag; ambos defectos se corrigieron antes de cerrar una paridad final 99/99.
+  Una comprobación adicional detectó que el agregado genérico ordena por
+  observación, mientras la ruta histórica ordenaba por fecha publicada; el
+  adaptador RemoteOK conserva explícitamente el orden descendente anterior.
+- Dos ciclos sobre PostgreSQL aislado recibieron 99 filas cada uno y
+  estabilizaron en 99 identidades, 99 revisiones raw y 99 revisiones de oferta:
+  el segundo ciclo no duplicó nada. El scope quedó observado, sin fallos, con
+  99 fechas, 48 ubicaciones, 118 tags sensibles a mayúsculas, 19 salarios y 99
+  URLs de candidatura. Los datos de prueba se eliminaron al terminar. Evidencia
+  saneada:
+  [`2026-10-14-dt144-remoteok-shadow.json`](../audits/2026-10-14-dt144-remoteok-shadow.json).
+- ReactPortfolio sirve las seis rutas históricas de RemoteOK desde el adaptador
+  Core compartido, conserva identidad, importes, estadísticas y salud, lo
+  retira de `get_all_providers()` y baja el ratchet local de 10 a 9. El
+  manifiesto de backend y worker lo bloquea como productor local. Los módulos
+  antiguos quedan desconectados pero presentes como rollback hasta la
+  observación productiva final.
+- Validación a este checkpoint: Core completo 1.562 aprobadas y una omitida;
+  Core JSON 56/56 y PostgreSQL 12/12; ReactPortfolio completo 2.138 aprobadas
+  y una omitida, compatibilidad/registro 259/259; paridad viva 99/99; shadow de
+  doble ciclo correcto. No se creó scope productivo, no se desplegó, no se
+  fusionó y RemoteOK permanece `local_pending` porque el inventario describe el
+  estado vivo.
+- Siguiente paso exacto: publicar los commits RemoteOK y confirmar sus CI.
+  Después continuar con la siguiente fuente pública de Fase 3; no habilitar
+  RemoteOK ni cambiar `main` antes de la fusión final aprobada.
+
+### Checkpoint de relevo 2026-10-14 · Himalayas centralizado en ramas
+
+- Antes de empezar, RemoteOK quedó publicado y cerró CI: SwissJob/Core
+  `cdca8df`, run `38549699864`, con 9/9 jobs en `success`; ReactPortfolio
+  `5cb6737`, run `38549703279`, con su job en `success`. El commit documental
+  posterior `80e0b00` ratifica GitHub Free y la retirada de Forgejo. Los `main`
+  remotos siguen intactos: SwissJob `e59283b` y ReactPortfolioServer `5bf457a`.
+- El adaptador Core de Himalayas quedó publicado en `d9b6859`; el run CI
+  `38552971276` terminó sus 9/9 jobs en `success`. ReactPortfolio consume ese
+  agregado en `e8ba714`, publicado únicamente en `feat/dt144-free-gate`; el run
+  `38554552671` terminó su job en `success` en 4m31s. Ninguno de los dos commits
+  alcanzó `main`.
+- Recuento comprobado del inventario productivo: 26 portales únicos y 27
+  productores locales —16 SwissJob y 11 ReactPortfolio—. En las ramas, tras
+  Jobicy y RemoteOK, faltan 24 portales: 15 SwissJob y 9 ReactPortfolio.
+  Tras completar Himalayas quedan 23: 15 SwissJob y 8 ReactPortfolio.
+- Trazado Himalayas: el único productor activo es
+  `ReactPortfolio/routers/himalayas_jobs.py`, con worker, caché y seis rutas.
+  `SwissJob/backend/providers/himalayas.py` existe pero no está registrado ni
+  ejecutado. El contrato activo consulta tres páginas de 20, offsets 0/20/40,
+  conserva sólo la primera restricción de ubicación, categorías y excerpt raw,
+  y ordena recientes por `pubDate` descendente.
+- Línea base viva: tres páginas de 20, 60 filas y 57 GUID únicos; tres filas son
+  duplicados exactos causados por desplazamiento entre páginas. Huellas por
+  offset: `0=9d12d58e9f486acb6cad2aeff30a93d708b1f44eaec7c682eb22ba7e9c740bc9`,
+  `20=4cb4bd726fcdda567bfaf2439fac6af708109c4d7c670775a880661cd02ab96f`,
+  `40=e42501eb15fd1e411436663e24ac45d34f439f0025167fad6e423f0c2f7e482d`.
+- Core en este checkpoint incorpora Himalayas al provider JSON, fecha de
+  admisión, agregado, DTO y provisión opt-in. Conserva raw, GUID, candidatura,
+  `pubDate` numérico, HTML, orden y duplicados de tags, primer país, salarios
+  decimales y moneda, empleo y logo. La primera comparación encontró que 12
+  logos vacíos pasaban de `""` a `null`; se corrigió y la paridad final es
+  60/60 sin diferencias.
+- El doble ciclo sombra aislado recibió 60 filas y tres páginas por ciclo,
+  terminó dos veces en `ok`, observó 1/1 scope, registró cero fallos y estabilizó
+  57 identidades, 57 listings, 57 raws y 57 revisiones de oferta. El segundo
+  ciclo no creó revisiones. Las 57 fechas coinciden por GUID y el orden funcional
+  sigue siendo más reciente primero. Evidencia:
+  [`2026-10-14-dt144-himalayas-shadow.json`](../audits/2026-10-14-dt144-himalayas-shadow.json).
+- Validación ejecutada: Ruff focal verde; JSON unitario 47/47 antes del ajuste
+  de logo y 40/40 después; PostgreSQL focal 13/13; paridad viva 60/60; Core
+  completo 1.573 aprobadas, una omitida y una advertencia conocida. Dos
+  invocaciones descartadas fallaron por infraestructura del arnés —URL admin
+  con driver asíncrono y `PYTHONPATH` ausente en el contenedor— y pasaron al
+  repetirlas con la configuración correcta; no fueron fallos de producto.
+- Archivos DT-144 que forman el checkpoint Core de SwissJob:
+  `jobhunt_core/harvest/providers/native_json.py`, `normalize.py`,
+  `admission.py`, `source_aggregate.py`, `api/v1_harvest.py`,
+  `provision_himalayas.py` y sus pruebas focales/integrales. No incluir en
+  ningún commit los cambios preexistentes de `CLAUDE.md`, documentación histórica,
+  auditorías de viabilidad ni otros ficheros ajenos que muestra `git status`.
+- ReactPortfolio conserva las seis rutas históricas desde el adaptador Core
+  compartido: `by-category`, `by-location`, `recent`, `refresh-cache`, `stats` y
+  `health`. Mantiene GUID, candidatura, fecha epoch, HTML, primer país, categorías,
+  empleo, logo —incluido `""`— y salarios condicionales; solicita las 200 ofertas
+  antes de ordenar por `pubDate` y aplicar el límite del cliente.
+- El productor local se desconectó en todos sus puntos: ya no se importa ni se
+  monta su router, no figura en `get_all_providers()`, no registra caché ni función
+  de actualización aunque el módulo de rollback se importe, y backend/worker lo
+  incluyen en `LEGACY_DISABLED_SOURCES`. El ratchet local baja de 9 a 8.
+- La primera suite completa encontró dos fallos: las auditorías G7/G8 seguían
+  viendo una caché local Himalayas porque `tests/test_cache_updates.py` importa el
+  módulo heredado y éste aún ejecutaba `register_cache/register_update`. Se retiró
+  únicamente ese efecto lateral y se añadió una guarda explícita; el código
+  heredado y sus pruebas directas se conservan para rollback. La repetición focal
+  pasó 101/101 y la suite final 2.151 aprobadas, una omitida y cero fallos; la
+  batería focal previa pasó 323/323, Ruff y `diff --check` pasan, y el control de
+  propiedad informa exactamente ocho cosechadores locales.
+- En las ramas quedan 23 portales por implementar: 15 de SwissJob y 8 de
+  ReactPortfolio. Producción conserva todavía los 26 portales únicos/27 productores
+  de la línea base, porque no se ha creado scope productivo, desplegado, fusionado
+  ni cambiado ninguna credencial. El inventario continúa `local_pending` porque
+  describe esa producción. Rollback de rama: el módulo local permanece presente y
+  puede reconectarse restaurando registro, router, provider y manifiesto.
+- **Siguiente paso exacto:** continuar SwissTechJobs, siguiente fuente pública de
+  Fase 3. Primero trazar y comparar el productor activo
+  `ReactPortfolio/routers/swisstechjobs_jobs.py` con el módulo SwissJob dormido,
+  capturar la API WordPress pública con huellas y fijar su contrato antes de tocar
+  Core. No tocar `main`, producción ni crear/activar el scope real.
+
+La metodología obligatoria usada en Jobicy, RemoteOK e Himalayas queda
+formalizada en la sección 7.1 del contrato: preflight; trazado completo; línea
+base con huellas; Core mínimo; pruebas por capas; doble ciclo y paridad; lectura
+Core y apagado local; suites/CI; checkpoint antes de avanzar.
+
+### Checkpoint de relevo 2026-10-14 · SwissTechJobs centralizado en ramas
+
+- El preflight parte de SwissJob/Core `f137f4f` y ReactPortfolio `e8ba714`, con
+  los CI de Himalayas verdes. Los `main` remotos siguen en `e59283b` y
+  `5bf457a`; no se desplegó ni se creó ningún scope productivo.
+- Core quedó publicado en `a7016a6`; su run `38557077146` terminó verde en
+  sus 9 trabajos. ReactPortfolio quedó publicado en `f3baba8`; su run
+  `38557887736` terminó verde. Ambos commits viven sólo en sus ramas DT-144.
+- El único productor activo es
+  `ReactPortfolio/routers/swisstechjobs_jobs.py`: dos páginas WordPress de 100,
+  caché, worker, registro normalizador y cinco rutas públicas. El módulo
+  `backend/providers/swisstechjobs.py` de SwissJob está probado pero no figura en
+  `_PROVIDER_CLASSES`; no produce tráfico ni datos.
+- La captura pública comprobada devolvió 8 ofertas únicas en la página 1 y el
+  error terminal WordPress documentado en la página 2. `X-WP-Total=8` y
+  `X-WP-TotalPages=1`; huellas:
+  `page1=dd60e788a7d69df486dc3b32c56af2e486d16101657144ccdfbade568506f99d`
+  y `page2=b6714928c361e00376c3eda08eef1f4fcc3343bd71d9be2bde61ca1eee190c26`.
+- Core reutiliza `NativeJSONProvider` y añade sólo el contrato WordPress real:
+  identidad por `id`, URL pública y candidatura, raw intacto, dos peticiones con
+  fin 400 exacto, `date`, HTML sin tags pero entidades conservadas, meta de
+  empresa/ubicación/remoto/salario y moneda CHF por defecto. El scope único es
+  determinista, nace deshabilitado y sólo cambia con `--enable/--disable`.
+- La comparación viva dio 8/8 filas y contadores idénticos, con huella visible
+  `2738c0da2a666c257d1605428747438937bd0eff2f49331c39248b8ea5b55c07`.
+  Se preserva expresamente la coincidencia por subcadena del extractor local:
+  la etiqueta de una letra `r` puede aparecer dentro de palabras como
+  `engineer`; corregirla aquí habría sido una regresión de migración.
+- Dos ciclos sombra aislados terminaron en `ok`, dos páginas y 8 ofertas cada
+  uno; estabilizaron 8 identidades, 8 listings, 8 raws y 8 revisiones canónicas,
+  sin revisión adicional en el segundo ciclo. El agregado observó 1/1 scope,
+  cero fallos, 8 fechas, 7 ubicaciones, 17 tags, 8 empresas, 6 salarios raw y 8
+  URLs de candidatura. Los datos de prueba se purgaron. Evidencia:
+  [`2026-10-14-dt144-swisstechjobs-shadow.json`](../audits/2026-10-14-dt144-swisstechjobs-shadow.json).
+- Validación Core: batería focal 66/66; Ruff focal y `diff --check` verdes;
+  suite completa 1.579 aprobadas, una omitida y una advertencia conocida; el
+  ratchet sigue en `{"core_owned":16,"local_pending":26,"sources":58}` porque
+  esos estados describen producción, aunque la ficha ya declara el adaptador de
+  rama.
+- Archivos Core versionados por `a7016a6`:
+  `jobhunt_core/harvest/providers/native_json.py`, `harvest/admission.py`,
+  `provision_swisstechjobs.py`, sus dos pruebas, `source_ownership.json`, esta
+  deuda y la evidencia. No incluir ninguno de los cambios preexistentes ajenos
+  enumerados en el checkpoint Himalayas.
+- ReactPortfolio `f3baba8` conserva exactamente las cinco rutas históricas desde
+  Core, incluido salario raw, CHF, fecha y orden; excluye `Switzerland` sólo del
+  contador de ubicación y no crea `by-tag/by-company`. Retira import/router,
+  provider y los efectos laterales de caché/update, añade la fuente a los dos
+  manifiestos de apagado y baja el ratchet de 8 a 7.
+- Validación ReactPortfolio: focal 371/371; suite completa 2.159 aprobadas, una
+  omitida y 115 advertencias conocidas; Ruff en los archivos modificados y
+  `diff --check` verdes. La primera focal encontró dos pruebas acopladas a la
+  caché local —conflicto de refresh y salud tras purga—; se retiraron porque el
+  contrato Core 409 ya está cubierto y la variante de JSearch sigue midiendo el
+  productor local real.
+- En las ramas quedan 22 portales por implementar: 15 de SwissJob y 7 de
+  ReactPortfolio. Producción continúa en 26 portales únicos/27 productores y la
+  ficha sigue `local_pending` hasta el corte final aprobado.
+- **Siguiente paso exacto:** continuar con ICTJobs, la otra fuente WordPress
+  pública de Fase 3. Trazar primero sus diferencias ACF/enlaces respecto a
+  SwissTechJobs y capturar su API viva antes de generalizar código. No tocar
+  `main`, producción ni crear/activar scopes reales.
+
+### Checkpoint de relevo 2026-10-14 · ICTJobs centralizado en ramas
+
+- El preflight parte de SwissJob/Core `7f28e71` y ReactPortfolio `f3baba8`.
+  Los cuatro portales anteriores tienen CI verde; ambos `main` remotos y
+  producción permanecen intactos.
+- El trazado comprobó un único productor activo:
+  `ReactPortfolio/routers/ictjobs_jobs.py`, con caché/worker, cinco páginas
+  WordPress de 20 y cinco rutas públicas (`recent`, `stats`, `health`,
+  `refresh-cache` y `by-location`). El provider homónimo de SwissJob está
+  probado pero ausente de `_PROVIDER_CLASSES`, por lo que es código dormido.
+- La API viva informó `X-WP-Total=185` y `X-WP-TotalPages=10`, pero el
+  productor vigente sólo consume las páginas 1–5: 100 filas, 100 ids y 100 URL
+  únicas. Se comprobó también la página 6 para confirmar que ampliar hasta 185
+  cambiaría funcionalidad; se conserva deliberadamente la ventana 5×20.
+  Las seis huellas están en
+  [`2026-10-14-dt144-ictjobs-shadow.json`](../audits/2026-10-14-dt144-ictjobs-shadow.json).
+- En las 100 filas actuales `acf` es un array vacío, no un objeto: producción
+  presenta cero compañías, descripciones, remotos y salarios, aunque sí obtiene
+  ubicación, tags, tipo y grupo profesional desde `_embedded.wp:term`. Core
+  degrada defensivamente ese `acf` y conserva el soporte ya existente para
+  cuando el portal vuelva a exponer un objeto ACF.
+- La extensión mínima reutiliza `NativeJSONProvider`: identidad WordPress por
+  `id`, raw intacto, `_embed=`, cinco páginas de 20, fecha del portal, enlace
+  directo sólo bajo su flag, taxonomías, salario CHF y la regla histórica por
+  la que un límite inválido anula ambos límites. Se añadió `prof_group` al
+  contenido/agregado común porque la ruta de estadísticas pública lo exige; no
+  se creó una capa o proveedor paralelo.
+- La comparación reproducible, con la misma semilla de hash necesaria por el
+  `list(set(...))` legado, dio 100/100 filas, todos los contadores y cero
+  diferencias de campo. Las huellas legado y proyectada coinciden:
+  `8fffc8d059bc63788695d5c6360640903a7c7eb8414ca84214774427633ca72a`.
+- Dos ciclos sombra aislados terminaron `ok` con 100 ofertas y cinco páginas;
+  estabilizaron 100 ids, listings, raws y revisiones canónicas. El agregado
+  observó 1/1 scope, cero fallos, 100 fechas, 9 ubicaciones, 9 grupos
+  profesionales y 42 tags tras el plegado a minúsculas legado. No aparecieron
+  compañías, descripciones, remotos, salarios ni enlaces de candidatura, en
+  paridad con la captura. Scope y datos de prueba se purgaron.
+- Validación hasta este punto: unidad focal 79/79, integración focal 3/3 y
+  agregado completo 8/8; Ruff completo de Core, formato, `diff --check` y
+  ratchet de propiedad verdes. La primera suite completa detectó que la prueba
+  del DTO enumeraba los contadores exactos sin `prof_groups: {}`; se actualizó
+  el contrato. Una segunda ejecución se reinició antes de terminar al endurecer
+  la semántica WordPress: un 400 sólo es fin normal desde la página 2; un 400 en
+  la primera sigue siendo fallo, igual que en el productor legado. La ejecución
+  definitiva terminó con 1.587 aprobadas, una omitida y una advertencia conocida
+  en 7 min 08 s.
+- Incidencia documental contenida: un parche aún no versionado coincidió primero
+  con la ficha Adzuna. El ratchet falló con `missing=['adzuna']` y
+  `unexpected=['ictjobs']`; se restauró Adzuna, se aplicó el cambio con
+  contexto específico de ICTJobs y el ratchet volvió a
+  `{"core_owned":16,"local_pending":26,"sources":58}`.
+- **Rollback:** no se ha creado ni activado ningún scope productivo, no se ha
+  desplegado y ambos `main` siguen intactos. Revertir `f273a24`
+  elimina toda la capacidad nueva sin tocar al productor local vigente.
+- Core quedó versionado y publicado en `f273a24`; la CI `38560944461` terminó
+  verde en sus 9 trabajos. El checkpoint documental previo `7f28e71` también
+  quedó verde en `38559313935`.
+- ReactPortfolio sirve las cinco rutas desde `core_source_compat`, incluida la
+  forma legado de oferta, orden por fecha, tags plegados antes del top 10,
+  grupos profesionales, salud y refresh autenticado. Eliminó el include del
+  router local, el provider del registro, los efectos de registro
+  cache/update y añadió ICTJobs a las dos listas de apagado productivo. El
+  módulo legado queda inerte para rollback; el ratchet baja de 7 a 6.
+- La comparación a través del adaptador consumidor real dio 100/100 filas,
+  cero diferencias y la misma huella de ofertas
+  `2a88dae4c136985c6895180883eea471c3478215e65ed32299a096ae5bc8f4e0`.
+  La focal ampliada terminó 331/331 y la suite completa 2.168 aprobadas, una
+  omitida y 115 advertencias conocidas en 3 min 19 s.
+- Incidencias ReactPortfolio resueltas antes de versionar: la primera focal
+  mostró que las fixtures agregadas aún no declaraban `prof_groups` y que el
+  registro esperado seguía enumerando ICTJobs; ambas expectativas se
+  actualizaron. Un `ruff format` focal tocó líneas ajenas en ocho archivos; el
+  diff no versionado se restauró y se reaplicaron sólo 124 adiciones/26
+  eliminaciones funcionales. Ruff queda verde salvo los E402 históricos de
+  `main.py` y el F841 histórico de `tests/test_jobs.py:229`, ninguno tocado.
+- ReactPortfolio quedó versionado y publicado en `fda24a9`; la CI
+  `38563293589` terminó verde. Se revalidó que los `main` remotos siguen
+  exactamente en `e59283b` y `5bf457a`.
+- Tras este traspaso quedan 21 portales por implementar en las ramas: 15 de
+  SwissJob y 6 de ReactPortfolio. Producción continúa en 26 portales
+  únicos/27 productores hasta el corte final aprobado.
+- **Siguiente paso exacto:** empezar SwissDevJobs con la metodología 7.1 desde
+  preflight y trazado; comprobar su productor real, contrato y API viva antes de
+  modificar código. No tocar `main`, producción ni activar scopes reales.
+
+### Checkpoint de relevo 2026-10-14 · SwissDevJobs EN CURSO, preflight cerrado
+
+- Inicio verificado desde SwissJob/Core `030d347` en `feat/fase-a-core` y
+  ReactPortfolio `fda24a9` en `feat/dt144-free-gate`; ambos `main` y producción
+  siguen intactos. La CI `38564269161` de `12fabdc` terminó verde 9/9; la
+  repetición `38564792245` de la anotación documental seguía ejecutando sólo
+  sus suites largas al cerrar este preflight.
+- El trazado confirma un único productor activo: ReactPortfolio
+  `services/swissdevjobs_provider_impl.py`, registrado en caché/worker e
+  incluido por `routers/swissdevjobs_jobs.py`. Hace un barrido de arranque, uno
+  circadiano y refresco administrativo; expone `recent`, `stats`, `by-tag`,
+  `by-location`, `refresh-cache` y `health`. SwissJob no contiene módulo ni
+  registro SwissDevJobs y Core todavía no contiene provider ni scope.
+- El contrato vivo es un `GET https://swissdevjobs.ch/api/jobsLight` sin
+  credencial ni paginación, seguido de páginas públicas de detalle. La captura
+  saneada dio 210 objetos, cero pausados, 210 `jobUrl` y 210 `_id` únicos,
+  272.877 bytes y SHA-256
+  `d4a611e9f0686279eb3cf2f7e02eed915bf8d19b9eabeb3704c591b8ef880d23`.
+  La muestra de detalle dio 10.445 bytes, un único marcador
+  `window.__detailedJob`, 1.138 caracteres de descripción y SHA-256 de texto
+  `df02081d8bc43abdcdad7f9bb3c7375b9dd7fa4974e44ed85c2ad7a58ac554d4`.
+- La ejecución del productor legado exacto sobre esa captura procesó 210 y
+  dejó 157 ofertas servibles tras la regla compartida de 90 días, 20
+  descripciones en caché fría, 14 ubicaciones y 259 tags; tasa 100 %, sin error.
+  Huellas: ofertas
+  `c0b543b747de87ca2cc5a87a3abd10f1094e7f9fa692f776290b1f9893ee8296`,
+  proyección normalizada
+  `7ac0d97bd21512264562b026424835ed32ae8a95096f4316bcd5ea8159b176cb`,
+  ubicaciones
+  `221f4697a852fb12f10d8b32297bd24c8ddef6a32f3e011ecd9f863532165583`
+  y tags
+  `d185799dedbc5b271f76514d5b0bb5c1e49f4efb6da611dbf6c91cf5135ba2db`.
+- Contrato que no se debe simplificar: el feed ligero no trae descripción; el
+  productor intenta como máximo 20 detalles nuevos por ciclo, conserva los ya
+  enriquecidos por identidad, limita la descripción visible a 500 caracteres,
+  conserva como máximo 300 recientes y cuenta todos los tags aunque cada oferta
+  sólo muestra los diez primeros. El feed vivo contiene 41 ofertas con más de
+  diez tecnologías, así que usar el mismo campo capado para estadísticas
+  perdería información.
+- Decisión mínima tras revisar el sink, cursores y providers Core: implementar
+  un provider SwissDevJobs cohesivo y sin estado propio. Su cursor transaccional
+  conservará sólo descripciones activas, podadas por el feed, para volver a
+  emitir cada oferta y refrescar `last_seen_at` sin solicitar 210 detalles cada
+  día ni borrar texto bueno. No se añade tabla, dependencia ni caché paralela.
+  El agregado seguirá contando las tecnologías completas del raw y el consumidor
+  limitará a diez las etiquetas visibles, como el legado.
+- Incidencias de preflight sin efecto funcional: el primer parser aislado no
+  llegó a importar por faltar las cinco variables obligatorias; se repitió con
+  el entorno de pruebas versionado. El primer script temporal no encontraba el
+  worktree en `PYTHONPATH`; se corrigió sin ejecutar red. La línea base final
+  avisó de tablas SQLite auxiliares ausentes y continuó por sus degradaciones
+  previstas; los recuentos/hashes anteriores proceden de la ejecución válida.
+- **Siguiente paso exacto si hay relevo:** confirmar que `38564792245` terminó
+  verde; implementar y probar provider, normalizador, registro, fecha
+  `activeFrom`, agregado de tags completos y provisionador opt-in; ejecutar dos
+  ciclos PostgreSQL aislados y comparar la proyección contra las huellas de este
+  bloque. Sólo después adaptar las seis rutas ReactPortfolio, desconectar sus
+  imports/registros y reducir el ratchet local de 6 a 5.
+
+#### Avance verificable · capacidad SwissDevJobs terminada en Core
+
+- La repetición documental `38564792245` terminó verde. Core quedó versionado y
+  publicado en `63fe4e5` sobre `feat/fase-a-core`; `main` sigue exactamente en
+  `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y no se ha creado, habilitado ni
+  desplegado ningún scope productivo.
+- `SwissDevJobsProvider` implementa el feed ligero y el enriquecimiento
+  incremental de hasta 20 detalles por ciclo con el cursor transaccional ya
+  existente. Conserva únicamente descripciones de identidades aún activas,
+  limita el texto a 500 caracteres y no añade tabla, caché, dependencia ni
+  proceso. El registro, la admisión, `activeFrom`, el agregado de tecnologías
+  completas y el provisionador opt-in quedan incluidos en el mismo commit.
+- La proyección Core reproducible sobre la captura viva devolvió 210 filas,
+  157 dentro de la ventana histórica de 90 días y 20 descripciones. Coinciden
+  byte a byte tanto la huella de ofertas legado
+  `c0b543b747de87ca2cc5a87a3abd10f1094e7f9fa692f776290b1f9893ee8296`
+  como la normalizada
+  `7ac0d97bd21512264562b026424835ed32ae8a95096f4316bcd5ea8159b176cb`.
+- Dos ciclos aislados sobre PostgreSQL terminaron correctamente: el segundo
+  reutilizó la descripción, mantuvo una sola revisión raw por identidad y el
+  agregado expuso los 12 tags completos de la muestra frente a los 10 visibles.
+  Validación Core: 16 unidades nuevas, 120 pruebas focales, 10 integraciones,
+  repetición aislada 2/2 y suite completa con 1.603 aprobadas, una omitida y dos
+  avisos conocidos; Ruff, formato, `diff --check` y el ratchet
+  `{"core_owned":16,"local_pending":26,"sources":58}` quedaron verdes.
+- Incidencias contenidas: el primer test unitario llevaba una fixture híbrida
+  incompatible con su expectativa remota y se corrigió la fixture, no el
+  comportamiento; el host no tenía `psycopg2` y la integración se repitió en la
+  imagen Core; el primer script de proyección usó el Python del sistema sin
+  `aiohttp` y se repitió con el entorno ReactPortfolio. Ningún intento fallido
+  modificó base de datos o producción.
+- La CI `38568433424` de `63fe4e5` tiene siete trabajos verdes; sólo
+  `backend-test` y `core-test` siguen en ejecución al escribir este checkpoint.
+  No se modifica ReactPortfolio hasta comprobar que el run completo termina
+  verde.
+- Los cambios ajenos enumerados en este documento siguen preservados y sin
+  añadir al commit. La única modificación DT-144 pendiente en el worktree Core
+  es este ledger de relevo.
+- **Siguiente paso exacto si hay relevo:** consultar `38568433424`; si termina
+  verde, trabajar en `/tmp/reactportfolio-dt144-free-gate` desde `fda24a9`.
+  Añadir SwissDevJobs al adaptador `core_source_compat`, conservar las seis
+  rutas y la ventana servible de 90 días, retirar import/router/provider y los
+  registros laterales locales, añadirlo a ambos `LEGACY_DISABLED_SOURCES`,
+  bajar el ratchet de 6 a 5 y ejecutar focales, suite completa, paridad, commit,
+  push y CI. Si la CI Core falla, resolver y documentar antes de tocar el
+  consumidor.
+
+#### Avance verificable · SwissDevJobs centralizado en ramas
+
+- La CI Core `38568433424` terminó verde en sus 9 trabajos. ReactPortfolio se
+  mantiene en `feat/dt144-free-gate`, partiendo de `fda24a9`; su `main` remoto
+  continúa en `5bf457afbde5b44a995acce4ef241324f066f836` y producción no se ha
+  modificado.
+- `core_source_compat` sirve ya las seis rutas SwissDevJobs desde el agregado
+  Core. Conserva la forma pública histórica, identidad, orden, límite de 300,
+  ventana de 90 días, fechas desconocidas, salarios, logo, remoto, tipo, texto,
+  diez tags visibles y estadísticas sobre todos los tags. Reutiliza
+  `parse_job_posting_date` y `MAX_JOB_AGE_DAYS`; no añade dependencia ni una
+  segunda regla temporal.
+- El productor local queda desconectado en el worktree: `main.py` ya no importa
+  ni monta su router, `get_all_providers()` ya no lo devuelve y la importación
+  del módulo de rollback no registra caché ni actualización. Backend y worker
+  lo añaden al manifiesto de fuentes retiradas y el ratchet local baja de 6 a
+  5. El código antiguo no se borra aún para conservar el rollback de rama.
+- La comparación aislada sobre la captura viva, sin red y usando el adaptador
+  Core más el consumidor real, dio 210 filas de entrada, 157 visibles y cero
+  diferencias. Las huellas directa y consumidora coinciden en
+  `daa03fb296d2f3e2e07cc1f18cd0de67a67e3ed83200c7783adbb73d77696fac`.
+  La variante no incluye descripciones porque fuerza 404 en detalle; la paridad
+  completa con las 20 descripciones ya quedó probada en Core en el bloque
+  anterior.
+- Validación focal: batería amplia 345 pruebas, con un primer
+  fallo exclusivo de la aserción que comparaba `httpx.QueryParams` con `dict`;
+  tras convertirlo explícitamente pasó completa. La focal final del adaptador,
+  apagado y provider pasó 218/218; el ratchet informa cinco cosechadores. Una
+  primera ejecución temporal de paridad no importó por faltar el entorno
+  obligatorio de Settings y se repitió con los valores de prueba versionados,
+  sin acceder a base, Redis, portales ni producción. La suite completa terminó
+  con 2.181 aprobadas, una omitida y 115 avisos conocidos en 3 min 19 s.
+- Ruff semántico de los Python modificados, salvo los E402 históricos de
+  `main.py`, y `git diff --check` están verdes. El lint global enumera 107
+  incidencias preexistentes repartidas por el repositorio; no se mezclaron.
+  `ruff format --check` propone reformatear los ocho ficheros completos igual
+  que en el traspaso ICTJobs; tampoco se aplicó. El hook del commit avisó que
+  `black` no está instalado y omitió su comprobación; pruebas, diff y controles
+  posteriores sí se ejecutaron con el entorno aislado.
+- ReactPortfolio quedó versionado y publicado en `fe0c77d`; la CI
+  `38570851745` terminó verde. Core está en `63fe4e5` y su CI `38568433424`
+  también terminó verde 9/9. El checkpoint documental intermedio quedó
+  publicado en `b0af7e3`.
+- En las ramas quedan 20 portales por implementar: 15 de SwissJob y 5 de
+  ReactPortfolio. Producción sigue en 26 portales únicos/27 productores, porque
+  los `main`, scopes y despliegues reales permanecen intactos hasta el corte
+  final aprobado.
+- **Rollback:** ningún scope productivo existe y el módulo local continúa
+  disponible pero inerte. Revertir `fe0c77d` reconecta su router, provider,
+  registros y manifiestos; revertir `63fe4e5` retira la capacidad Core.
+- **Siguiente paso exacto si hay relevo:** continuar Job-Room desde el
+  preflight siguiente; no rehacer SwissDevJobs ni tocar producción.
+
+### Checkpoint de relevo 2026-10-14 · Job-Room EN CURSO, preflight cerrado
+
+- El trazado confirma un único productor activo:
+  `ReactPortfolio/services/jobroom_provider_impl.py`, conectado a caché,
+  worker, barrido circadiano, lecturas stale y refresco administrativo. Expone
+  seis rutas (`recent`, `stats`, `by-tag`, `by-location`, `refresh-cache` y
+  `health`). SwissJob no contiene provider o scraper Job-Room y Core no tiene
+  adaptador ni scope.
+- El contrato actual se comprobó con un POST público sin credencial a
+  `jobAdvertisements/_search`: `page=0`, `size=300`, `sort=date_desc`, ventana
+  `onlineSince=7` y los cinco códigos ICT CHISCO3 ya versionados. El servidor
+  informó 1.031 coincidencias y cuatro páginas, pero el productor vigente sólo
+  consume las primeras 300; ampliar la paginación cambiaría funcionalidad y no
+  forma parte de esta migración.
+- La captura saneada contiene 300 filas y 300 ids únicos, sin ids ni títulos
+  ausentes; ocupa 1.653.407 bytes y su SHA-256 es
+  `b9c4c07ef168ad1bf6f0f74f4b32be8e52367a97373928f5a50c04f49cc9efeb`.
+  Presenta 104 ubicaciones, 300 descripciones inline, 59 tags estadísticos,
+  cero ofertas `HOME_WORK`, cuatro códigos de idioma y cinco ofertas cuyo
+  conjunto completo supera los diez tags visibles.
+- La ejecución exacta del productor legado sobre esa captura procesó y mantuvo
+  300 ofertas, una petición correcta y cero fallos. Huellas: ofertas
+  `0fec95a5f3cbdc81253bdd27d2c9678a831e4c233eb8f6c075527f8eb627b7f4`,
+  normalizadas
+  `71e44326befd4d09ccdd0109c2d61abdce01168160910d22e2061806cf1deb2b`,
+  ubicaciones
+  `a8583e223a130ffc02b27ec2d4600f0ff0f2f385128c5415138a48bb82d9cb86`
+  y tags
+  `4e0663d77a90f849b211ed5deb2926163463c407e0fb4331dc907a717d2562f6`.
+  La captura actual produce 19 hashes title/empresa repetidos; la identidad
+  autoritativa sigue siendo el id upstream, por lo que no se deben deduplicar.
+- Se comprobó que las taxonomías técnicas de ReactPortfolio y Core contienen
+  exactamente los mismos 77 términos. El helper Core actual no aplica los
+  límites de palabra que Job-Room necesita; esa diferencia debe cerrarse sin
+  alterar el comportamiento por defecto de las fuentes existentes. Los idiomas
+  forman parte de los tags visibles pero no de sus contadores, y los contadores
+  incluyen skills más allá del límite visual: ambas reglas requieren prueba
+  explícita.
+- Artefactos temporales no versionados:
+  `/tmp/dt144-jobroom-feed.json`, `/tmp/dt144-jobroom-headers.txt` y
+  `/tmp/dt144_jobroom_legacy_baseline.py`. No contienen credenciales de portal;
+  las cabeceras temporales incluyen una cookie efímera del servidor y no deben
+  copiarse al repositorio.
+- **Siguiente paso exacto si hay relevo:** implementar en Core el POST acotado,
+  normalización anidada, identidad, fecha `publication.startDate`, tags visibles
+  frente a estadísticos y provisionador opt-in; cubrir respuesta inválida,
+  filas parciales, cuerpo/parámetros exactos y doble ciclo PostgreSQL. Comparar
+  luego la proyección completa contra las cuatro huellas antes de modificar el
+  consumidor ReactPortfolio.
+
+#### Avance verificable · Job-Room centralizado en ramas
+
+- Core quedó versionado y publicado en `14b613a` sobre `feat/fase-a-core`; su
+  CI `38574880608` terminó verde en los nueve trabajos. El adaptador ejecuta un
+  único POST con los parámetros, ventana y cinco profesiones verificados,
+  mantiene el límite histórico de 300 aunque el portal anuncie más páginas,
+  conserva el id upstream y registra `publication.startDate`. El provisionador
+  crea un único scope `{}` deshabilitado; no se creó ni activó ningún scope
+  productivo.
+- La normalización anidada conserva anonimato de empresa, ubicación, jornada,
+  `HOME_WORK`, idiomas visibles y límites de palabra. El raw añade sólo la lista
+  completa `_core_statistics_tags`: los idiomas no contaminan estadísticas y
+  los skills posteriores al décimo siguen contándose. Core conserva la
+  descripción completa para su contenido canónico y el agregado limita a 500
+  caracteres la respuesta compatible, por lo que la API pública reproduce el
+  legado sin perder texto útil dentro de Core.
+- Sobre la captura pública de 300 ofertas, la proyección Core y después el
+  consumidor real ReactPortfolio reproducen exactamente las cuatro huellas del
+  productor retirado: tarjetas
+  `0fec95a5f3cbdc81253bdd27d2c9678a831e4c233eb8f6c075527f8eb627b7f4`,
+  normalizadas
+  `71e44326befd4d09ccdd0109c2d61abdce01168160910d22e2061806cf1deb2b`,
+  ubicaciones
+  `a8583e223a130ffc02b27ec2d4600f0ff0f2f385128c5415138a48bb82d9cb86`
+  y tags
+  `4e0663d77a90f849b211ed5deb2926163463c407e0fb4331dc907a717d2562f6`.
+  Permanecen 300 ids, 104 ubicaciones, 59 tags y los 19 hashes duplicados que no
+  deben deduplicarse.
+- Validación Core: 72 pruebas unitarias focales, dos integraciones de doble
+  ciclo/provisionado y suite completa con 1.620 aprobadas, una omitida y dos
+  avisos conocidos en 7 min 53 s. Ruff, formato, compilación, `diff --check`,
+  JSON y ratchet
+  `{"core_owned":16,"local_pending":26,"sources":58}` quedaron verdes. Los
+  dos ciclos PostgreSQL mantuvieron una revisión raw y conservaron por separado
+  diez tags visibles y todos los tags estadísticos.
+- ReactPortfolio quedó versionado y publicado en `edf1b12` sobre
+  `feat/dt144-free-gate`; su CI `38576264319` terminó verde. Las seis rutas
+  históricas las sirve ahora `core_source_compat`, con ventana completa de 300
+  antes de ordenar, tarjeta sin salarios, top 10 por frecuencia, conteos
+  completos y salud/refresh Core. `main.py`, `get_all_providers()` y los
+  registros cache/update ya no conectan el productor local; backend y worker
+  incluyen Job-Room en `LEGACY_DISABLED_SOURCES` y el ratchet baja de cinco a
+  cuatro productores locales.
+- Validación ReactPortfolio: 233 pruebas focales de consumidor/apagado/provider,
+  otras 159 de rutas/caché/registro/fidelidad, la repetición específica final
+  203/203 y suite completa con 2.194 aprobadas, una omitida y 115 avisos
+  conocidos en 3 min 20 s. Ruff focal quedó verde ignorando únicamente los 39
+  E402 históricos de `main.py`; `ruff format --check` sigue proponiendo
+  reformatear los mismos ocho ficheros completos y no se aplicó. El hook avisó
+  que `black` no está instalado, pero compilación, diff, pruebas y CI sí
+  concluyeron correctamente.
+- Incidencias contenidas y corregidas antes de versionar: dos parches iniciales
+  del inventario asociaron `core_adapter` a entradas equivocadas por usar un
+  contexto no único; se corrigió con contexto de nombre y el diff final toca
+  sólo Job-Room. Al cerrar el ledger, el blocker común coincidió primero con
+  Adzuna; el diff previo al staging lo detectó y se reaplicó usando las métricas
+  únicas de Job-Room. Una ejecución unitaria apuntó dos veces a nombres de test no
+  existentes; se localizaron y ejecutaron los tres módulos reales. La primera
+  integración quedó omitida por faltar `CORE_ADMIN_DATABASE_URL` y se repitió
+  con ambos DSN aislados. Los primeros verificadores de paridad carecían de
+  `PYTHONPATH`/Settings; se relanzaron con configuración SQLite de prueba. Un
+  import `httpx` sin uso y una línea final sobrante fueron eliminados por los
+  gates. Ninguno de estos intentos tocó producción.
+- Los artefactos y cabeceras de captura siguen sólo en `/tmp`; la cookie efímera
+  nunca se versionó. Los cambios ajenos del worktree SwissJob/Core siguen sin
+  staging ni alteración. Los remotos `main` se revalidaron intactos en
+  `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
+  `5bf457afbde5b44a995acce4ef241324f066f836`.
+- **Rollback:** revertir `edf1b12` reconecta router, provider, registros y
+  manifiestos locales; revertir `14b613a` elimina la capacidad Core. Al no haber
+  scope ni despliegue productivo, no existe estado vivo que drenar en este
+  checkpoint.
+- Tras Job-Room quedan 19 portales por implementar en ramas: 15 de SwissJob y
+  cuatro de ReactPortfolio. Producción conserva 26 portales únicos/27
+  productores hasta el corte final coordinado.
+- **Siguiente paso exacto si hay relevo:** comenzar Adzuna, primera candidata de
+  la Fase 4. Revalidar rama/main/worktrees, productor y scheduler en ambos
+  proyectos, presencia real de credenciales sin exponerlas, contrato vivo,
+  límites/paginación y baseline saneado antes de escribir el adaptador Core. No
+  tocar producción, no activar scopes y no rehacer Job-Room.
+
+### Checkpoint de relevo 2026-10-14 · Adzuna EN CURSO, preflight cerrado
+
+- La rama y los propietarios se comprobaron de nuevo antes de decidir:
+  ReactPortfolio cosecha Adzuna realmente desde
+  `services/adzuna_provider_impl.py`; SwissJob conserva
+  `backend/providers/adzuna.py` y su registro, pero `get_all_providers()` lo
+  excluye porque `ADZUNA_APP_ID` no está presente. Los logs del worker SwissJob
+  de las últimas 48 horas tampoco contienen ejecuciones Adzuna. Core aún no
+  tiene adaptador, fuente ni scope Adzuna.
+- Sólo ReactPortfolio tiene en runtime ambos secretos Adzuna; SwissJob y Core no
+  los tienen. Se comprobó únicamente su presencia booleana: ningún valor se
+  imprimió, capturó ni versionó. El traspaso del secreto vivo queda reservado al
+  corte final coordinado; mientras tanto producción y ambos `main` permanecen
+  intactos.
+- El contrato productivo comprobado es `gb`, `us`, `de`, páginas 1 y 2, 50
+  resultados, `what=remote+developer` y el `what_or` histórico. SwissJob contiene
+  una consulta alternativa para `de`, `at`, `gb`, pero nunca ha estado activa en
+  producción: es capacidad dormida y no se convertirá en comportamiento nuevo
+  durante esta migración.
+- La salud viva de ReactPortfolio declaró 6 procesadas, 5 visibles tras la
+  ventana de 90 días, una página con resultados de seis intentadas, una
+  ubicación, una categoría y 15 tags. Los logs confirmaron las seis peticiones:
+  sólo `us/1` devolvió seis filas y una de ellas era antigua. La captura saneada
+  local `/tmp/dt144-adzuna-capture.json` contiene esas seis envolturas y sólo los
+  campos funcionales; SHA-256
+  `81eb9b09378379a747467816b8c3703ca5959e14b9da736eb4fcab2a8ed7f088`.
+- La reproducción legacy sin red fijó la línea base: 6 procesadas/5 visibles,
+  1/6 páginas no vacías, hashes `jobs`
+  `506051e70b52282d1f04ceb14601ffa7784bba2936add3b806911f9fa7cad1d1`,
+  normalizado
+  `4c66a0c4f34a88acbddd4d67bc68fe4592bcd7c043e3abf9641aa45e3efa37bd`,
+  ubicaciones
+  `4ff24ba47ffe40690cfb0785134caacd2622ac2588be2be6d95595363d0473fd`,
+  categorías
+  `a7fae6be6be0b9072d393c877e6e79f41d5aa7792f7d028dd5e6f4bfd98392fd`,
+  tags `e56511f44ba97a1c4e8ab8250bce2b1a499ac7d190798231593758b19639f40b`
+  e ids visibles
+  `a553ffde1b95cec8ff26e1b24383e12ad92c6d1b0e23c35150dd47f6445c5d81`.
+  Las cinco visibles conservan ambos límites salariales.
+- Se verificó por código y comparación automática que las 77 etiquetas y el
+  mapa de países usados por ReactPortfolio son idénticos a los helpers ya
+  existentes de Core. La limpieza HTML legacy también coincide con
+  `rss_text.strip_html_tags`; se reutilizarán esos tres puntos de verdad.
+- Decisión mínima: tres scopes Core exactos, uno por país, siempre con sus dos
+  páginas. Core conservará las seis filas y su fecha `created`; el consumidor
+  aplicará la misma ventana visible de 90 días, manteniendo estadística completa
+  y tarjetas recientes sin inventar una segunda consulta. Los secretos serán
+  configuración `CORE_*` del worker de cosecha y todo error deberá quedar
+  saneado para que la URL con credenciales nunca llegue a logs.
+- Incidencia contenida: la primera lectura del worktree usó por error el prefijo
+  inexistente `backend/`; se localizó la raíz real del worktree y no hubo
+  escritura. La primera inspección estructural del capture trató `rows` como un
+  sobre y terminó con `AttributeError`; se corrigió leyendo sólo sus nombres de
+  campo, recuentos y hosts, sin exponer contenido.
+- **Siguiente paso exacto si hay relevo:** implementar el adaptador
+  `native_adzuna` y sus tres scopes deshabilitados, añadir fecha/categoría al
+  agregado, inyectar los secretos sólo en `core-harvest-worker`, y ejecutar
+  unitarias, provisión y doble ciclo con la captura. No adaptar todavía
+  ReactPortfolio ni retirar el provider SwissJob hasta que Core demuestre
+  paridad.
+
+#### Avance verificable · Adzuna centralizado en ramas
+
+- Core/SwissJob quedó versionado y publicado en `c266b8d` sobre
+  `feat/fase-a-core`; su CI `38588047774` terminó verde en los nueve trabajos.
+  `native_adzuna` reproduce exactamente los tres países `gb/us/de`, dos páginas
+  por país, 50 resultados y las consultas observadas. El provisionador crea tres
+  scopes deshabilitados e idempotentes; no existe ni se activó ningún scope
+  productivo.
+- Las credenciales nuevas son exclusivamente `CORE_ADZUNA_APP_ID/KEY` y sólo
+  se inyectan en el worker de cosecha Core. Se retiraron las variables Adzuna de
+  los manifiestos SwissJob y ReactPortfolio. El cliente no sigue redirects,
+  sanea errores sin URL credentializada y elimina únicamente importes no
+  finitos antes de persistir; las regresiones prueban que no reenvía secretos a
+  otro host y no pierde la oferta por un salario `NaN`/`Infinity`.
+- El agregado Core conserva fecha `created`, etiqueta de categoría y orden
+  histórico país/página/fila. Sobre la captura saneada de seis filas, el
+  productor Core y el consumidor ReactPortfolio reproducen exactamente las seis
+  huellas legacy: ofertas
+  `506051e70b52282d1f04ceb14601ffa7784bba2936add3b806911f9fa7cad1d1`,
+  normalizadas
+  `4c66a0c4f34a88acbddd4d67bc68fe4592bcd7c043e3abf9641aa45e3efa37bd`,
+  ubicaciones
+  `4ff24ba47ffe40690cfb0785134caacd2622ac2588be2be6d95595363d0473fd`,
+  categorías
+  `a7fae6be6be0b9072d393c877e6e79f41d5aa7792f7d028dd5e6f4bfd98392fd`,
+  tags `e56511f44ba97a1c4e8ab8250bce2b1a499ac7d190798231593758b19639f40b`
+  e ids visibles
+  `a553ffde1b95cec8ff26e1b24383e12ad92c6d1b0e23c35150dd47f6445c5d81`.
+  Se mantienen seis procesadas, cinco visibles a 90 días, una ubicación, una
+  categoría, 15 tags y ambos límites salariales en las cinco visibles.
+- Validación Core final: 22 pruebas focales/integradas, doble ciclo PostgreSQL,
+  paridad extremo a extremo real y suite completa con 1.642 aprobadas, una
+  omitida y tres avisos conocidos en 6 min 52 s. Ruff, formato, compilación,
+  `diff --check`, Compose, cero secretos literales y el ratchet
+  `{"core_owned":16,"local_pending":26,"sources":58}` quedaron verdes. El
+  inventario conserva el estado productivo, por eso sus contadores no cambian
+  antes del corte final.
+- ReactPortfolio quedó versionado y publicado en `95768ce` sobre
+  `feat/dt144-free-gate`; su CI `38588044222` terminó verde. Las siete rutas
+  históricas se sirven desde `core_source_compat`, incluida categoría; aplican
+  la misma ventana de 90 días y forma pública. `main.py`, `get_all_providers()`
+  y los registros cache/update ya no conectan el productor local; backend y
+  worker incluyen Adzuna en `LEGACY_DISABLED_SOURCES`. El ratchet local baja de
+  cuatro a tres cosechadores.
+- Validación ReactPortfolio final: 242 pruebas focales de consumidor/apagado y
+  suite completa con 2.205 aprobadas, una omitida y 115 avisos conocidos en
+  3 min 20 s. SwissJob cerró 46 pruebas focales y su suite completa con 1.916
+  aprobadas, cuatro `xfail` esperados y ocho avisos conocidos en 3 min 56 s.
+  Los tres manifiestos NAS pasan `docker compose config --quiet`; el control de
+  secretos informa cero hallazgos.
+- Incidencias contenidas y corregidas antes de versionar: la primera suite
+  ReactPortfolio encontró tres pruebas que seguían inyectando salarios hostiles
+  en la caché Adzuna ya desconectada; la protección se trasladó al propietario
+  Core y se reforzó antes de retirar esa prueba obsoleta. La primera suite
+  SwissJob detectó la política Adzuna huérfana; se añadió a la misma lista
+  explícita de rollback que las fuentes ya transferidas. Un Ruff se invocó por
+  error sobre un YAML y se repitió separando Python de Compose. Los intentos del
+  host que carecían de dependencias se descartaron y se repitieron en las
+  imágenes del proyecto. Ningún intento tocó producción.
+- Los remotos `main` se comprobaron intactos en
+  `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
+  `5bf457afbde5b44a995acce4ef241324f066f836`. Producción continúa cosechando
+  Adzuna desde ReactPortfolio porque el corte, los secretos Core y los scopes se
+  reservan a la fusión final aprobada; no se desplegó ningún commit.
+- **Rollback:** revertir `95768ce` reconecta router, provider, registros y
+  manifiesto ReactPortfolio; revertir `c266b8d` restaura el registro/manifiesto
+  SwissJob y elimina adaptador, scopes y configuración Core. Como no existe
+  estado productivo nuevo, no hay cola, scope ni base viva que drenar.
+- Tras Adzuna quedan 18 portales por implementar en ramas: 15 de SwissJob y
+  tres de ReactPortfolio. Producción conserva 26 portales únicos/27 productores
+  hasta el corte final coordinado.
+- **Siguiente paso exacto si hay relevo:** comenzar JSearch, segunda candidata
+  de la Fase 4. Revalidar ramas, `main`, worktrees, productor y scheduler en
+  ambos proyectos; comprobar presencia booleana de `JSEARCH_RAPIDAPI_KEY` sin
+  imprimirla, contrato vivo, cuotas, países, queries, paginación y baseline
+  saneado antes de escribir el adaptador Core. No tocar producción, no activar
+  scopes y no rehacer Adzuna.
+
+### Checkpoint de relevo 2026-10-14 · JSearch EN CURSO, preflight cerrado
+
+- Se revalidaron las ramas y los remotos antes de decidir: SwissJob/Core está
+  en `47d5561`, ReactPortfolio en `95768ce`, y los `main` remotos continúan
+  intactos en `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
+  `5bf457afbde5b44a995acce4ef241324f066f836`. La CI documental de Adzuna
+  `38589393135` terminó `success` en sus nueve trabajos. No hubo despliegue,
+  scope ni cambio productivo.
+- El propietario activo quedó comprobado, no supuesto: ReactPortfolio ejecuta
+  `services/jsearch_provider_impl.py` al arranque, en la ronda circadiana diaria,
+  por lectura de caché caducada y por refresco manual. SwissJob conserva
+  `backend/providers/jsearch.py` y su registro, pero producción carece de
+  `JSEARCH_RAPIDAPI_KEY`, por lo que nunca lo instancia; sus logs de 72 horas
+  contienen cero ejecuciones. Core no tiene aún adaptador, fuente ni scope.
+- Sólo el backend/worker de ReactPortfolio posee hoy la credencial. SwissJob y
+  los procesos Core no la poseen. Se comprobaron exclusivamente booleanos; no
+  se imprimió, copió ni versionó ningún secreto. En 72 horas el worker Portfolio
+  registró 24 menciones JSearch y la salud viva declaró 95 procesadas/95 en
+  caché, sin último error y con una actualización de hace un día.
+- La cosecha activa real es una petición diaria con `query=software developer`,
+  `country=us`, `page=1`, `num_pages=10` y `date_posted=month`, que devuelve
+  hasta 100 ofertas. SwissJob contiene otra capacidad dormida —consulta amplia,
+  `country=ch`, tres páginas— que nunca estuvo habilitada en producción y no se
+  convertirá en comportamiento nuevo durante la migración.
+- Se capturó únicamente la respuesta pública ya cacheada, sin llamar de nuevo a
+  RapidAPI ni consumir cuota: `/tmp/dt144-jsearch-cache.json`, 143.668 bytes,
+  SHA-256
+  `2e10bf595aa30127ae874c65ce75c349329509be3e371a26b0c8dcdfa2055248`.
+  Contiene 95 ids únicos, 95 URLs válidas, 95 títulos/empresas/fechas, 93 logos,
+  20 mínimos y máximos salariales, dos remotas y tres pares título/empresa
+  repetidos que no deben deduplicarse porque `job_id` es la identidad externa.
+- La reproducción saneada fija los hashes de paridad: ofertas
+  `0253deb45f791364e7ef03ebe3768af8b8e33cab1b1cd7ef14d99696c1530705`,
+  ubicaciones (36)
+  `3da25852ca86c03c85d31487980630802c233808704942a3d72cdb840709a50f`,
+  empresas (74)
+  `f4789313a1cd51779ed1aa6aa7a1d8ec31464472c0f85f0f10c6825fac382629`,
+  publishers (24)
+  `3908d6f5f6a9eda7c663809798640ce246ce412ca9fb9b02c1cfa33a71920bc6`
+  y tipos de empleo (2)
+  `16504c18158d35599c4bec1df29947e0f4019aa70e9bedc3523293d35b357c8b`.
+  Las fechas van de `2026-09-14T00:00:00+00:00` a
+  `2026-10-12T23:00:00+00:00`; las 95 descripciones públicas conservan el
+  límite histórico de 500 caracteres.
+- La búsqueda en vivo no es código inaccesible: `JobSearchWindow` monta
+  `useJSearchLive`, que llama a `/api/v1/jsearch-jobs/search` con país, fecha,
+  tipo y remoto. Los logs de acceso no muestran uso en 30 días, pero eso no
+  autoriza eliminar una pestaña visible. Además se encontró una divergencia
+  real: el frontend envía `q` mientras el router exige `query`; la migración
+  conservará ambos nombres y corregirá ese 400 sin modificar el repositorio
+  frontend público.
+- Decisión mínima que satisface el contrato: un único adaptador JSearch Core
+  compartirá transporte, validación y normalización entre (1) el scope diario
+  persistente exacto y (2) un endpoint Core autenticado para la búsqueda en
+  vivo. ReactPortfolio conservará todas sus rutas y el límite 5/min, pero su
+  backend sólo consultará Core. La clave `CORE_JSEARCH_RAPIDAPI_KEY` estará en
+  el worker de cosecha y, por la búsqueda dinámica, en el API Core; se retirará
+  `JSEARCH_RAPIDAPI_KEY` de ambos BFF. No se añade cola síncrona ni una segunda
+  caché porque no aporta funcionalidad y aumenta acoplamiento/latencia.
+- El agregado Core deberá conservar, además del contrato común, ciudad, estado,
+  país y publisher; ordenar por fecha como la caché activa y reproducir las
+  dimensiones ubicación/empresa/publisher/tipo. La búsqueda dinámica devolverá
+  la forma pública actual, truncará el snippet a 300 caracteres y nunca seguirá
+  redirects ni expondrá cabeceras, URL o credencial en errores.
+- Incidencias contenidas: dos primeras sondas SSH fallaron sólo por el quoting
+  del shell remoto y se repitieron con código base64, sin escritura ni secretos.
+  Una consulta inicial de CI usó por error el propietario GitHub `vicentepau`;
+  el remoto verificó `VRicardoP` y la misma ejecución se leyó correctamente.
+  La búsqueda global de referencias produjo salida truncada; se repitió por
+  rutas concretas y reveló el consumidor frontend descrito arriba.
+- **Siguiente paso exacto si hay relevo:** implementar `native_jsearch` y un
+  scope deshabilitado con el contrato diario comprobado; exponer la búsqueda
+  dinámica autenticada desde Core reutilizando el mismo transporte; probar
+  errores saneados, redirects, límites y doble ciclo; después adaptar todas las
+  rutas ReactPortfolio, desconectar registros/disparadores locales y retirar la
+  credencial de ambos BFF. Validar la captura completa antes de cambiar el
+  recuento de 18 a 17. No llamar a RapidAPI, no activar scopes y no tocar
+  producción ni `main`.
+
+#### Avance verificable · JSearch centralizado en ramas
+
+- Core/SwissJob quedó versionado y publicado en `ac819f5` sobre
+  `feat/fase-a-core`; su CI `38599397880` terminó verde en sus nueve trabajos.
+  `native_jsearch` comparte un único transporte acotado, sin redirects y con
+  reintentos entre el scope diario persistente y la búsqueda dinámica
+  autenticada. El provisionador crea exactamente un scope deshabilitado con
+  `software developer`, `us`, página 1, diez páginas y ventana mensual; no se
+  creó ni activó ningún scope productivo.
+- La búsqueda visible se expone en Core con `vacancies:read`. ReactPortfolio
+  conserva sus rutas, DTO y límite de cinco peticiones por minuto, pero sólo
+  actúa como BFF de Core; acepta tanto `q` como `query`, corrigiendo el 400 real
+  del frontend sin tocar el repositorio público. El refresco manual conserva su
+  query: usa el dispatcher, tarea, scope, exclusión y sink existentes y cambia
+  sólo los parámetros del provider para esa ejecución; no hay un segundo
+  colector, caché ni cola.
+- La clave pasa a ser `CORE_JSEARCH_RAPIDAPI_KEY` y sólo se configura en API y
+  worker Core porque ambos necesitan el transporte. Se retiró la clave antigua
+  de los manifiestos SwissJob y ReactPortfolio. SwissJob dejó de registrar su
+  capacidad dormida y ReactPortfolio desconectó registros, arranque, ronda
+  diaria, caché y actualizador locales; backend y worker incluyen JSearch en
+  `LEGACY_DISABLED_SOURCES`. El ratchet Portfolio baja de tres a dos
+  cosechadores locales: DynamiteJobs y JobScout24.
+- Identidad y seguridad quedan fijadas: `job_id` es la identidad externa; los
+  ids que exceden 200 caracteres se representan internamente por SHA-256 sin
+  perder el id proveedor; una URL de fuente sintética estable evita colisiones
+  cuando ofertas distintas comparten enlace de aplicación; el enlace real se
+  conserva. Respuestas, colecciones y tamaño están validados; errores y
+  transporte no exponen secreto ni URL; salarios booleanos, no numéricos o no
+  finitos se degradan a `null`.
+- La prueba PostgreSQL sobre la captura completa persistió 95 ofertas, 74
+  empresas, 36 ubicaciones, 24 publishers y dos tipos de empleo, con run `ok`.
+  La comparación Core→ReactPortfolio reprodujo exactamente los hashes legacy:
+  ofertas `0253deb45f791364e7ef03ebe3768af8b8e33cab1b1cd7ef14d99696c1530705`,
+  ubicaciones `3da25852ca86c03c85d31487980630802c233808704942a3d72cdb840709a50f`,
+  empresas `f4789313a1cd51779ed1aa6aa7a1d8ec31464472c0f85f0f10c6825fac382629`,
+  publishers `3908d6f5f6a9eda7c663809798640ce246ce412ca9fb9b02c1cfa33a71920bc6`,
+  tipos `16504c18158d35599c4bec1df29947e0f4019aa70e9bedc3523293d35b357c8b`
+  y normalizado
+  `16c667f30bf2522916643be66f0c7a85db58ae632c18eb10f34de2ecbe068506`.
+- Validación local final: 58 pruebas focales Core antes de la regresión final y
+  dos integraciones adicionales verdes; 168 pruebas focales ReactPortfolio;
+  suites completas Core 1.671 aprobadas y una omitida, ReactPortfolio 2.210
+  aprobadas y una omitida, SwissJob 1.916 aprobadas y cuatro `xfail` esperados.
+  El CI independiente confirmó 1.673 Core, 2.210 ReactPortfolio y 1.916
+  SwissJob. Ruff y formato Core, Ruff de todos los Python modificados de
+  ReactPortfolio, Compose, `diff --check`, ownership y escáner de secretos
+  quedaron verdes. Los 18 `E402` de `tests/conftest.py` son anteriores y no se
+  reformateó el fichero completo para ocultarlos en este cambio.
+- Incidencias contenidas y corregidas antes de versionar: la primera paridad
+  detectó `null` frente a cadena vacía en ciudad/estado/país y la segunda la
+  normalización de espacios de descripción; se preservó el raw proveedor sólo
+  donde el contrato JSearch lo exige. Se detectó además que el refresco manual
+  provisional ignoraba la query y se corrigió antes del commit. La primera
+  suite SwissJob se lanzó fuera de la red Compose y falló por el hostname
+  `postgres`; se interrumpió y repitió en la red correcta. Una comprobación
+  Docker con una imagen ajena y montaje del repositorio privado fue rechazada
+  antes de ejecutarse; se usó el entorno virtual local ya instalado. Ninguno de
+  estos intentos tocó producción.
+- El directorio local vacío `.forgejo` del worktree ReactPortfolio fue retirado
+  y no contenía archivos versionados. Los cambios ajenos del worktree
+  SwissJob/Core siguen fuera de staging y sin alteración. Los `main` remotos se
+  revalidaron intactos en `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
+  `5bf457afbde5b44a995acce4ef241324f066f836`; producción conserva sus
+  cosechadores actuales y las 26 identidades locales hasta el corte agrupado.
+- **Rollback:** revertir `855f243` reconecta router, provider, registros,
+  caché, triggers y manifiesto ReactPortfolio; revertir `ac819f5` restaura el
+  registro/manifiesto SwissJob y elimina adaptador, endpoint, scope y
+  configuración Core. Como no existe estado productivo nuevo, no hay scope,
+  cola ni datos vivos que drenar.
+- Tras JSearch quedan **17 proveedores** por implementar en ramas: 15 de
+  SwissJob y dos de ReactPortfolio. La cifra productiva permanece en 26
+  identidades locales hasta la fusión y el corte final coordinados.
+- **Siguiente paso exacto si hay relevo:** iniciar el preflight de DynamiteJobs,
+  primera candidata de la Fase 5. Revalidar ramas, `main`, worktrees, productor,
+  registro, scheduler, rutas, caché, persistencia, tráfico y consumidores;
+  contrastar disponibilidad/autorización y capturar una línea base real
+  saneada antes de decidir si se migra o se retira. No escribir adaptador, no
+  tocar producción, no activar scopes y no rehacer JSearch ni Adzuna.
+
+### Checkpoint de relevo 2026-10-14 · DynamiteJobs EN CURSO, preflight cerrado
+
+- Se trazó el flujo completo sin inferencias: sólo ReactPortfolio produce la
+  fuente mediante `services/dynamitejobs_provider_impl.py`; la registra en su
+  caché/actualizador, la ejecuta al arrancar el worker, en la ronda diaria de
+  las 12:00 locales con ±4 h y desde lecturas obsoletas/refresco administrativo.
+  El frontend público sólo consume `/recent`; el BFF conserva además `/stats`,
+  `/by-tag`, `/by-location`, `/refresh-cache` y `/health`. Core no contiene aún
+  adaptador, fuente ni scope DynamiteJobs. No hay credenciales.
+- El productor lee 20 páginas públicas `/category/<slug>`, decodifica el JSON
+  doble de `window.__PINIA_STATE__`, deduplica globalmente por `id`, valida
+  publicación/visibilidad/caducidad, ordena por `publishedAt` y retiene 300.
+  Después enriquece como máximo 20 descripciones ausentes por ciclo desde las
+  páginas públicas de detalle y conserva las ya cacheadas. Esta semántica exige
+  **un único scope Core**: 20 scopes romperían el límite global de detalle y la
+  deduplicación entre categorías.
+- Comprobación productiva de sólo lectura: el worker cerró correctamente el
+  2026-10-14 a las 11:39:36 UTC tras 864,19 s, 20/20 categorías, 321 ofertas
+  procesadas y 300 retenidas; la caché exponía 119 descripciones, 39 ubicaciones,
+  587 tags y tres duplicados exactos. El ciclo anterior tardó 135,19 s con 314
+  procesadas. El primer request necesitó tres intentos, pero el ciclo terminó
+  sin error y la salud viva declaró la caché lista.
+- La captura saneada de las páginas públicas, tomada 81 s después de la caché,
+  contiene 338 apariciones y 322 ids únicos. No se proclama paridad byte a byte
+  entre instantes distintos. La reproducción aislada del código legacy sobre
+  esa captura hizo 20/20 requests simuladas, procesó 321 y retuvo 300, con 39
+  ubicaciones; su diferencia de filas, tags y siete descripciones frente a la
+  caché queda explicada por la ventana temporal/top 300, no ocultada.
+- Se confirmó un defecto repetido en producción: la oferta válida
+  `sUqqaPGnPAkg4wyAqShG` trae `locationSlugs=["latinamerica", null]`; el
+  formateador legacy llama a `isupper()` sobre `null` y descarta la oferta
+  entera. El adaptador Core ignorará únicamente componentes de ubicación nulos
+  o no textuales y conservará `Latin America`; será una diferencia funcional
+  deliberada, probada y documentada, no una falsa paridad.
+- Disponibilidad/autorización contrastadas: `robots.txt` no prohíbe categorías
+  ni páginas públicas de empleo; sí prohíbe rutas privadas como `/api/` y
+  `/admin/`, que no se usarán. La API oficial de desarrolladores es autenticada
+  y sirve puestos/candidatos de la empresa cliente, no el catálogo público. Las
+  condiciones oficiales no contienen una prohibición textual de scraping,
+  robot o crawler en la versión revisada. Se mantendrán cabeceras, pausas,
+  límites de bytes, reintentos y cadencia conservadora del productor vigente.
+- Línea base reproducible guardada en
+  `docs/audits/2026-10-14-dt144-dynamitejobs-baseline.json`: incluye fechas,
+  tamaños, métricas y SHA-256 de capturas/normalizados sin guardar secretos ni
+  el corpus de terceros. La caché de 300 filas tiene hash de datos
+  `f98e273377077cd5932235d0bdc7399228286cadca4ef30bced2a6b095034258` y
+  normalizado
+  `2f62eac747dd918641cf6ea8a3262f62d5848592ff5e65c262b47282bb873a50`.
+- Diseño mínimo cerrado antes de implementar: `native_dynamitejobs`, registro
+  explícito, fecha `publishedAt`, provisionador de un scope `{}` deshabilitado,
+  deduplicación por id, máximo 300 recientes, 20 detalles/ciclo y descripciones
+  persistidas/podadas en el cursor. Se reutilizan `BROWSER_HEADERS`, el sink,
+  dispatcher, scheduler y patrón de cursor de SwissDevJobs; no se crea cola,
+  caché, scheduler, dependencia ni abstracción nueva.
+- Las 119 descripciones productivas acumuladas no pueden degradarse a 20 en el
+  corte. La sombra debe precalentar el cursor deshabilitado durante ciclos
+  controlados o migrar ese estado comprobado antes de apagar el productor; el
+  corte final sólo se acepta con cobertura al menos equivalente. El agregado
+  Core hoy limita dimensiones a 500 y DynamiteJobs expone 587 tags: se debe
+  preservar el total real con el cambio local mínimo y una prueba, sin crear un
+  endpoint específico si ampliar el límite existente resulta suficiente.
+- El CI documental del cierre JSearch, run `38600512329` sobre `7a86328`,
+  terminó globalmente en `success` con sus nueve trabajos verdes.
+- Incidencias de preflight: el primer capturador local falló antes de red porque
+  cargó `Settings` sin variables obligatorias; se repitió con SQLite y valores
+  locales ficticios. Una reproducción posterior confirmó el error de ubicación
+  legacy y evitó interpretar como regresión la deriva temporal de 81 s.
+  Ninguna comprobación escribió en producción, activó scopes o modificó `main`.
+- **Siguiente paso exacto si hay relevo:** implementar y probar el adaptador,
+  admisión, registro y provisionador Core sobre la captura saneada; ampliar sólo
+  lo necesario el agregado para conservar los 587 tags; ejecutar doble ciclo
+  PostgreSQL con cursor de descripciones precargado y comparar hashes/campos.
+  Después adaptar las seis rutas BFF de ReactPortfolio, retirar sus registros y
+  triggers locales, ejecutar suites y CI, y sólo entonces bajar el recuento de
+  17 a 16. No tocar producción, `main` ni activar el scope.
+
+#### Avance verificable · DynamiteJobs centralizado en ramas
+
+- Core/SwissJob quedó versionado y publicado en `9ec6901` sobre
+  `feat/fase-a-core`; ReactPortfolio quedó publicado en `1a0db8d` sobre
+  `feat/dt144-free-gate`. Los CI funcionales `38607230379` y `38607229742`
+  terminaron globalmente en `success`. Los `main` remotos se revalidaron
+  intactos en `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
+  `5bf457afbde5b44a995acce4ef241324f066f836`.
+- `native_dynamitejobs` ejecuta un único barrido secuencial de las 20 categorías
+  públicas, con pausas, reintentos, límites de bytes, deduplicación global por
+  id y la selección legacy de las primeras 300 filas antes de ordenarlas por
+  fecha. El provisionador define exactamente un scope `{}` deshabilitado. El
+  sink, dispatcher, scheduler, admisión, registro y agregado existentes se
+  reutilizan; no se añadió dependencia, cola, caché ni scheduler.
+- El cursor conserva y poda las descripciones de las 300 filas servibles y
+  solicita como máximo 20 ausentes por ciclo. No reproduce la petición legacy
+  desperdiciada para filas posteriores a 300, porque esas descripciones nunca
+  entraban en la caché pública. Salarios, tipos, ubicaciones y tags mantienen el
+  contrato; la oferta con componente de ubicación `null` se conserva de forma
+  deliberada y probada. El límite existente `top_n` se amplió sólo hasta 1.000
+  para transportar los 590 tags reales sin endpoint ni abstracción específica.
+- La reproducción sobre la captura saneada cerró dos ciclos PostgreSQL `ok`,
+  hizo 80 respuestas simuladas, persistió 322 identidades y sirvió 300 recientes
+  con 112 descripciones, 39 ubicaciones y 590 tags. Las 288 filas comunes con la
+  caché legacy no presentan ninguna diferencia; no se proclama igualdad del
+  conjunto completo porque las capturas fueron tomadas con 81 s de separación.
+  La salida Core reciente tiene SHA-256
+  `7ed45702858e31362391e51cc7fe5bc1842e072788483286872bfa958f3f9869`.
+- ReactPortfolio conserva las seis rutas públicas bajo sus mismos paths y DTO,
+  pero todas leen el agregado autenticado de Core. Se retiraron de la rama el
+  montaje del router local, el provider, los registros de caché/actualización y
+  sus disparadores; backend y worker añaden DynamiteJobs a
+  `LEGACY_DISABLED_SOURCES`. El frontend público no requirió cambios porque ya
+  consume `/recent`. El ratchet deja únicamente `jobscout24` como cosechador
+  local de ReactPortfolio.
+- Validación local final: Core 1.689 aprobadas y dos avisos; ReactPortfolio
+  2.220 aprobadas y una omitida; SwissJob 1.916 aprobadas y cuatro `xfail`.
+  El CI repitió 1.689 Core, 1.916 SwissJob, 57 frontend SwissJob y 2.220
+  ReactPortfolio; lint/formato, ownership, Compose y build quedaron verdes.
+  Las pruebas focales y de integración cubren respuesta hostil, cursor corrupto,
+  límite de detalles, doble ciclo, agregado de 590 tags, scope opt-in y las seis
+  rutas BFF.
+- Incidencias cerradas antes de publicar: dos intentos host de integración
+  carecían de `psycopg2`/`pgvector` y se sustituyeron por la imagen oficial; la
+  primera suite Core no montaba `scripts/` y `backend/`, por lo que se relanzó
+  con ambos en sólo lectura; la primera suite completa ReactPortfolio detectó
+  que importar el módulo legacy aún registraba caché/actualizador y que dos
+  censos esperaban el provider. Se eliminaron esos efectos de importación y se
+  actualizaron los censos; las suites completas posteriores y ambos CI fueron
+  verdes. Ningún intento tocó producción.
+- El inventario conserva correctamente `state=local_pending`: el adaptador y el
+  handover existen sólo en ramas, pero producción aún no tiene fuente/scope
+  DynamiteJobs y continúa ejecutando el productor ReactPortfolio hasta la
+  fusión y corte agrupados aprobados. No se creó scope, no se activó cosecha y
+  no se cambió credencial alguna.
+- **Rollback:** revertir `1a0db8d` reconecta router, provider, caché,
+  actualizador y manifiestos ReactPortfolio; revertir `9ec6901` elimina
+  adaptador, registro, admisión, agregado y provisionador Core. Como no existe
+  estado productivo nuevo, no hay scope, cola ni datos vivos que drenar.
+- Tras DynamiteJobs quedan **16 proveedores** por implementar en ramas: 15 de
+  SwissJob y uno de ReactPortfolio. La cifra productiva continúa en 26
+  identidades locales hasta el corte final coordinado.
+- **Siguiente paso exacto si hay relevo:** iniciar el preflight de JobScout24,
+  último cosechador ReactPortfolio. Revalidar productor, scheduler, rutas,
+  caché, persistencia, disponibilidad, autorización y línea base real antes de
+  diseñar el adaptador. No tocar producción, `main` ni activar scopes.
+
+### Checkpoint de relevo 2026-10-14 · JobScout24 centralizado en ramas
+
+- **Cierre formal de DynamiteJobs comprobado, no heredado:** la CI documental
+  `38608902811` de `0d51a9a` terminó `success` con sus nueve trabajos verdes
+  (`source-ownership`, `backend-lint`, `core-lint`, `backend-test`, `core-test`,
+  `frontend-lint`, `frontend-test`, `compose-config`, `docker-build`), y la
+  funcional `38607230379` de `9ec6901` también. Con eso DynamiteJobs queda
+  cerrado y el recuento en ramas pasó a 16 portales pendientes.
+- Inicio verificado desde SwissJob/Core `0d51a9a` en `feat/fase-a-core` y
+  ReactPortfolio `1a0db8d` en `feat/dt144-free-gate`. Los `main` remotos se
+  comprobaron antes y después del trabajo y siguen exactamente en
+  `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
+  `5bf457afbde5b44a995acce4ef241324f066f836`.
+- El trazado confirma un único productor activo:
+  `ReactPortfolio/services/jobscout24_provider_impl.py`, que registraba caché y
+  actualizador al importarse y lo servía `routers/jobscout24_jobs.py` montado en
+  `/api/v1/jobscout24-jobs` con seis rutas (`recent`, `stats`, `by-tag`,
+  `by-location`, `refresh-cache`, `health`). SwissJob no contiene módulo ni
+  registro JobScout24 y Core no tenía adaptador ni scope.
+- El contrato vivo se comprobó sin credencial:
+  `GET https://www.jobscout24.ch/en/jobs/{keyword}/?p={page}&SortIndex=1`, cinco
+  keywords IT en el PATH (`?term=` no filtra), dos páginas por keyword y páginas
+  públicas de detalle con JSON-LD `JobPosting`. Las diez peticiones de listado
+  respondieron **200 con las cabeceras del propio Core**
+  (`browser_headers.BROWSER_HEADERS`), no con las del productor, que son otras.
+- Captura sellada 2026-10-14T18:08:28Z (listados, 813.913 bytes) y
+  2026-10-14T18:10:25Z (20 detalles, 1.464.455 bytes), todas 200. Dio 231
+  tarjetas, 197 identidades únicas, cero tarjetas sin URL de detalle y cero
+  ubicaciones en blanco. Huellas por página y por detalle en
+  [`2026-10-14-dt144-jobscout24-baseline.json`](../audits/2026-10-14-dt144-jobscout24-baseline.json).
+- La ejecución del productor legado EXACTO sobre esa captura procesó 197 ofertas
+  servibles, 10/10 peticiones correctas, 20 descripciones (el techo frío), 26
+  tags y 85 ubicaciones, cero remotas, 197 con jornada y ocho tags como máximo
+  en una oferta. Huellas: ofertas
+  `5a1200965d0a9d9f32a23f4d0805fab49c31a191b2c516486fa076ee36b7766b`, tags
+  `5c65564c275e401919f5a2d1e3664db9e2341497d36aa67dabf2822c4cfd47ef` y
+  ubicaciones
+  `ebe36445dd14dac378c73febf2fd28204ae1036bbe613601e27a4d909fa50220`.
+- **Las dos taxonomías compartidas son idénticas, comprobado ejecutando**: 77
+  términos técnicos en el mismo orden, 35 países y 20 sinónimos de «worldwide»
+  entre `ReactPortfolio/jobs_config.py` y
+  `jobhunt_core/harvest/providers/jobicy_metadata.py`.
+- Contrato que no se debe simplificar: cinco keywords, dos páginas, corte al
+  llegar a una página vacía, deduplicación global por `data-job-id`, 300
+  recientes como techo, **20 detalles por ciclo** reutilizando los ya conocidos,
+  descripción a 500 caracteres, diez tags visibles pero estadísticas sobre
+  TODOS, y la purga de 90 días. Esa purga es inalcanzable aquí: la fecha
+  relativa de la tarjeta satura en «30+ d», así que el camino Core no necesita
+  filtro de edad y eso queda probado, no supuesto.
+
+#### Avance verificable · JobScout24 centralizado en ramas
+
+- Core/SwissJob quedó versionado y publicado en `33a804d`; ReactPortfolio en
+  `04a020d` más `ffcc0ba`. Ninguno se ha desplegado y ningún scope productivo
+  existe.
+- `JobScout24Provider` barre las cinco keywords en serie con pausas, reintentos,
+  topes de bytes y deduplicación global, y enriquece hasta 20 descripciones por
+  ciclo desde el cursor transaccional existente. **No añade dependencia**: las
+  tarjetas se leen con el parser HTML de la biblioteca estándar
+  (`_Cards` reproduce `select()` selector a selector), porque Core no tiene
+  BeautifulSoup y traerlo por una fuente habría sido una dependencia nueva.
+- `html_response` recoge el parseo del `JobPosting` JSON-LD y la detección de
+  soft-block, compartidos ya con DynamiteJobs, **con la lista COMPLETA del
+  productor**: el port anterior había perdido `cf-chl-bypass` y la regla de
+  «captcha» como palabra suelta, con lo que una página de desafío podía pasar
+  como descripción vacía. Comprobado sobre la captura: cero falsos positivos en
+  los 20 detalles ni en el armazón de los listados.
+- **Paridad medida sobre la MISMA captura sellada, no sobre dos muestras**: el
+  parser Core y el del productor devuelven los 231 diccionarios de tarjeta
+  idénticos; las 197 filas servidas coinciden en el mismo orden; las huellas de
+  tags y de ubicaciones son idénticas. La única diferencia en 197 filas × 10
+  campos son **dos descripciones con un espacio final**, porque la coerción
+  canónica de Core (`normalize.py:_text`) hace `strip()` sobre lo que el corte
+  de 500 caracteres dejó. Es un invariante central de Core, no una decisión del
+  adaptador, y no tiene efecto visible.
+- Paridad del CONSUMIDOR por las seis rutas reales, con el adaptador compartido
+  y un agregado Core construido desde esa captura: `/recent` devuelve las mismas
+  197 filas en el mismo orden y los mismos `total_available`/`showing`;
+  `/by-tag` los mismos 26 contadores y `/by-location` los mismos 85; `/stats`
+  el mismo resumen y los mismos diez tags; `/health` la misma forma de siete
+  claves. Evidencia en el mismo artefacto saneado.
+- **Dos desviaciones deliberadas, ambas más ruidosas que el productor**, no
+  menos: (1) una tarjeta con id y título pero SIN URL de detalle se descarta y
+  se reporta como `invalid_jobscout24_cards`, porque en Core la URL es identidad
+  de listado y dos vacías normalizarían al mismo valor y fundirían dos ofertas
+  distintas en una vacante — el productor la cacheaba con URL vacía, inservible
+  igualmente, y la captura viva no contiene ninguna; (2) un barrido que no
+  devuelve ninguna tarjeta FALLA en vez de persistir nada, porque el productor
+  conservaba su caché anterior en ese caso y Core, en silencio, archivaría un
+  corpus vivo. El coste conocido de (1): una tarjeta mal formada recurrente
+  dejaría el scope en `partial` y no avanzaría `last_complete_at`. Es el mismo
+  trato que da DynamiteJobs y se prefiere ruidoso.
+- ReactPortfolio conserva las seis rutas con sus paths y payloads, servidas por
+  `core_source_compat`. Se retiró el montaje del router local, el módulo ya no
+  registra caché ni actualizador al importarse, ambos manifiestos desplegados
+  añaden `jobscout24` a `LEGACY_DISABLED_SOURCES` y **`get_all_providers()`
+  queda VACÍO: era el último cosechador local de ReactPortfolio en rama**. El
+  ratchet local informa 0 cosechadores. El módulo y su parser se quedan como vía
+  de rollback.
+- Validación: Core **1.713 aprobadas** y dos avisos en 8 min 38 s — exactamente
+  las 1.689 anteriores más mis 22 unitarias y 2 de integración, sin omitidas;
+  ReactPortfolio **2.232 aprobadas y 3 omitidas** en 3 min 22 s. Además: la
+  suite de DynamiteJobs sigue verde tras compartir `html_response` (36/36 con
+  las de JobScout24), doble ciclo PostgreSQL `ok` con cursor, agregado y
+  dimensiones, provisión opt-in idempotente, `scripts/test_search_handover_contract.py`
+  2/2, ratchet cruzado `{"core_owned":16,"local_pending":26,"sources":58}`,
+  `check_no_secrets` 0 hallazgos y `git diff --check` limpio.
+- Lint: `ruff check .` y `ruff format --check .` del repo SwissJob completo en
+  verde (806 ficheros). En ReactPortfolio, cuyo formateador real es **black**
+  (`pyproject.toml`, línea 100) y cuyo CI no linta, se comparó finding a finding
+  contra los ficheros de `HEAD`: **cero hallazgos nuevos de ruff** (uno menos, de
+  hecho) y la ÚNICA deriva nueva de black —dos líneas en blanco al retirar
+  `register_cache`— quedó corregida. Las otras tres derivas de black y los 54
+  avisos de ruff son preexistentes y no se mezclaron.
+- Incidencias cerradas antes de publicar: el primer replay aislado no importó
+  por faltar las cinco variables obligatorias de `Settings` y se repitió con el
+  entorno de pruebas versionado; tres expectativas mías de los tests unitarios
+  estaban mal (los tags técnicos que salen del propio título, y «Zürich», que no
+  está en la tabla de países y por tanto no se traduce) y se corrigió la
+  EXPECTATIVA, no el comportamiento; el `commit` de ReactPortfolio se hizo sin
+  el hook local (que sólo bloquea `.env` y ejecuta black) y sus dos
+  comprobaciones se ejecutaron a mano después. Ningún intento tocó producción.
+- **Hallazgos abiertos que este portal NO arregla y bloquean la definición de
+  terminado** (§10 del contrato), con su evidencia:
+  1. `services/jobicy_provider_impl.py:55,294` y
+     `services/remoteok_provider_impl.py:51,197` **siguen registrando caché y
+     actualizador al importarse**, pese a estar ya transferidas. Hoy no cosechan
+     porque el embudo las frena por `LEGACY_DISABLED_SOURCES`, pero si alguien
+     retirase esa bandera volverían a la vida por el registro. Las otras diez
+     transferidas sí tienen su prueba de «sin efectos de registro»; estas dos no.
+     No se corrigen aquí por no reescribir dos portales ya cerrados dentro de
+     este commit.
+  2. Al desaparecer la última caché local, los barridos de fidelidad
+     `test_g7_fidelity_audit.py::test_ningun_recent_publico_se_tumba_con_una_oferta_hostil`
+     y `test_g8_fidelity_audit.py::test_ningun_contador_publico_se_tumba_con_una_CLAVE_hostil`
+     recogen un conjunto de parámetros VACÍO y pytest los salta: son las dos
+     omitidas nuevas de la suite. La garantía equivalente de las rutas servidas
+     desde Core vive en `test_core_source_compat`, pero esos dos barridos son hoy
+     cobertura muda y hay que resolverlos en la limpieza final.
+  3. `services/catalog/seam.py:509-528` sigue construyendo un
+     **`CompositeCatalog` Core + local** cuando `LEGACY_DISABLED_SOURCES` no está
+     vacío. Con cero providers locales su mitad local no aporta nada, así que el
+     comportamiento ya es Core puro, pero el CAMINO sigue existiendo y el
+     contrato exige retirarlo antes de cerrar DT-144.
+- **Rollback:** no existe scope productivo ni dato vivo que drenar. Revertir
+  `ffcc0ba` y `04a020d` reconecta router, provider, caché, actualizador y
+  manifiestos de ReactPortfolio; revertir `33a804d` retira adaptador, registro,
+  admisión, agregado y provisionador de Core y devuelve a DynamiteJobs su
+  `_description` local.
+- El inventario conserva `state=local_pending` a propósito: el adaptador y el
+  traspaso existen sólo en ramas y producción sigue ejecutando el productor de
+  ReactPortfolio hasta la fusión y el corte agrupados. Por eso el ratchet sigue
+  en 16 Core / 26 pendientes / 58 fuentes y la cifra productiva sigue en 26
+  identidades locales.
+- Tras JobScout24 quedan **15 proveedores** por implementar en ramas, **todos de
+  SwissJob**: `gastrojob`, `myscience`, `proz`, `remoteco`, `schuljobs`,
+  `stelle_admin`, `tes` y los ocho `swiss_schools_*`. ReactPortfolio no conserva
+  ningún cosechador local EN RAMA (en producción sigue con los suyos).
+- CI: la de Core/SwissJob `38617812386` de `33a804d` terminó **verde en sus
+  nueve trabajos** (`source-ownership`, `backend-lint`, `core-lint`,
+  `backend-test`, `core-test`, `frontend-lint`, `frontend-test`,
+  `compose-config`, `docker-build`), y los dos `main` remotos se revalidaron
+  intactos despues de publicar. **La CI de ReactPortfolio queda SIN
+  COMPROBAR desde este host y no se declara verde:** el repositorio es privado y
+  aquí no hay `GITHUB_TOKEN`/`GH_TOKEN` ni cliente autenticado, mientras que
+  `The_Swiss_Job` sí responde a la API anónima. Lo que su CI ejecuta sí se
+  reprodujo en local con su mismo mandato —el ratchet
+  `check_local_harvest_ownership.py` y `pytest tests/` con `pytest-timeout`
+  instalado y `timeout = 15` de su `pytest.ini`—, pero eso no sustituye a la
+  ejecución remota.
+- **Siguiente paso exacto si hay relevo:** confirmar en GitHub que la CI de
+  ReactPortfolio para `04a020d` y `ffcc0ba` terminó verde (hace falta un token
+  de lectura o mirarlo desde el navegador del propietario); después iniciar el preflight de la primera fuente
+  de SwissJob con la metodología 7.1, contrastando productor, registro,
+  scheduler de APScheduler, `LEGACY_DISABLED_PROVIDERS`/`LEGACY_DISABLED_SCRAPERS`
+  y disponibilidad real antes de escribir adaptador. No tocar producción, los
+  `main` ni activar scopes.
+
+### Checkpoint de relevo 2026-10-14 · myScience centralizado en ramas
+
+- **Primera fuente de SwissJob de la Fase 5**, y el lado SwissJob se traspasa de
+  otra forma que el de ReactPortfolio: aquí no hay rutas públicas por fuente que
+  conservar. El productor es un `BaseScraper` cuyo resultado persiste en la tabla
+  `jobs` del BFF, así que desconectarlo es sacar su clase de
+  `backend/scrapers/__init__.py` —exactamente lo que hizo el corte del
+  2026-09-22 con las 13 fuentes ya nativas— y conservar su política de cosecha
+  como pre-decidida. El módulo y sus pruebas se quedan como rollback.
+- Inicio verificado desde `3831d83` (CI `38619763001` **verde 9/9**, con lo que
+  JobScout24 quedó formalmente cerrado) y ReactPortfolio en `ffcc0ba`. Los
+  `main` remotos siguen en `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
+  `5bf457afbde5b44a995acce4ef241324f066f836`.
+- El trazado confirma un único productor activo:
+  `backend/scrapers/myscience.py`, registrado en `_SCRAPER_CLASSES`, despachado
+  por `tasks/scraping_tasks` cada 6 h con `FETCH_DETAILS=True`, cursor
+  incremental y early-stop por página conocida. ReactPortfolio no contiene
+  myScience y Core no tenía adaptador ni scope.
+- Contrato vivo, sin credencial: `GET https://www.myscience.ch/jobs?p={page}`,
+  cinco páginas, 20 por página, pausa de 2 s (los tres valores del scraper), más
+  una página de detalle por oferta porque el listado no trae descripción.
+  Captura sellada 2026-10-14T18:4x UTC: 5 listados (1.083.100 bytes) y 26
+  detalles (3.519.145 bytes), todos 200. Huellas en
+  [`2026-10-14-dt144-myscience-baseline.json`](../audits/2026-10-14-dt144-myscience-baseline.json).
+- **`?p=` apenas pagina, y eso le cuesta ofertas al productor:** 97 lecturas de
+  tarjeta dan 26 ofertas únicas; la página 3 repite la 2 exactamente y las 3 y 4
+  no aportan nada nuevo. Como el early-stop del cursor corta en la primera
+  página enteramente conocida, en frío el productor para en la 3 y **nunca ve
+  las cuatro ofertas que sólo aparecen en la 5**. Core barre las cinco páginas
+  declaradas y sí las cosecha, con el mismo coste de cinco listados.
+- La ejecución del scraper EXACTO sobre esa captura dio 26 ofertas, 26 con
+  descripción, 26 con logo, **cero con jornada**, 5 cantones, 9 ubicaciones, dos
+  tags como máximo y 58.789 caracteres de descripción. Huella normalizada
+  `4a4eefc1516c0b426c5a5a75c505621d8e47ff824b3fb5a2b439ef9cb4dcecf7`.
+- Taxonomías compartidas comprobadas EJECUTANDO: `JOB_TAGS` tiene los mismos 99
+  términos en el mismo orden en `backend/utils/text.py` y en
+  `jobhunt_core/.../rss_text.py`, `extract_canton` y `swiss_canton` coinciden en
+  las diez sondas, y los dos extractores dan la MISMA lista en las 26 ofertas
+  reales (incluidos sus falsos positivos por subcadena, que son su conducta).
+
+#### Avance verificable · myScience centralizado en ramas
+
+- `MyScienceProvider` reproduce el barrido y el pase de detalle con los parsers
+  de la biblioteca estándar. **Paridad byte a byte sobre la misma captura
+  sellada**: 97 de 97 registros de listado y 26 de 26 páginas de detalle
+  idénticos a los de BeautifulSoup, y la proyección normalizada de las 26
+  ofertas tiene la MISMA huella SHA-256 que la del scraper en los nueve campos
+  comparados (título, empresa, ubicación, cantón, descripción, URL, remoto, tags
+  y logo): cero diferencias de campo.
+- **Tres mejoras deliberadas, cada una con su evidencia** (detalle en el
+  artefacto):
+  1. `published_at` sale de la fecha del propio portal. Las 97 tarjetas traen
+     `<time datetime>` y el detalle lo repite como `datePosted` de schema.org;
+     el scraper no la leía y por eso **las 115 filas de producción no tienen
+     fecha**. Una tarjeta sin fecha ISO utilizable omite el campo: ausente
+     sigue significando DESCONOCIDO, nunca la hora de ingesta.
+  2. La identidad es el id numérico del portal (`/jobs/id70453-…`), no la URL:
+     las 26 URLs lo llevan y el slug incluye el título, así que un cambio de
+     título producía una segunda oferta en el productor.
+  3. Se barren siempre las cinco páginas declaradas, que es lo que recupera las
+     cuatro ofertas descritas arriba.
+- **Lo que NO se toca, a propósito:** los metadatos `Arbeitsort`/`Funktion`/
+  `Pensum` del detalle. El scraper exige `.descriptor` y `.long_value` en la
+  MISMA `.long_value_row` y el marcado vivo nunca tiene ambos, así que su
+  extracción está muerta —de ahí que `employment_type` esté vacío en las 115
+  filas—. Leerlos cambiaría el contenido de cada oferta y `Funktion` no es un
+  tipo de jornada: queda como hallazgo, no como suposición.
+- **Tráfico, medido:** Core hace 31 peticiones por barrido (5 listados + 26
+  detalles) al ritmo de 2 s del propio portal; el scraper hacía 5 + 97 en frío y
+  ~2 + ~8 en caliente. No se añade cursor de descripciones a propósito: llegan a
+  9.866 caracteres y recortarlas para que quepan en el cursor del scope
+  alteraría cinco de las 26 ofertas en cada ciclo.
+- **`TagStackParser` (nuevo, compartido) existe porque el marcado real lo
+  exigió:** el primer parser de detalle suponía etiquetas balanceadas y cortó
+  una descripción de myScience **siete párrafos antes del final**; además
+  incluía el texto de `<script>`, que BeautifulSoup no cuenta. La base cierra
+  implícitamente lo que quedó abierto, descarta etiquetas de cierre huérfanas y
+  excluye script/style/template/noscript. JobScout24 pasó a usarla y se
+  **re-demostró su paridad** (231 de 231 tarjetas idénticas) y sus 36 pruebas.
+  Cubierta por `test_html_response.py`, con una prueba por fallo real.
+- **El consumidor no necesita cambio, y eso se comprobó:** el BFF de SwissJob ya
+  lee el feed del núcleo por perfil (`services/matching/core_client.py`,
+  `/v1/profiles/{id}/matches`) sin lista blanca por fuente, igual que para las 16
+  fuentes ya nativas. En cuanto exista scope, las ofertas de myScience entran
+  solas; hasta entonces no cambia nada porque no hay scope. Esa es la diferencia
+  estructural con los portales de ReactPortfolio, donde había que conservar seis
+  rutas públicas por fuente.
+- Lado SwissJob: `myscience` sale de `_SCRAPER_CLASSES` y entra en
+  `SOURCES_DECIDED_IN_ADVANCE` (completitud inversa K10 de `harvest_window`).
+  No hay otra referencia viva: sólo su política y la fila del seed histórico de
+  compliance, igual que `financejobs` tras su propio traspaso.
+- Validación: Core **1.751 aprobadas y ninguna omitida** (las 1.713 anteriores
+  más mis 38 nuevas, en 7 min 33 s) y backend SwissJob **1.916 aprobadas y 4
+  `xfail`**, exactamente los recuentos de antes del cambio. CI de `244f15e`:
+  `38624702577`. Focales:
+  19 unitarias y de integración nuevas de myScience (doble ciclo PostgreSQL con
+  una sola revisión por identidad, fecha del portal viajando y provisión opt-in),
+  15 del módulo compartido, 125 focales de SwissJob (`harvest_window`,
+  `scrapers`, URLs degeneradas), `ruff check`/`format` del repo completo,
+  `git diff --check`, `check_no_secrets` 0 hallazgos y ratchet cruzado
+  `{{"core_owned":16,"local_pending":26,"sources":58}}`.
+- Incidencias cerradas antes de publicar: tres expectativas mías estaban mal y
+  se corrigió la EXPECTATIVA, no el comportamiento —`JOB_TAGS` es una taxonomía
+  de idiomas y docencia, no de tecnologías, así que una oferta de «Python
+  Developer» no produce tags—; y una tarjeta sin fecha dejaba `published_at`
+  como cadena VACÍA en el agregado, así que el campo se omite cuando no hay
+  fecha. Ningún intento tocó producción.
+- **Hallazgo nuevo, abierto, que afecta a las 14 fuentes de SwissJob que
+  quedan:** el motor legacy pasa cada barrido por `ComplianceEngine.can_scrape`
+  (`is_allowed` + `robots_txt_ok` de `source_compliance`) y deshabilita la fuente
+  tras tres bloqueos seguidos. **Core no tiene ese portero**: tiene contador de
+  fallos (`CORE_HARVEST_MAX_CONSECUTIVE_FAILURES=3`), alerta de salud y el
+  `enabled` del scope, pero ni la fila de compliance ni el apagado automático por
+  bloqueo. Afecta ya a todas las fuentes de scraping nativas en Core
+  (financejobs, irishjobs, chmedia, publicjobs) y lo heredarán las 14 restantes.
+  No se arregla en este portal: es una pieza de Core, no de una fuente.
+- **Rollback:** no existe scope productivo. Revertir el commit devuelve
+  `myscience` al registro de scrapers, saca su pre-decisión y retira adaptador,
+  registro, admisión y provisionador de Core; JobScout24 y DynamiteJobs
+  recuperarían sus parsers previos con sus paridades ya demostradas.
+- El inventario conserva `state=local_pending` y el ratchet sigue en 16 Core /
+  26 pendientes / 58 fuentes: producción sigue ejecutando el scraper hasta el
+  corte agrupado.
+- Tras myScience quedan **14 proveedores** por implementar en ramas, todos de
+  SwissJob: `gastrojob`, `proz`, `remoteco`, `schuljobs`, `stelle_admin`, `tes`
+  y los ocho `swiss_schools_*`.
+- **Siguiente paso exacto si hay relevo:** comprobar la CI de este commit;
+  después el preflight de `gastrojob` (sano, TYPO3, con tres cotas propias ya
+  anotadas en `COTAS_Y_DECISIONES.md` §1.10-1.12 y §1.19 que hay que respetar).
+  **No** empezar por `stelle_admin`: es Playwright y la imagen de Core no lleva
+  Chromium, así que exige una decisión del propietario antes de tocarlo.
+  `proz`, `remoteco` y `schuljobs` arrastran bloqueos propios registrados en el
+  inventario (46 y 54 errores seguidos sin ninguna cosecha correcta, y un
+  cursor sin bootstrap completo).
+
+### Checkpoint de relevo 2026-10-14 · gastrojob centralizado en ramas
+
+- Inicio desde `599ec3f` (CI `38632186849` **verde 9/9**, con lo que myScience
+  quedó formalmente cerrado). Los `main` remotos siguen intactos en
+  `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` y
+  `5bf457afbde5b44a995acce4ef241324f066f836`.
+- El trazado confirma un único productor activo:
+  `backend/scrapers/gastrojob.py`, registrado en `_SCRAPER_CLASSES` y
+  despachado cada 6 h. El consumidor sigue siendo el feed del núcleo, así que
+  el traspaso es el mismo patrón que myScience: sacar la clase del registro y
+  conservar su política como pre-decidida.
+- **Por qué el listado público no sirve, y por eso el contrato es el endpoint
+  AJAX:** `/stellen` monta las ofertas por JavaScript y devuelve 200 con cero
+  enlaces de oferta — el fallo exacto que mató a esta fuente (VD.4b). Se pagina
+  contra el endpoint del PROPIO frontend, cuya URL sale de los href de su
+  paginación, con la cabecera `Referer: .../stellen` que ese endpoint espera,
+  10 ofertas por página, cinco páginas y 2 s de pausa.
+- Captura sellada: 5 páginas AJAX (46.000 bytes, todas 200, contador 1.027
+  anunciadas, 10 stubs por página, **50 únicas y cero duplicadas**) y 50
+  detalles (1.471.686 bytes, todos 200). Huellas en
+  [`2026-10-14-dt144-gastrojob-baseline.json`](../audits/2026-10-14-dt144-gastrojob-baseline.json).
+- La ejecución del scraper EXACTO dio 50 ofertas, 48 con descripción, 50 con
+  localidad y fecha de detalle, **cero anonimizadas hoy**, 50 con `published_at`,
+  48 con jornada, 11 cantones y 23 ubicaciones. Huella normalizada
+  `797788fcb1b55b54ff0983035c4d7ad858036c6447a875ea794494aeb54a9c50`.
+
+#### Avance verificable · gastrojob centralizado en ramas
+
+- Core/SwissJob publicado en `280bfc2`; CI `38635097926` **verde en sus nueve
+  trabajos**. No existe scope productivo y nada se ha desplegado.
+- **Paridad byte a byte sobre la misma captura**: 50 de 50 stubs de listado y 50
+  de 50 páginas de detalle idénticos a los de BeautifulSoup, y la proyección
+  normalizada de las 50 ofertas tiene la MISMA huella SHA-256 en los diez campos
+  comparados —incluido `published_at` con su offset suizo—: cero diferencias.
+- **El veredicto de cinco vías se porta ENTERO**, porque leer una estructura
+  cambiada como listado vacío es el fallo original: sin contador, contador
+  ilegible y «hay enlaces propios y ninguno parsea» son fallos VISIBLES; más
+  allá del rango que cubre el contador y una página sólo-partner dentro de rango
+  son vacíos legítimos (la vía de rehabilitación). Cada uno tiene su prueba.
+- **Un caso que el legacy arregló tarde y este port también necesitaba:** un
+  contador de miles de dígitos pasa el `[0-9]+` y aun así hace lanzar a `int()`
+  (límite de 4.300 dígitos de CPython). Mi primera versión dejaba escapar ese
+  `ValueError`; ahora se captura y se reporta como contador ilegible, con una
+  prueba que muerde sin el guard.
+- Reglas de identidad conservadas y probadas: la URL guardada se RECONSTRUYE del
+  path canónico —una query de tracking, un puerto o un cambio de mayúsculas no
+  crean una segunda fila—, el host se valida (nada de protocolo-relativo,
+  userinfo ni otro dominio), y la empresa sale SÓLO del listado aunque la
+  microdata del detalle la conozca: participa en la identidad y sólo el listado
+  es estable run a run. Ése es el motivo de que entre ~3 % y ~13 % de los
+  anuncios queden como «Unknown», y hoy la captura no trae ninguno.
+- La fecha del listado («Erstmals aktiviert», hora civil suiza) se ancla a
+  Europe/Zurich y el `datePosted` del detalle queda sólo como respaldo, igual
+  que en el productor. La hora ambigua de otoño resuelve al primer instante: una
+  hora de error, una noche al año, frente a perder la fecha entera.
+- Validación: Core **1.791 aprobadas y ninguna omitida** (las 1.751 anteriores
+  más 40 nuevas, en 8 min 52 s) y backend SwissJob **1.916 aprobadas y 4
+  `xfail`**, los mismos recuentos de antes. Además 122 focales de SwissJob,
+  doble ciclo PostgreSQL con una sola identidad por oferta, provisión opt-in,
+  `ruff check`/`format` del repo completo, `git diff --check`,
+  `check_no_secrets` 0 hallazgos y ratchet
+  `{"core_owned":16,"local_pending":26,"sources":58}`.
+- Incidencias cerradas antes de publicar: tres expectativas mías estaban mal
+  —el `?tracking=` NO se rechaza, se descarta al reconstruir la URL canónica; y
+  dos pruebas daban por vacío legítimo una página que el veredicto declara
+  fallo— y se corrigió la EXPECTATIVA; la localidad del detalle llega en un
+  `<meta content=…>`, que no pasa por la pila de elementos, así que leerla sólo
+  en etiquetas de apertura no encontraba nada en ninguno de los 50 detalles.
+  Ningún intento tocó producción.
+- **Tráfico:** 55 peticiones por barrido (5 AJAX + 50 detalles) al ritmo de 2 s
+  del portal. El productor hacía lo mismo en frío y menos en caliente por su
+  early-stop de cursor, que Core no reproduce a propósito (emisión total).
+- **Rollback:** revertir `280bfc2` devuelve `gastrojob` al registro de scrapers,
+  saca su pre-decisión y retira adaptador, registro, admisión y provisionador.
+- Tras gastrojob quedan **13 proveedores** por implementar en ramas, todos de
+  SwissJob: `proz`, `remoteco`, `schuljobs`, `stelle_admin`, `tes` y los ocho
+  `swiss_schools_*`.
+- **Siguiente paso exacto si hay relevo:** comprobar la CI del checkpoint y
+  seguir con `tes` (sano, `__NEXT_DATA__`, una oferta por página). `stelle_admin`
+  exige decisión del propietario (Playwright, y la imagen de Core no lleva
+  Chromium); `proz` y `remoteco` llevan 46 y 54 errores seguidos SIN ninguna
+  cosecha correcta —el inventario pide decidir transporte o retirarlas— y
+  `schuljobs` tiene un intento sin desenlace y el cursor sin bootstrap completo.
+
+### Checkpoint de relevo 2026-10-15 · los cuatro residuos estructurales, cerrados
+
+Ninguno era de un portal concreto: los cuatro salieron de migrar portales y los
+cuatro bloqueaban la definición de terminado del contrato (§10).
+
+#### 1. `jobicy` y `remoteok` ya no registran caché ni actualizador
+
+- Seguían llamando a `register_cache`/`register_update` al importarse mucho
+  después de su traspaso (`services/jobicy_provider_impl.py:55,294` y
+  `services/remoteok_provider_impl.py:51,197`). Producción no los importaba, pero
+  **el registro es la vía por la que un productor vuelve a la vida sin tocar su
+  registro de providers**: lo único que los frenaba era la bandera
+  `LEGACY_DISABLED_SOURCES`.
+- Se retiran las cuatro llamadas y se añade el censo COMPLETO, no fuente a
+  fuente: `test_no_module_registers_a_local_cache_or_updater` importa la
+  aplicación y exige que los dos registros queden **vacíos**. Con él, las veinte
+  fuentes transferidas tienen su prueba de «sin efectos de registro».
+
+#### 2. Los barridos de fidelidad G7 y G8 vuelven a cubrir algo
+
+- Al quedar el registro vacío, sus `parametrize` se quedaron sin fuentes y
+  pytest los saltaba con «got empty parameter set» — un salto que nadie entiende
+  **se lee como cobertura**. Ahora saltan con un motivo que NOMBRA lo que los
+  sustituye.
+- Y lo que los sustituye existe:
+  `test_ninguna_ruta_servida_desde_core_se_tumba_con_un_agregado_hostil` mete la
+  misma oferta hostil —número no finito, surrogate suelto y NUL, **también como
+  CLAVE de los contadores**, que fue el hallazgo propio de G8— por el agregado
+  del núcleo y barre TODAS las rutas públicas de las **18 fuentes** del
+  adaptador: cada una debe responder 200 y conservar la oferta sana.
+- Resultado medido: las 18 pasan. La defensa ya existía repartida
+  (`finite_salary` del esquema y `pg_safe_tree` del router) pero **nadie la
+  probaba de extremo a extremo** en el camino servido desde Core.
+
+#### 3. La costura ya no construye un catálogo Core + local
+
+- `services/catalog/seam.py` montaba un `CompositeCatalog(CoreCatalog,
+  LocalCatalog)` siempre que `LEGACY_DISABLED_SOURCES` no estuviera vacío —es
+  decir, siempre en producción—, y un `FallbackCatalog` en modo `core_read`.
+- Con cero cosechadores locales **no hay nada que componer ni a lo que caer**, y
+  un lector no puede distinguir un camino inerte de uno vivo. Si no hay fuente
+  local propia, la costura devuelve `CoreCatalog()` **directamente**.
+- El compuesto SIGUE existiendo para el caso de rollback (una fuente que
+  vuelva), y eso lo cubre el mapeo modo→implementación de siempre. El ratchet
+  `check_local_harvest_ownership.py` haría fallar el CI antes de que ese caso
+  apareciera sin decisión explícita.
+- Fijado por `test_sin_cosechadores_locales_el_catalogo_es_core_A_SECAS` para
+  los tres modos no locales.
+
+#### 4. Core ya tiene el portero que el motor legacy tenía
+
+- **El hueco, medido:** el motor legacy pasa cada barrido por
+  `ComplianceEngine.can_scrape` y, tras tres bloqueos seguidos (403/429/503),
+  pone la fuente en `is_allowed = False` y **deja de pedir**. Core contaba
+  fallos y alertaba, pero nunca paraba: un portal que devuelve 403 cuatro veces
+  al día seguiría recibiendo las cuatro peticiones para siempre. Al traer los
+  scrapers al núcleo, ese portero se quedaba fuera — y ya afectaba a
+  financejobs, irishjobs, chmedia y publicjobs.
+- **Lo implementado:** `BLOCK_STATUSES = {403, 429, 503}` (la lista EXACTA del
+  legacy) y `blocking_status(exc)`, que **recorre la cadena de excepciones**:
+  los adaptadores envuelven el error del transporte y `raise … from None` sólo
+  lo oculta del traceback, así que `__context__` sigue llevándolo. Eso evita
+  tocar los ocho adaptadores: la clasificación vive en un único sitio.
+- Migración `core0055` (aditiva): `source_scope_state.consecutive_blocks`,
+  `last_blocked_at` y `disabled_by_blocks_at`. Los bloqueos se cuentan
+  **aparte** de `consecutive_failures` a propósito: una caída de red y un 429 no
+  son lo mismo y no deben apagar la misma fuente.
+- El runner cuenta el bloqueo en la misma transacción que ya contaba el fallo;
+  al llegar al umbral (`CORE_HARVEST_BLOCK_THRESHOLD=3`) pone
+  `harvest_scopes.enabled = false`, sella `disabled_by_blocks_at` y **grita** un
+  `logger.error`. Una cosecha COMPLETA —y sólo ella— devuelve el contador a cero.
+- **Re-encender es manual, a propósito:** sondear sola a una fuente que nos está
+  bloqueando es exactamente lo que no debe automatizarse.
+- **Y no se convierte en silencio:** la vigilancia de salud sólo mira scopes
+  HABILITADOS, así que un scope apagado por el kill-switch desaparecería de
+  `alertas` — el punto ciego que `harvest/health.py` ya documenta. El censo
+  publica ahora `apagados_por_bloqueo` y se canta en CADA pasada mientras siga
+  apagado.
+- Pruebas: 12 unitarias del clasificador (incluida una cadena envuelta dos veces
+  y una circular, que no debe colgar) y 4 de integración contra PostgreSQL real
+  —tres bloqueos apagan y el cuarto run ya no llama al provider; cuatro fallos
+  que no son bloqueo no apagan nada; un éxito borra el contador; y el censo de
+  salud canta el apagado—.
+
+#### Estado de este cierre
+
+- ReactPortfolio publicado en `5f03c68`; suite completa **2.256 aprobadas y 3
+  omitidas** (las dos de G7/G8, ahora con motivo, y la integración real opt-in),
+  ratchet local en 0 cosechadores y **cero hallazgos nuevos de black** respecto a
+  `HEAD` en los ocho ficheros tocados.
+- Core/SwissJob: suite del núcleo **1.807 aprobadas y ninguna omitida** (las
+  1.791 anteriores más 16: 12 unitarias y 4 de integración del kill-switch), la
+  migración `core0055` aplicada desde `core0054` sin incidencias, `ruff
+  check`/`format` del repo completo y `git diff --check` limpios.
+- `CLAUDE.md` describe la cadena del núcleo como `core0001..core0052` y ya
+  estaba desfasada antes de esto (el repo traía `core0053` y `core0054` de otro
+  trabajo); con `core0055` lo sigue estando. **No se corrige aquí** porque ese
+  fichero arrastra cambios ajenos sin versionar y mezclarlos sería peor.
+- Lo que NO se hace y queda explicado: **no se borran** `CompositeCatalog` ni
+  `FallbackCatalog`. Mientras producción siga cosechando en local, el código
+  antiguo es la vía de rollback que el propio contrato exige (§7.7); su borrado
+  pertenece al corte agrupado final, junto con el de los productores locales.
+
+### Checkpoint de relevo 2026-10-15 · tes y stelle_admin centralizados; proz, remoteco y los colegios, investigados
+
+#### tes centralizado en rama (`9e62bd5`, CI `38655779623` verde 9/9)
+
+- Las ofertas viajan dentro de `__NEXT_DATA__`, en
+  `props.pageProps.initialData` — **el mismo objeto** que el scraper lee de la
+  caché tRPC en la página 1 (comprobado sobre la captura sellada) y el único que
+  sobrevive en las páginas siguientes.
+- Paridad byte a byte: las 20 ofertas coinciden en los doce campos comparados,
+  identidad incluida. Huella
+  `8748ff87cea0d33869ca627116f9edb7965bacf88436de3289d4934a43430d15` en ambos
+  lados.
+- **La cota REAL del portal, medida y no heredada:** `?page=N` se ignora en
+  servidor. La página 2 renderiza los datos de la 1 (`currentPage: 1`), así que
+  las ocho ofertas que `numFound` anuncia más allá de las veinte primeras **no
+  son alcanzables** desde el payload renderizado. El scraper paginaba contra ese
+  mismo parámetro ignorado y las perdía en silencio; su comentario
+  `PAGE_SIZE = 1` («server enforces limit=1») está obsoleto: hoy sirve veinte
+  por página.
+- El barrido pide la página 2 UNA vez —si el portal empezara a honrar el
+  parámetro, lo seguiría—, para, registra el déficit y publica
+  `announced`/`harvested`/`shortfall` en el cursor. El run sigue COMPLETO: una
+  limitación permanente del portal no debe congelar `last_complete_at` y
+  convertir la alerta de obsolescencia en ruido.
+- Identidad: el id propio del portal, que cada fila trae y con el que termina
+  cada URL canónica, en vez de un hash de `title|company|url`.
+- La lectura de `__NEXT_DATA__` pasa a `next_data`, compartido con financejobs,
+  conservando sus tres mensajes de fallo. Suite de financejobs verde 25/25 tras
+  el cambio.
+
+#### stelle_admin reimplementado SIN navegador (`82c742d`, CI `38657167787` verde 9/9)
+
+- **La pregunta era si jobs.admin.ch se puede cosechar sin Chromium, que la
+  imagen de Core no lleva a propósito. Sí se puede, y lo dice el propio portal:**
+  su cascarón SPA son 2.220 bytes con un `#root` vacío; su único script de módulo
+  declara `baseUrl = https://ohws.prospective.ch/public/v1/medium/1000624`; y ese
+  endpoint responde 200 con `{total, jobs[]}` a un cliente HTTP normal. Sin
+  credencial, sin token, sin navegador.
+- **La paridad campo a campo es imposible Y no deseable**, y eso está medido: el
+  scraper conduce un navegador y adivina el DOM con seis selectores
+  especulativos («Common patterns for government portals»). Lo que produce en
+  producción, sobre 43 filas: título, URL y la CONSTANTE «Swiss Federal
+  Administration»; ubicación, descripción, `published_at` y tags están vacíos en
+  **todas** (field presence `[43,0,0,43,0,0]`).
+- La API da **431 ofertas en cinco peticiones**, todas con la unidad
+  contratante real, el lugar de trabajo, la fecha de publicación del portal, el
+  pensum, los textos de tareas y requisitos, y una bandera de home office que
+  hace de `remote` un dato y no una suposición (181 de 431). 201 resuelven
+  cantón y 430 traen grupo profesional. 486.675 caracteres de descripción donde
+  antes había cero.
+- Lo que SÍ se conserva: la identidad es el id propio del portal más su enlace
+  canónico, **el host del enlace se valida** (una API que cambiara el enlace no
+  puede persistir una URL ajena como oferta clicable), y una respuesta ilegible
+  es un fallo VISIBLE, nunca «0 ofertas».
+- Evidencia:
+  [`2026-10-15-dt144-stelle-admin-baseline.json`](../audits/2026-10-15-dt144-stelle-admin-baseline.json),
+  con los cuatro pasos por los que se encontró la API.
+
+#### proz y remoteco: NO son implementables desde esta infraestructura
+
+- **proz**: Cloudflare aplica un *managed challenge* (`cType: 'managed'`) a
+  **toda la zona**: feed, portada, `robots.txt` y `www2` responden 403 con el
+  desafío, con cualquier juego de cabeceras y protocolo, y desde cuatro puntos
+  de vista (este host, el NAS —misma IP pública—, el fetcher de Anthropic y el
+  rastreador de archive.org). Exige ejecutar JavaScript; no hay cabecera que lo
+  resuelva. El archivo fecha el muro entre junio y julio de 2026, dos meses
+  después de escribir el provider (2026-04-22).
+- **remoteco**: dos fallos independientes. (A) **El feed ya no existe**: el
+  archivo lo tiene en `301 → 404` desde el **2025-12-21**, cuatro meses ANTES
+  de escribir el provider; el feed del blog y `wp-json` tampoco están. (B) El
+  edge es **Akamai Bot Manager con puntuación conductual** (`AkamaiGHost`,
+  cookies `bm_s`/`bm_so`): a los clientes desconocidos les resetea el stream o
+  les retiene la petición; a los que parecen navegador les sirvió `200`/`301`
+  hasta que, tras ~20 sondas, pasó a `403 Access Denied` para los mismos. No
+  es bloqueo por IP (otra red también falla) y un proxy no lo arreglaría: pasar
+  de forma estable requiere el sensor JS de Akamai, es decir, un navegador.
+- Producción concuerda: 46 y 54 errores seguidos. «Ninguna cosecha jamás» está
+  probado **sólo desde el 2026-08-29**, inicio de la ventana de salud; proz
+  probablemente cosechó de abril a junio; remoteco no pudo cosechar nunca.
+- Lo que arreglaría cada una: proz, o bien un navegador que resuelva el
+  desafío (fuera de la imagen de Core y de la regla de no-evasión de
+  `docs/SCRAPING_HUMANO.md`, precedente medjobs), o bien comprobar con una
+  cuenta ProZ si el **feed de miembro** que describe su foro queda exento del
+  desafío —una prueba manual de un minuto que sólo el propietario puede hacer—.
+  remoteco necesitaría un scraper HTML nuevo del listado **y** un navegador
+  stealth de pago; no queda nada que leer aunque el edge dejara pasar.
+- Evidencia:
+  [`2026-10-15-dt144-proz-remoteco-analysis.json`](../audits/2026-10-15-dt144-proz-remoteco-analysis.json)
+  (corrige dos afirmaciones de la sonda del día 14, que se conserva).
+- **Por qué migrarlas aun así sería un error:** la metodología exige línea base
+  viva reproducible y paridad campo a campo contra el productor. Ninguna de las
+  dos ha producido nunca una cosecha, así que no hay nada contra lo que medir:
+  el adaptador sería inverificable por construcción, y además el nuevo
+  kill-switch de bloqueo lo apagaría en tres barridos.
+- **Recomendación: retirarlas explícitamente con esta evidencia** (§10 lo
+  permite: una fuente bloqueada se resuelve o se retira, nunca desaparece del
+  recuento). Retirar quita dos fuentes del corpus de forma permanente y cambia
+  el registro de producción, así que **es decisión del propietario**. La
+  alternativa que el propio proyecto documenta es pagar un navegador stealth
+  remoto y activar `SCRAPER_BROWSER_CDP_URL`, lo que cambia también la postura
+  de compliance. Evidencia:
+  [`2026-10-15-dt144-proz-remoteco-probe.json`](../audits/2026-10-15-dt144-proz-remoteco-probe.json).
+- Límite de esta sonda, dicho explícitamente: describe ESTE host y ESTE momento.
+  Otra IP de salida o un navegador de pago podrían dar otra respuesta — que es
+  justo la decisión que se entrega, no una que se asume.
+
+#### Los ocho colegios: preflight medido, adaptador NO escrito
+
+- Captura en vivo de los siete tableros alcanzables por una sola URL (todos 200)
+  y replay del parser legado de cada uno sobre ella. **Resultado: seis publican
+  CERO ofertas ahora mismo**; sólo haut-lac (1) e ISCS (2) tienen algo. Eso es
+  el estado NORMAL de una watchlist: un colegio publica una vacante cada varios
+  meses.
+- **Eso invierte una regla de diseño de todos los adaptadores anteriores:** los
+  cinco escritos hasta ahora LANZAN cuando un barrido no encuentra nada, porque
+  en un portal de empleo un barrido vacío significa parser roto. Para los
+  colegios eso haría fallar seis de ocho fuentes todos los días. Lo que hay que
+  conservar es el «vacío verificado» del legacy: la página se bajó, su
+  estructura se RECONOCIÓ, y sólo entonces el cero se reporta como sano. Core
+  necesita por tanto un **marcador estructural por colegio**: presente y sin
+  ofertas ⇒ barrido completo y vacío; ausente ⇒ fallo visible.
+- Complicaciones ya identificadas para quien lo escriba: `inspired` y `nae` no
+  son un tablero cada uno —barren VARIOS colegios por fuente, cada uno con su
+  URL de carreras y un filtro por nombre de colegio sobre portales ATS de
+  terceros—, y un bloqueo en uno no debe reportarse N veces (el legacy corta el
+  run en el primero por eso mismo); `isp` no usa la base compartida (467 líneas
+  con su propio `normalize`); y `ecolint` declara cinco páginas pero la 1 y la 2
+  de la captura son byte-idénticas, el mismo caso que myScience.
+- Evidencia:
+  [`2026-10-15-dt144-swiss-schools-preflight.json`](../audits/2026-10-15-dt144-swiss-schools-preflight.json).
+
+#### Estado tras este checkpoint
+
+- Validación: Core **1.846 aprobadas** (1.807 → +21 de tes → 1.823 → +23 de
+  stelle_admin) y backend SwissJob **1.916 aprobadas y 4 `xfail`** en las dos
+  tandas, los recuentos de siempre. Lint del repo completo, `diff --check`,
+  `check_no_secrets` y ratchet `{"core_owned":16,"local_pending":26,"sources":58}`
+  verdes.
+- Quedan **11 portales** por implementar en ramas: los ocho `swiss_schools_*`,
+  `schuljobs`, y `proz` y `remoteco` a la espera de decisión.
+- **Siguiente paso exacto si hay relevo:** escribir el adaptador de los colegios
+  con el marcador estructural por tablero descrito arriba —empezando por
+  haut-lac e ISCS, que son los dos que hoy tienen ofertas y por tanto los únicos
+  con paridad medible—, y después `schuljobs`, que arrastra un cursor sin
+  bootstrap completo. No tocar producción, los `main` ni activar scopes.
+
+### Checkpoint de relevo 2026-10-15 · los ocho colegios y schuljobs; el registro de scrapers queda VACÍO
+
+Con este tramo **todas las fuentes migrables tienen adaptador nativo en rama**.
+Las únicas dos que no lo tienen son `proz` y `remoteco`, y no por falta de
+trabajo: no son implementables desde esta infraestructura y esperan decisión del
+propietario (su checkpoint anterior tiene la evidencia).
+
+#### La watchlist escolar invierte una regla de diseño
+
+Seis de los ocho tableros publican CERO ofertas ahora mismo, y eso es el estado
+NORMAL de una watchlist: un colegio publica una vacante cada varios meses. Los
+cinco adaptadores anteriores LANZAN cuando un barrido no encuentra nada, porque
+en un portal de empleo eso significa parser roto. Aquí haría fallar seis de ocho
+fuentes todos los días.
+
+Lo que se conserva es el «vacío verificado» del motor legacy: **se baja la
+página, se RECONOCE y sólo entonces el cero se reporta como sano**. El
+reconocimiento está medido, no supuesto — cada tablero declara el título de
+página que lo nombra, y donde el portal tiene contenedor o marcador de vacío se
+honra también (ISB renderiza `fsElementEmpty`, «No post to display»: el portal
+lo dice él mismo). Una página que no se reconoce es fallo VISIBLE.
+
+Probado donde importa: tres barridos vacíos seguidos dejan el scope con
+`consecutive_failures=0`, `consecutive_blocks=0` y `last_complete_at`
+confirmado.
+
+#### Los cinco tableros de HTML propio (`72d068d`, CI `38690714105` verde)
+
+- Paridad campo a campo: haut-lac (1) e ISCS (2) tienen ofertas hoy y coinciden;
+  zis, isb y ecolint están vacíos, así que **se compararon TAMBIÉN contra los
+  parsers legados sobre fixtures** construidos con la estructura que sus propios
+  selectores declaran — `0 == 0` no prueba nada. Nueve filas, cero diferencias.
+- Cada tablero conserva sus rarezas: los anclajes sintéticos por vacante que
+  haut-lac e ISCS necesitan (compartir la URL del tablero dejaba viva UNA sola
+  vacante por colegio, clase VD.1), los `&nbsp;` y el id repetido de ZIS, las
+  dos formas de post de ISB, la regla de palabra clave + negrita de ISCS y las
+  dos plantillas de haut-lac. La única mejora: el cantón, derivado de la ciudad
+  del propio colegio, que el productor conocía y no usaba (4 de 5 resuelven).
+- Un módulo posee cinco fuentes, así que el ratchet de propiedad aprende a leer
+  un censo `SOURCE_NAMES` además de `SOURCE_NAME`.
+
+#### Los dos portales ATS compartidos (`287cc18`, CI `38692407198` verde)
+
+- Nord Anglia (tres colegios) e Inspired (dos) no tienen tablero propio:
+  publican en un SuccessFactors compartido, una consulta por colegio. Una fuente
+  deja de ser una página y pasa a ser una LISTA de tableros.
+- **La búsqueda del portal es difusa, y por eso el productor filtra:** la
+  consulta de La Côte devuelve 13 tarjetas y sólo 4 son suyas. Los dos parsers
+  coinciden en cuáles. Trece filas vivas en los tres colegios de Nord Anglia,
+  cero diferencias; los dos de Inspired están vacíos hoy y salen como vacíos
+  verificados.
+- Una tarjeta sin el campo de colegio no se atribuye a nadie, la ciudad de la
+  propia tarjeta gana a la configurada, y una página que no es el portal —un
+  login, un error— es fallo visible, no un tablero vacío.
+- El bloqueo mantiene el motivo del productor: los colegios comparten HOST, así
+  que N reportes en un run alcanzarían el kill-switch por un episodio
+  transitorio. El barrido corta en el primer fallo y el kill-switch nuevo cuenta
+  UN bloqueo por run.
+
+#### Mosaic en Workday (`2200b56`, CI `38694111472` verde)
+
+- El único tablero de la familia que es una API. Tres ofertas vivas, misma
+  huella SHA-256 que el scraper en título, empresa, ubicación, URL, tags e
+  idioma.
+- **Toda la cadena de validación de `externalPath` se porta íntegra**, porque
+  cada eslabón se añadió tras un defecto medido: una sonda en vivo demostró que
+  `?job=123` pasaba el guard de tipo y se persistía como URL «válida» sin oferta
+  detrás. Veintisiete formas rechazadas y cuatro aceptadas quedan fijadas por
+  pruebas, incluidas la doble codificación (`%252E`), los overlong (`%C0%AF`),
+  los surrogates (`%ED%A0%80`) y los sustitutos UTF-16 sueltos.
+- Dos reglas de ORDEN se conservan con su motivo: el filtro de colegio va ANTES
+  de los guards por elemento, porque el tenant de Workday es COMPARTIDO y
+  validar filas de otros colegios apagaría una fuente sana cuyos cero matches
+  son legítimos; y un elemento degenerado degrada ESE elemento, nunca la página.
+- `published_at` queda ausente a propósito: Workday publica un bucket relativo
+  («Posted 16 Days Ago»), nunca una fecha. **No lo "arregles".**
+
+#### schuljobs (`020469e`, CI `38696733154` verde 9/9)
+
+- La paridad que el inventario pedía ANTES de migrar, medida: 84 filas de
+  listado y 83 páginas de detalle idénticas, y la proyección de las 83 ofertas
+  con la misma huella SHA-256 en diez campos.
+- **La mitad de los detalles no trae JSON-LD** (41 de 83), así que un detalle
+  sin él es el caso normal y el stub del listado se sostiene solo: título,
+  empresa, ciudad y cantón salen del listado.
+- **El scope DECLARA su presupuesto de páginas**: cuatro —el listado inicial más
+  tres de scroll, las 83 ofertas medidas en vivo y unas dos veces lo que trae el
+  presupuesto dinámico del productor— contra un techo de 26. Ampliar el barrido
+  es una decisión de params con su propia validación, no un cambio de código.
+  Eso compra 87 peticiones por barrido.
+- Rarezas conservadas con su motivo: `data-nextpage` y el `nextpage` del
+  fragmento se castean SEGURO (`int("")` reventaba el barrido entero y perdía
+  los detalles ya descargados), un fallo a mitad de scroll se REPORTA (aprender
+  sólo la página inicial dejaría las de scroll sin pedir jamás) y sólo una
+  cabeza de dos letras de «CANTÓN · Ciudad · Empresa» cuenta como cantón. La
+  mejora: un `employmentType` multivaluado se renderiza en vez de perderse al
+  entrar en una columna de texto — le pasa a 3 de 83.
+- **`_SCRAPER_CLASSES` queda VACÍO**: los trece scrapers de SwissJob están
+  traspasados, sus módulos siguen como vía de rollback y el docstring del
+  registro recoge por qué medjobs, Riviera, Verbier e ISR nunca estuvieron.
+
+#### Estado tras este checkpoint
+
+- Inventario: **40 de las 42 fuentes migrables tienen `core_adapter`**. Las dos
+  sin adaptador son `proz` y `remoteco`. Siguen en el registro de providers de
+  SwissJob nueve nombres, y siete de ellos (`careerjet`, `jooble` y los cinco
+  partner restringidos) ya están `retired` con cero publicadores y cero
+  credenciales: son clases inertes que no emiten ninguna petición.
+- Validación: Core **1.952 aprobadas** y ninguna omitida (1.871 → +46 de ISP →
+  1.917 → +35 de schuljobs); backend SwissJob **1.916 aprobadas y 4 `xfail`** en
+  las cuatro tandas, los recuentos de siempre. Lint del repo completo,
+  `diff --check`, `check_no_secrets` y ratchet
+  `{"core_owned":16,"local_pending":26,"sources":58}` verdes.
+- El ratchet NO se mueve a propósito: el inventario describe PRODUCCIÓN, y
+  producción sigue cosechando en local hasta el corte agrupado aprobado.
+- **Siguiente paso exacto si hay relevo:** ya no queda ningún portal por
+  implementar. Lo que falta para cerrar DT-144 es (1) la decisión del
+  propietario sobre `proz` y `remoteco` —retirarlas con la evidencia o pagar
+  navegador stealth—, (2) comprobar la CI de ReactPortfolio, que no se puede
+  leer desde este host, y (3) el corte agrupado: provisionar y habilitar los
+  scopes, drenar y retirar los productores locales, borrar `CompositeCatalog` y
+  `FallbackCatalog`, y fusionar tras la aprobación explícita. Nada de eso se
+  hace sin el propietario.
+
+### Registro cerrado · Forgejo no forma parte de DT-144
+
+La alternativa se evaluó temporalmente y se retiró por decisión expresa del
+propietario. Sus detalles operativos se eliminaron de este plan para impedir que
+se interpreten como instrucciones reanudables. La única información vigente es
+el checkpoint de retirada anterior: GitHub Free es la autoridad única, Forgejo
+no existe en los repositorios ni en el NAS y reintroducirlo queda fuera del
+alcance autorizado.
 
 **Prohibición de cierre parcial:** DT-144 no se cierra porque exista un adaptador,
 un scope o una ruta denominada `core_primary`. Solo se cierra cuando no queden

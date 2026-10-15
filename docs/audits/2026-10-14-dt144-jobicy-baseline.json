@@ -1,0 +1,86 @@
+{
+  "captured_at": "2026-10-14T06:09:45.422853+00:00",
+  "scope": "DT-144 Jobicy pre-shadow baseline",
+  "privacy": "Read-only aggregate probes emitted no offer values, URLs, titles, companies, personal data, error details or credentials.",
+  "mutations": false,
+  "core": {
+    "adapter": "jobhunt_core/harvest/providers/native_json.py",
+    "production_source_present": false,
+    "production_scope_ids": [],
+    "required_query_union": [
+      {},
+      {"tag": "python"},
+      {"tag": "javascript"},
+      {"tag": "react"},
+      {"tag": "customer-success"},
+      {"tag": "copywriting"},
+      {"tag": "technical-writing"},
+      {"tag": "translation"}
+    ],
+    "query_union_evidence": {
+      "reactportfolio_daily": "services/jobicy_provider_impl.py calls the broad feed plus python when invoked without arguments by the startup/daily registry",
+      "reactportfolio_stale_and_manual": "the Jobicy routes pass fetch_multiple_batches=true; with a non-empty cache they add javascript and react",
+      "swissjob_daily": "backend/providers/jobicy.py calls the broad feed plus customer-success, copywriting, technical-writing and translation"
+    }
+  },
+  "reactportfolio": {
+    "observed_at": "2026-10-14T06:02:37.921893+00:00",
+    "production_image": "portfolio-backend:board-444f072",
+    "snapshot_present": true,
+    "snapshot_at_utc": "2026-10-13T16:22:29.579036+00:00",
+    "cached_entries": 40,
+    "reported_total": 40,
+    "normalized_entries": 40,
+    "normalization_errors": 0,
+    "duplicate_stable_keys": 2,
+    "duplicate_exact_hashes": 2,
+    "field_presence": {
+      "id": 40,
+      "title": 40,
+      "company": 40,
+      "location": 40,
+      "country": 40,
+      "url": 40,
+      "date": 40,
+      "remote": 40,
+      "tags": 40,
+      "description": 40,
+      "employment_type": 40
+    }
+  },
+  "swissjob": {
+    "observed_at": "2026-10-14T06:09:45.422853+00:00",
+    "production_image": "swissjob-backend:point5-4017081",
+    "stored_entries": 0,
+    "active_entries": 0,
+    "last_seen_at": null,
+    "field_presence": {
+      "company_present": 0,
+      "location_present": 0,
+      "description_present": 0,
+      "url_present": 0,
+      "published_at_present": 0,
+      "tags_present": 0
+    },
+    "marked_duplicate": 0,
+    "duplicate_fuzzy_hashes": 0,
+    "health": {
+      "last_attempt_at": "2026-10-13T10:25:16.951307+00:00",
+      "last_outcome": "ok",
+      "last_success_at": "2026-10-13T10:25:16.951307+00:00",
+      "last_jobs_count": 69,
+      "last_stored_count": 0,
+      "consecutive_errors": 0,
+      "consecutive_empty": 0,
+      "consecutive_unstored": 17
+    },
+    "cursors": [],
+    "compliance": null
+  },
+  "parity_constraints": [
+    "Core must preserve the eight-query union; one generic scope would drop product-visible categories.",
+    "ReactPortfolio currently exposes 40 fully normalized entries, including employment type and portal date.",
+    "SwissJob fetch succeeds but has persisted zero Jobicy rows for 17 consecutive runs; the cause must be resolved or explicitly classified before cutover.",
+    "Core upstream id identity and URL fallback must be reconciled with both legacy URL/title-company identities during shadow comparison."
+  ]
+}

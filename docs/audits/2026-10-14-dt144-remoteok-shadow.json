@@ -1,0 +1,74 @@
+{
+  "captured_at_utc": "2026-10-14T10:07:01Z",
+  "source": "remoteok",
+  "privacy": {
+    "contains_offer_data": false,
+    "contains_credentials": false,
+    "input_retained_in_repository": false,
+    "note": "Only aggregate counts and the SHA-256 of the temporary public-feed capture are retained."
+  },
+  "input": {
+    "transport": "https://remoteok.com/api",
+    "envelope": "one metadata object followed by job objects",
+    "upstream_rows": 99,
+    "sha256": "28257bc2440f7c277dbfa068e9e49eae02a5abba0871052f890cbc37d0b4da8f",
+    "identity_presence": 99,
+    "url_presence": 99,
+    "apply_url_presence": 99,
+    "published_date_presence": 99,
+    "salary_min_presence": 19,
+    "salary_max_presence": 19
+  },
+  "verified_scope_catalog": {
+    "count": 1,
+    "scope_id": "d2d5b74e-56ea-5745-8ecb-8bac403b9613",
+    "params": {},
+    "production_created": false,
+    "default_enabled": false
+  },
+  "legacy_contract_parity": {
+    "rows_compared": 99,
+    "matching_rows": 99,
+    "mismatching_rows": 0,
+    "legacy_recent_order_preserved_by_consumer_adapter": true,
+    "fields": [
+      "id",
+      "title",
+      "company",
+      "location",
+      "tags",
+      "date",
+      "salary_min",
+      "salary_max",
+      "salary_currency",
+      "url",
+      "description"
+    ]
+  },
+  "isolated_postgresql_shadow": {
+    "cycles": [
+      {
+        "status": "ok",
+        "received": 99
+      },
+      {
+        "status": "ok",
+        "received": 99
+      }
+    ],
+    "source_listings": 99,
+    "unique_external_ids": 99,
+    "raw_revisions": 99,
+    "offer_revisions": 99,
+    "enabled_scopes": 1,
+    "observed_scopes": 1,
+    "max_consecutive_failures": 0,
+    "published_dates": 99,
+    "locations": 48,
+    "distinct_case_sensitive_tags": 118,
+    "salary_min_values": 19,
+    "salary_max_values": 19,
+    "apply_urls": 99,
+    "cleanup_completed": true
+  }
+}

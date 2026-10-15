@@ -1,4 +1,4 @@
-"""Search metadata preserved from the previous WorkingNomads producer.
+"""Search metadata preserved from previous public-feed producers.
 
 Pure boundary rules, not a new classifier. Keep substring priority and the
 200-character description window: changing them changes saved-search results.
@@ -199,16 +199,22 @@ def swiss_canton(text):
     )
 
 
-def workingnomads_metadata(title, description, location):
+def search_metadata(title, description, location, contract_hint=None):
     title = title.lower() if isinstance(title, str) else ""
     description = description[:200].lower() if isinstance(description, str) else ""
     location = location.lower().strip() if isinstance(location, str) else ""
+    if isinstance(contract_hint, list):
+        contract_hint = " ".join(
+            value for value in contract_hint if isinstance(value, str)
+        )
+    contract_hint = contract_hint.lower() if isinstance(contract_hint, str) else ""
     canton = swiss_canton(location)
     return {
         "canton": canton,
         "language": "en",
         "seniority": _first_match(title, SENIORITY_PATTERNS),
         "contract_type": _first_match(
-            " " + title + " " + description, CONTRACT_PATTERNS
+            " " + contract_hint + " " + title + " " + description,
+            CONTRACT_PATTERNS,
         ),
     }

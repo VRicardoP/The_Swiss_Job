@@ -6,6 +6,8 @@ umask 077
 D=/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker
 R=/share/CACHEDEV1_DATA/Public/unification-e10.XXkEjw88
 OPS="$R/e13-erasure"
+RETENTION_IMAGE="$("$D" inspect swissjob-core-api-r5 --format '{{.Config.Image}}')"
+[[ "$RETENTION_IMAGE" =~ ^swissjob-core:point5-[a-f0-9]+$ ]]
 test -d "$OPS"
 # Cron must invoke this as Ricardo, not root; retain private user ownership.
 test "$(id -u)" = 1000
@@ -22,7 +24,7 @@ retention() {
   "$D" run --rm --network none --read-only --cap-drop ALL \
     --security-opt no-new-privileges --user "$(id -u):$(id -g)" \
     -v "$R:$R" -v "$OPS/backup_retention.py:/tool.py:ro" \
-    --entrypoint python swissjob-core:d2a38e9 /tool.py "$OPS/retention.json" "$@"
+    --entrypoint python "$RETENTION_IMAGE" /tool.py "$OPS/retention.json" "$@"
 }
 backup() {
   container=$1 db=$2 role=$3

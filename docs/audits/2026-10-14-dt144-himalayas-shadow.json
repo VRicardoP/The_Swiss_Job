@@ -1,0 +1,71 @@
+{
+  "source": "himalayas",
+  "status": "centralized_on_feature_branches_ci_green",
+  "production_changed": false,
+  "capture": {
+    "parameters": [
+      {"limit": 20, "offset": 0},
+      {"limit": 20, "offset": 20},
+      {"limit": 20, "offset": 40}
+    ],
+    "sha256": {
+      "0": "9d12d58e9f486acb6cad2aeff30a93d708b1f44eaec7c682eb22ba7e9c740bc9",
+      "20": "4cb4bd726fcdda567bfaf2439fac6af708109c4d7c670775a880661cd02ab96f",
+      "40": "e42501eb15fd1e411436663e24ac45d34f439f0025167fad6e423f0c2f7e482d"
+    },
+    "rows": 60,
+    "unique_guids": 57,
+    "exact_duplicate_rows": 3
+  },
+  "field_parity": {
+    "rows": 60,
+    "matched": 60,
+    "mismatches": []
+  },
+  "shadow": {
+    "cycles": [
+      {"status": "ok", "listings_received": 60, "pages": 3, "complete": true},
+      {"status": "ok", "listings_received": 60, "pages": 3, "complete": true}
+    ],
+    "stored": {
+      "external_ids": 57,
+      "listings": 57,
+      "raw_revisions": 57,
+      "offer_revisions": 57
+    },
+    "aggregate": {
+      "total": 57,
+      "enabled_scopes": 1,
+      "observed_scopes": 1,
+      "max_consecutive_failures": 0,
+      "published_dates": 57,
+      "locations": 15,
+      "categories": 465,
+      "salary_min": 27,
+      "salary_max": 27,
+      "apply_urls": 57,
+      "truthy_logos": 46,
+      "employment_types": 57,
+      "legacy_recent_newest_first": true,
+      "published_date_by_stable_id_match": true
+    }
+  },
+  "validation": {
+    "native_json_unit_before_logo_fix": "47 passed",
+    "native_json_unit_after_logo_fix": "40 passed",
+    "postgresql_focused": "13 passed",
+    "ruff_focused": "passed",
+    "core_full": "1573 passed, 1 skipped, 1 warning",
+    "core_commit": "d9b6859b1ebdacf7fb9330af3154b12a53b928c2",
+    "core_ci": "38552971276: success (9/9 jobs)",
+    "reactportfolio_focused": "323 passed",
+    "reactportfolio_side_effect_regression": "2 failures exposed legacy register_cache/register_update on import; removed those two registry effects and added an explicit guard",
+    "reactportfolio_regression_focused": "101 passed",
+    "reactportfolio_full": "2151 passed, 1 skipped, 115 warnings",
+    "reactportfolio_local_harvesters": 8,
+    "reactportfolio_commit": "e8ba71440b7fc4929c467bcbe34134614da1ad14",
+    "reactportfolio_ci": "38554552671: success (1/1 job, 4m31s)"
+  },
+  "rollback": "Production and both main branches are unchanged. The ReactPortfolio legacy module remains in the feature branch without router, provider, cache or update registration and can be explicitly reconnected if branch rollback is required.",
+  "next_step": "Trace the active ReactPortfolio and dormant SwissJob SwissTechJobs implementations, preserve a hashed live WordPress baseline, and fix its observable contract before modifying Core."
+}

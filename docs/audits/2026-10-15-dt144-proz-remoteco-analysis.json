@@ -1,0 +1,75 @@
+{
+ "analysed_at_utc": "2026-10-15T08:00:00+00:00",
+ "question": "Can proz and remoteco be made to harvest correctly? Why do they fail, and what would fix them?",
+ "vantage_points": {
+  "this_host": "77.229.10.132 — the SAME public IP as the production NAS, so a NAS probe adds no independent evidence",
+  "nas": "proz 403 in 0.17 s; remote.co feed 0 bytes after 20 s (identical to here)",
+  "anthropic_webfetch": "a different network: proz 403; remote.co feed AND listing both time out after 60 s",
+  "archive_org_crawler": "proz 403 since 2026-07 on /translation-jobs/ and since 2026-09 on the homepage (200 until 2026-03, 301 Apr-Jun); remote.co 403 since 2026-07 with occasional 200"
+ },
+ "proz": {
+  "mechanism": "Cloudflare MANAGED challenge (cf-mitigated: challenge, cType 'managed', /cdn-cgi/challenge-platform) applied to the WHOLE zone: /rss/jobs/, /translation-jobs/, /robots.txt and www2.proz.com all answer 403 with the challenge page",
+  "header_sets_tried": [
+   "curl default",
+   "python-httpx",
+   "Chrome UA only",
+   "Chrome UA + Accept + Accept-Language",
+   "full Chrome set with Sec-Fetch-* and sec-ch-ua over HTTP/2"
+  ],
+  "result": "403 + challenge for every set — the verdict does not depend on headers, protocol or vantage point; it requires executing Cloudflare's JavaScript",
+  "timeline": "provider added 2026-04-22 (d95c7cc); the archive dates the wall to between 2026-06-05 (301) and 2026-07-09 (403) on /translation-jobs/; production's health window only starts 2026-08-29, so 'never harvested' is proven INSIDE that window only — it most likely worked April-June 2026",
+  "official_route": "ProZ's own forum describes the job RSS as generated per MEMBER from the advanced search at /translation-jobs (orange button). Whether a member feed URL is exempt from the zone challenge cannot be tested without an account.",
+  "fixes": [
+   {
+    "option": "retire with this evidence",
+    "cost": "none",
+    "fits_core": true
+   },
+   {
+    "option": "owner with a ProZ account opens their member feed URL in a browser and in curl; if curl gets XML, a plain Core RSS adapter works (same RSS the legacy provider parsed)",
+    "cost": "one manual test",
+    "fits_core": true,
+    "unknown": "whether Cloudflare exempts it"
+   },
+   {
+    "option": "JS-capable browser that solves the managed challenge (FlareSolverr / stealth Playwright / paid CDP browser)",
+    "cost": "Chromium in Core or a paid remote browser, plus maintenance",
+    "fits_core": false,
+    "note": "contradicts the project's layer-4 'no evasion' rule (docs/SCRAPING_HUMANO.md) and is the medjobs precedent"
+   }
+  ]
+ },
+ "remoteco": {
+  "failure_A_feed_is_gone": "archive.org: /remote-jobs/feed/ answered 308/301 -> /remote-jobs/feed -> 404 on 2025-12-21, 2025-12-23 and 2026-01-28 — BEFORE the provider was added on 2026-04-22. /feed (blog) -> 404 WordPress 'Oops' page; /feeds/all.atom.xml 404 all year; /wp-json/ -> 301 (REST not open). The provider never had a feed to read.",
+  "failure_B_edge_bot_management": {
+   "edge": "AkamaiGHost (remote.co.edgekey.net, 23.48.32.x / 2.17.35.x); cookies bm_s, bm_so, x-georegion",
+   "behaviour_observed": [
+    "unknown clients (curl default, SwissJobHunter/1.0, python-httpx): HTTP/2 stream reset INTERNAL_ERROR in 0.15 s, or HTTP/1.1 held with 0 bytes until the client times out",
+    "browser-like header set over HTTP/2: 200 on robots.txt, 301 on /remote-jobs/ (redirect served before the bot verdict)",
+    "after ~20 probes in 30 min the SAME browser-like requests got 403 'Access Denied' Reference #18 on the listing and on the feed, and the production UA got reset three times in a row",
+    "Anthropic's fetcher (other network) times out; archive's crawler is 403 since 2026-07"
+   ],
+   "reading": "behavioural bot scoring, not an IP or geo block (the NAS shares our IP, and a different network fails too). A proxy would not fix it; passing it consistently needs Akamai's sensor JavaScript (_abck), i.e. a real browser."
+  },
+  "what_a_fix_would_need": "BOTH (1) a new HTML scraper of /remote-jobs (WordPress, no feed, no open REST; content is FlexJobs-synced) AND (2) a stealth browser that carries Akamai's sensor — the same class as medjobs, which this project already parked for the same reason",
+  "fixes": [
+   {
+    "option": "retire with this evidence",
+    "cost": "none",
+    "fits_core": true
+   },
+   {
+    "option": "stealth browser via SCRAPER_BROWSER_CDP_URL + new HTML scraper",
+    "cost": "paid browser + new scraper + maintenance against an adaptive edge",
+    "fits_core": false
+   }
+  ]
+ },
+ "corrections_to_2026-10-14_probe": [
+  "'the server never responds' was a snapshot of Akamai's reset/hold action for unknown clients, not a static condition: browser-like requests were served, until the score dropped",
+  "'no successful harvest ever' is proven only since 2026-08-29 (start of the health window); proz most likely harvested April-June 2026",
+  "remoteco could NEVER have harvested: its feed URL was already 404 four months before the provider was written"
+ ],
+ "not_done_on_purpose": "no challenge solving, no browser, no proxy, no cookie replay beyond reusing one jar once. About 30 requests to remote.co and 12 to proz in total, then stopped when the edge escalated.",
+ "recommendation": "Retire both. proz has one cheap unknown the owner can close in a minute with their own ProZ account (member feed exempt or not). remoteco has nothing left to read even if the edge let us in."
+}

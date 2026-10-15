@@ -90,7 +90,10 @@ def discover_core_adapters(root: Path) -> set[str]:
     provider_dir = root / "jobhunt_core/harvest/providers"
     for path in provider_dir.glob("*.py"):
         for value in _literal_assignments(
-            path, {"SOURCE_NAME", "ENDPOINTS", "DOMAINS"}
+            # SOURCE_NAMES: one adapter module may own several sources (the
+            # school watchlist is five boards sharing one provider class).
+            path,
+            {"SOURCE_NAME", "SOURCE_NAMES", "ENDPOINTS", "DOMAINS"},
         ):
             names.update(_strings(value))
     return names
