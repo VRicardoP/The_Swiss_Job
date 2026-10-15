@@ -177,6 +177,26 @@ continuar sin rediseñarlo.
   `source_ownership.json`, pasar suites/CI, fusionar, redesplegar y ejecutar las
   sondas finales. El detalle vivo manda en `DT144_RELEVO.md` §0.1.
 
+### Checkpoint 2026-10-15 · Relevo fusionado y producción revalidada
+
+- El PR documental 6 se fusionó en `The_Swiss_Job/main` como
+  `205987ac01b88893b2199eeea083ed9f31341a66`. Su CI de `main`
+  `38747081401` terminó con los 9/9 trabajos verdes; no se omitió ni forzó
+  ninguna comprobación.
+- La sonda Core final se repitió por stdin y en modo de sólo lectura contra el
+  contenedor vivo. Confirmó release `5b3bf3d`, Alembic `core0055`, 50 scopes
+  observados/habilitados/con estado, cero autoapagados, 25.540 entregas, cero
+  pendientes o *dead-letter*, staging drenado y slot de captura ausente.
+- El único fallo sigue siendo `harvest_not_50_of_50`: JSearch conserva la
+  alerta `cosecha_sin_completar`. No se hizo otra petición al proveedor, no se
+  consumió cuota y no hubo despliegue ni mutación productiva.
+- Avance contractual estimado: **76 %**. No debe leerse el 49/50 de scopes como
+  98 % global: aún faltan el primer 50/50, despliegue y sondas de consumidores,
+  segundo 50/50, retirada física, inventarios/suites, despliegue final y sondas
+  finales. El siguiente comando operativo sigue siendo reejecutar sólo JSearch
+  con la clave determinista documentada cuando se restablezca la cuota —o se
+  aporte una credencial válida sin coste—.
+
 ### Checkpoint 2026-10-15 · Primer ciclo detenido en 49/50 por cuota de JSearch
 
 - La ventana nativa `2026-10-15T12:00:00+02:00` terminó con 49 scopes `ok`,
