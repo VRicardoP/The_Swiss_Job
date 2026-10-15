@@ -126,41 +126,6 @@ def setup_schedules() -> None:
         logger.info("Scheduler disabled via SCHEDULER_ENABLED=False")
         return
 
-    # Extracción de ofertas: cosecha diaria autónoma a hora VARIABLE (patrón
-    # circadiano) o, si está desactivada, el fetch clásico por intervalos.
-    if settings.SCHEDULER_DAILY_HARVEST_ENABLED:
-        jitter_seconds = settings.SCHEDULER_DAILY_HARVEST_JITTER_HOURS * 3600
-        scheduler.add_job(
-            _dispatch_daily_harvest,
-            CronTrigger(
-                hour=settings.SCHEDULER_DAILY_HARVEST_HOUR,
-                minute=0,
-                timezone="Europe/Zurich",
-                jitter=jitter_seconds,
-            ),
-            id="daily_harvest",
-            replace_existing=True,
-        )
-        logger.info(
-            "Cosecha diaria activa: hora base %02d:00 CET ± %dh de jitter",
-            settings.SCHEDULER_DAILY_HARVEST_HOUR,
-            settings.SCHEDULER_DAILY_HARVEST_JITTER_HOURS,
-        )
-    else:
-        # Fetch clásico: API providers cada N min, scrapers cada N h.
-        scheduler.add_job(
-            _dispatch_fetch_providers,
-            IntervalTrigger(minutes=settings.SCHEDULER_FETCH_INTERVAL_MINUTES),
-            id="fetch_providers",
-            replace_existing=True,
-        )
-        scheduler.add_job(
-            _dispatch_fetch_scrapers,
-            IntervalTrigger(hours=settings.SCHEDULER_SCRAPER_INTERVAL_HOURS),
-            id="fetch_scrapers",
-            replace_existing=True,
-        )
-
     # URL health check: DIARIA a las 03:00 CET (antes: semanal los domingos).
     # V.4 — con 3000 ofertas por ejecución, una pasada completa del corpus
     # (~19k activas) tarda <=7 días. Semanal + 200/run tardaba ~2,3 años y
@@ -223,31 +188,12 @@ def setup_schedules() -> None:
             replace_existing=True,
         )
 
-    logger.info(
-        "Scheduler configured: daily harvest=%s, URL check daily 03:00, "
-        "cleanup stale jobs daily 03:30",
-        settings.SCHEDULER_DAILY_HARVEST_ENABLED,
-    )
-
-
-def _dispatch_daily_harvest() -> None:
-    celery_app.send_task("tasks.pipeline.daily_harvest")
-    logger.info("Dispatched tasks.pipeline.daily_harvest")
-
-
-def _dispatch_fetch_providers() -> None:
-    celery_app.send_task("tasks.fetch_providers")
-    logger.debug("Dispatched tasks.fetch_providers")
+    logger.info("Scheduler configured: URL check 03:00, stale cleanup 03:30")
 
 
 def _dispatch_check_urls() -> None:
     celery_app.send_task("tasks.check_job_urls")
     logger.debug("Dispatched tasks.check_job_urls")
-
-
-def _dispatch_fetch_scrapers() -> None:
-    celery_app.send_task("tasks.scraping.fetch_scrapers")
-    logger.debug("Dispatched tasks.scraping.fetch_scrapers")
 
 
 def _dispatch_cleanup_stale() -> None:

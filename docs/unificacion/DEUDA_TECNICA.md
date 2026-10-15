@@ -145,6 +145,17 @@ continuar sin rediseñarlo.
 - El segundo ciclo de Core sigue en curso. La fotografía intermedia contiene
   24 `ok`, Arbeitnow `running`, ninguna ejecución de JSearch y 49 scopes
   habilitados. No es todavía el gate terminal 49/49.
+- Checkpoint `2026-10-15T19:14+02:00`: Arbeitnow sigue procesando tras extraer
+  13.064 ofertas y mantiene heartbeat reciente (`17:11:22Z`); el agregado
+  permanece en 24 `ok` + 1 `running`, sin despacho ni sonda de JSearch. El PR
+  documental 13 quedó verde tras repetir sólo el `docker-build` que había
+  fallado por una descarga PyTorch interrumpida, sobre el mismo SHA `c6bd5af`.
+  En SwissJob, la rama final ya deja vacío el registro local y desconecta de
+  Celery/APScheduler las tareas y disparadores de cosecha, preservando los jobs
+  de producto. Sintaxis y Ruff pasan; las pruebas focales de registro,
+  scheduler y leader-lock se adaptaron al nuevo invariante y pasan 11/11 contra
+  el PostgreSQL/Redis efímero DT-144. No se han borrado todavía los módulos
+  físicos.
 - Punto exacto y metodología de relevo: ver
   `DT144_RELEVO.md` §0.1, checkpoint «despliegue de consumidores y limpieza
   final en curso». Los worktrees y ramas están allí fijados; ningún cambio de

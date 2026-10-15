@@ -263,6 +263,40 @@ hasta el siguiente checkpoint:
   migrar las pruebas a invariantes Core-only; (3) esperar el terminal 49/49;
   (4) suites, commits, PR/CI y fusión; (5) desplegar Core final, SwissJob
   BFF+worker y Portfolio; (6) sondas finales, inventario/ratchet y cierre.
+- Checkpoint `2026-10-15T19:14+02:00`: el PR 13 de relevo quedó completamente
+  verde. Su único fallo inicial, `docker-build`, fue un `BrokenPipeError`
+  descargando PyTorch; se repitió sólo ese job sobre el mismo SHA `c6bd5af` y
+  terminó correctamente. En producción, el segundo ciclo conserva 24 scopes
+  `ok` y Arbeitnow `running`; su heartbeat alcanzó
+  `2026-10-15T17:11:22Z` después de extraer 13.064 ofertas. JSearch no fue
+  despachado ni sondeado.
+- En la rama `feat/dt144-final-cleanup` de SwissJob ya se aplicó la primera
+  desconexión reversible: registro de providers vacío, Celery sin incluir ni
+  enrutar `fetch_tasks`/`scraping_tasks`/`pipeline_tasks`, y scheduler sin
+  `daily_harvest`, `fetch_providers` ni `fetch_scrapers`. Se preservaron URL
+  health, limpieza, idiomas, watchlist, alertas y digest. Las pruebas focales
+  de registro/scheduler se migraron al invariante Core-only; `py_compile`, Ruff
+  y formato pasan. Tras alinear el contenedor efímero DT-144 con la credencial
+  pública de CI, las pruebas de registro, scheduler y leader-lock pasan 11/11.
+  La retirada física de módulos sigue pendiente de la confirmación informada
+  específica y es recuperable por Git.
+- Checkpoint `2026-10-15T19:14+02:00`: el PR 13 de relevo quedó completamente
+  verde. Su único fallo inicial, `docker-build`, fue un `BrokenPipeError`
+  descargando el wheel de PyTorch; se reintentó sólo ese job sobre el mismo SHA
+  `c6bd5af` y terminó correctamente. En producción, el segundo ciclo conserva
+  24 scopes `ok` y Arbeitnow `running`; su heartbeat alcanzó
+  `2026-10-15T17:11:22Z` después de extraer 13.064 ofertas. JSearch no fue
+  despachado ni sondeado.
+- En la rama `feat/dt144-final-cleanup` de SwissJob ya se aplicó la primera
+  desconexión reversible: registro de providers vacío, Celery sin incluir ni
+  enrutar `fetch_tasks`/`scraping_tasks`/`pipeline_tasks`, y scheduler sin
+  `daily_harvest`, `fetch_providers` ni `fetch_scrapers`. Se preservaron URL
+  health, limpieza, idiomas, watchlist, alertas y digest. Las pruebas focales
+  de registro/scheduler se migraron al invariante Core-only; `py_compile`, Ruff
+  y formato pasan. Pytest local no llegó a ejecutar casos porque el entorno
+  fuera de Compose no resolvía el host `postgres`; no se registra como fallo de
+  código ni como suite verde. La retirada física de módulos continúa pendiente
+  de la confirmación informada específica y recuperable por Git.
 
 ---
 

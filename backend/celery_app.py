@@ -26,7 +26,6 @@ celery_app.conf.update(
     timezone="Europe/Zurich",
     enable_utc=True,
     task_routes={
-        "tasks.scraping.*": {"queue": "scraping"},
         "tasks.ai.*": {"queue": "ai"},
     },
     task_default_queue="default",
@@ -42,12 +41,9 @@ celery_app.conf.update(
 
 celery_app.conf.include = [
     "tasks.example_task",
-    "tasks.fetch_tasks",
     "tasks.maintenance_tasks",
-    "tasks.scraping_tasks",
     "tasks.watchlist_tasks",
     "tasks.alert_tasks",
-    "tasks.pipeline_tasks",
     "tasks.profile_tasks",
     "tasks.digest_tasks",
     "tasks.language_tasks",
