@@ -218,6 +218,15 @@ continuar sin rediseñarlo.
   una segunda cuota productiva ya disponible. Esperar el reset sigue siendo la
   única acción autónoma segura, salvo que el propietario facilite otra
   credencial válida y gratuita.
+- A las `2026-10-15T17:02:34+02:00` se repitió la sonda final de sólo lectura:
+  Core permanece `ready`, autoritativo, en `5b3bf3d`/`core0055`, con 50 scopes
+  habilitados y observados, cero autoapagados, 25.795 entregas, ninguna
+  pendiente/dead-letter, staging 0 y sin slot de captura. El único fallo es el
+  mismo `harvest_not_50_of_50`; no se llamó al proveedor. Los cuatro procesos
+  Core reales (`api`, `worker`, `harvest-worker`, `ops-worker`) ejecutan la
+  misma imagen con cero reinicios; el worker SwissJob sigue `exited (0)` y el
+  worker Portfolio continúa quiescente mediante
+  `BACKGROUND_SCHEDULERS_ENABLED=false`. No hubo despliegue ni mutación.
 - Reanudación exacta: al restablecerse la cuota —o con otra credencial válida
   sin coste— reejecutar sólo el scope JSearch usando su misma clave de ventana.
   Si queda `ok`, el primer ciclo será 50/50 y continúa el orden ya documentado:
