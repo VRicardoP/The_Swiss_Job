@@ -97,6 +97,13 @@ hasta el siguiente checkpoint:
   cuota. No se imprimieron clave, URL, query ni cuerpo y no se harán más sondas
   antes del reset. El scope sigue habilitado, acumula dos fallos y todavía no
   alcanzó el umbral de autoapagado. La cola quedó vacía.
+- Se comprobó después, dentro del NAS y sin imprimir valores ni huellas, la
+  credencial efectiva de `swissjob-core-api-r5` frente a la de
+  `portfolio_backend`: ambas son la **misma** credencial JSearch. El worker de
+  Portfolio no conserva otra. Por tanto, la instalación actual no dispone de
+  una segunda cuota ya configurada; no se debe rotar ni repetir la petición
+  antes del reset salvo que el propietario aporte otra credencial válida y
+  gratuita.
 - Preparación de consumidores: se detectó antes del despliegue que
   `watchlist_tasks._get_watchlist_sources()` derivaba de `_SCRAPER_CLASSES`, ya
   vacío por el traspaso, de modo que la alerta de salud y el digest escolar
