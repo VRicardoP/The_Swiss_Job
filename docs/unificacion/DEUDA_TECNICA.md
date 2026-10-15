@@ -86,6 +86,13 @@ como paquete namespace; `fix/dt144-docker-context` excluye también
 `providers/`. El ratchet exige las tres reglas. Producción sigue funcional;
 para cerrar hay que fusionar, redesplegar BFF/worker y repetir las tres sondas.
 
+Tras fusionar `5002445`, desplegar BFF/worker y obtener las tres sondas verdes,
+el inventario operativo encontró una última divergencia del Compose vivo: el
+worker seguía suscrito a la cola ya vacía `scraping`, pese a que los
+manifiestos versionados usan `default,ai`. La rama `fix/dt144-worker-queue`
+hace que el transformador retire y verifique esa cola. Falta CI/fusión,
+redesplegar sólo el worker y repetir inventario/sondas antes de cerrar DT-144.
+
 1. No repetir el inventario ni la Fase 0: las 58 fuentes están verificadas y
    los ratchets están activos. GitHub Free es el único forge autorizado; no
    desplegar ni volver a proponer Forgejo, GitLab, Bitbucket o GitHub Pro.

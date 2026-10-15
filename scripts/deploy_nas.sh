@@ -28,6 +28,8 @@
 #     al matcher local eliminado. El volumen no se borra: sólo deja de montarse.
 # 12. `--config-only` conserva la imagen viva de BFF/worker y permite aplicar
 #     cambios de Compose sin publicar código.
+# 13. El worker se suscribe sólo a `default,ai`; el transformador retira la
+#     cola local `scraping` y aborta si el Compose vivo no permite verificarlo.
 #
 # Uso:  scripts/deploy_nas.sh core|bff|worker|frontend [--dry-run|--config-only]
 set -euo pipefail
@@ -204,10 +206,19 @@ lineas = contenido.splitlines()
 salida = []
 actual = None
 etiquetadas = set()
+queue_marker = "default,scraping,ai"
+queue_target = "default,ai"
+queue_verified = False
 for linea in lineas:
     servicio = re.match(r"^  ([a-z_-]+):\s*$", linea)
     if servicio:
         actual = servicio.group(1)
+    if "$SERVICIO" == "worker" and actual == "worker":
+        linea = linea.replace(queue_marker, queue_target)
+        queue_line = linea.strip()
+        queue_verified = queue_verified or queue_line == f"- {queue_target}" or bool(
+            re.search(rf"(?:^|\s)-Q\s+{re.escape(queue_target)}(?:\s|$)", queue_line)
+        )
     if actual in servicios and re.match(r"^    image: $PATRON[a-f0-9]+\s*$", linea):
         linea = "    image: $IMAGEN"
         etiquetadas.add(actual)
@@ -222,6 +233,10 @@ if etiquetadas != set(servicios):
         f"ABORTA: etiquetas incompletas; cambiadas={sorted(etiquetadas)}, "
         f"esperadas={sorted(servicios)}"
     )
+if "$SERVICIO" == "worker" and (
+    not queue_verified or queue_marker in "\n".join(salida)
+):
+    sys.exit("ABORTA: no se pudo retirar la cola local scraping del worker")
 ruta.write_text("\n".join(salida) + "\n")
 print(f"etiquetas cambiadas: {len(etiquetadas)} (esperadas {len(servicios)})")
 PYEOF

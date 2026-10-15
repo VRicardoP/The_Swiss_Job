@@ -106,6 +106,11 @@ FORBIDDEN_SWISSJOB_RUNTIME_MARKERS = (
     "default,scraping",
     "tasks.fetch_providers",
 )
+DEPLOY_QUEUE_RATCHET_MARKERS = (
+    'queue_marker = "default,scraping,ai"',
+    'queue_target = "default,ai"',
+    "not queue_verified or queue_marker",
+)
 
 
 def _literal_assignments(path: Path, names: set[str]) -> list[object]:
@@ -373,6 +378,15 @@ def validate(manifest: dict, portfolio_root: Path | None) -> list[str]:
             errors.append(
                 f"retired SwissJob runtime markers in {relative_path}: {markers}"
             )
+    deploy_script = (ROOT / "scripts/deploy_nas.sh").read_text(encoding="utf-8")
+    missing_queue_guards = sorted(
+        marker for marker in DEPLOY_QUEUE_RATCHET_MARKERS if marker not in deploy_script
+    )
+    if missing_queue_guards:
+        errors.append(
+            "SwissJob deploy no longer removes the legacy scraping queue: "
+            f"{missing_queue_guards}"
+        )
 
     if portfolio_root is not None:
         expected_portfolio = {
