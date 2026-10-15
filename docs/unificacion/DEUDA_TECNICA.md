@@ -58,21 +58,22 @@ continuar sin rediseñarlo.
    también está centralizado en rama. Todos sus scopes productivos permanecen
    deshabilitados y ambos `main` intactos: el corte vivo continúa agrupado con
    la fusión final aprobada por el propietario.
-5. Los últimos portales cerrados son stelle_admin (`82c742d`, CI `38657167787`
-   verde, **reimplementado sin navegador**) y tes (`9e62bd5`, CI `38655779623`
-   verde); antes gastrojob
+5. **Ya no queda ningún portal por implementar.** Los últimos cerrados son
+   schuljobs (`020469e`, CI `38696733154` verde), Mosaic en Workday (`2200b56`,
+   CI `38694111472` verde), los dos portales ATS
+   escolares (`287cc18`), los cinco tableros de HTML propio (`72d068d`),
+   stelle_admin (`82c742d`, reimplementado sin navegador) y tes (`9e62bd5`); antes gastrojob
    (`280bfc2`), myScience (`244f15e`) y JobScout24 (`33a804d` + ReactPortfolio
    `04a020d`/`ffcc0ba`). Los cuatro residuos estructurales están cerrados
    (`5f03c68` en ReactPortfolio y `c7d5388` en Core). DynamiteJobs quedó cerrado antes (`9ec6901` /
    `1a0db8d`, CI `38607230379` y `38608902811` verdes), igual que JSearch y
    Adzuna en los commits de sus checkpoints. No se ha desplegado ninguno.
-6. Quedan **11 portales** por implementar en las ramas, todos de SwissJob: los
-   ocho `swiss_schools_*`, `schuljobs`, y `proz` y `remoteco` a la espera de una
-   decisión del propietario (medido el 2026-10-15: no son implementables con un
-   cliente conforme desde este host; ver su checkpoint). Sigue la familia de
-   colegios, cuyo preflight ya está medido y cuya regla de diseño es el «vacío
-   verificado». No escribir adaptador antes de contrastar código, runtime,
-   disponibilidad y línea base real.
+6. **Cero portales pendientes de implementar.** 40 de las 42 fuentes migrables
+   tienen `core_adapter` en rama; las dos que no son `proz` y `remoteco`, que no
+   son implementables con un cliente conforme desde este host (medido el
+   2026-10-15) y esperan decisión del propietario: retirarlas con la evidencia o
+   pagar un navegador stealth. El registro de scrapers de SwissJob está VACÍO y
+   los trece módulos siguen como rollback.
 7. **Relevo operativo verificado el 2026-10-14:** SwissJob/Core continúa en
    `feat/fase-a-core`, cabeza funcional `33a804d`; ReactPortfolio continúa en
    `feat/dt144-free-gate`, cabeza `ffcc0ba`. Los remotos `main` siguen
@@ -2084,6 +2085,130 @@ cuatro bloqueaban la definición de terminado del contrato (§10).
   haut-lac e ISCS, que son los dos que hoy tienen ofertas y por tanto los únicos
   con paridad medible—, y después `schuljobs`, que arrastra un cursor sin
   bootstrap completo. No tocar producción, los `main` ni activar scopes.
+
+### Checkpoint de relevo 2026-10-15 · los ocho colegios y schuljobs; el registro de scrapers queda VACÍO
+
+Con este tramo **todas las fuentes migrables tienen adaptador nativo en rama**.
+Las únicas dos que no lo tienen son `proz` y `remoteco`, y no por falta de
+trabajo: no son implementables desde esta infraestructura y esperan decisión del
+propietario (su checkpoint anterior tiene la evidencia).
+
+#### La watchlist escolar invierte una regla de diseño
+
+Seis de los ocho tableros publican CERO ofertas ahora mismo, y eso es el estado
+NORMAL de una watchlist: un colegio publica una vacante cada varios meses. Los
+cinco adaptadores anteriores LANZAN cuando un barrido no encuentra nada, porque
+en un portal de empleo eso significa parser roto. Aquí haría fallar seis de ocho
+fuentes todos los días.
+
+Lo que se conserva es el «vacío verificado» del motor legacy: **se baja la
+página, se RECONOCE y sólo entonces el cero se reporta como sano**. El
+reconocimiento está medido, no supuesto — cada tablero declara el título de
+página que lo nombra, y donde el portal tiene contenedor o marcador de vacío se
+honra también (ISB renderiza `fsElementEmpty`, «No post to display»: el portal
+lo dice él mismo). Una página que no se reconoce es fallo VISIBLE.
+
+Probado donde importa: tres barridos vacíos seguidos dejan el scope con
+`consecutive_failures=0`, `consecutive_blocks=0` y `last_complete_at`
+confirmado.
+
+#### Los cinco tableros de HTML propio (`72d068d`, CI `38690714105` verde)
+
+- Paridad campo a campo: haut-lac (1) e ISCS (2) tienen ofertas hoy y coinciden;
+  zis, isb y ecolint están vacíos, así que **se compararon TAMBIÉN contra los
+  parsers legados sobre fixtures** construidos con la estructura que sus propios
+  selectores declaran — `0 == 0` no prueba nada. Nueve filas, cero diferencias.
+- Cada tablero conserva sus rarezas: los anclajes sintéticos por vacante que
+  haut-lac e ISCS necesitan (compartir la URL del tablero dejaba viva UNA sola
+  vacante por colegio, clase VD.1), los `&nbsp;` y el id repetido de ZIS, las
+  dos formas de post de ISB, la regla de palabra clave + negrita de ISCS y las
+  dos plantillas de haut-lac. La única mejora: el cantón, derivado de la ciudad
+  del propio colegio, que el productor conocía y no usaba (4 de 5 resuelven).
+- Un módulo posee cinco fuentes, así que el ratchet de propiedad aprende a leer
+  un censo `SOURCE_NAMES` además de `SOURCE_NAME`.
+
+#### Los dos portales ATS compartidos (`287cc18`, CI `38692407198` verde)
+
+- Nord Anglia (tres colegios) e Inspired (dos) no tienen tablero propio:
+  publican en un SuccessFactors compartido, una consulta por colegio. Una fuente
+  deja de ser una página y pasa a ser una LISTA de tableros.
+- **La búsqueda del portal es difusa, y por eso el productor filtra:** la
+  consulta de La Côte devuelve 13 tarjetas y sólo 4 son suyas. Los dos parsers
+  coinciden en cuáles. Trece filas vivas en los tres colegios de Nord Anglia,
+  cero diferencias; los dos de Inspired están vacíos hoy y salen como vacíos
+  verificados.
+- Una tarjeta sin el campo de colegio no se atribuye a nadie, la ciudad de la
+  propia tarjeta gana a la configurada, y una página que no es el portal —un
+  login, un error— es fallo visible, no un tablero vacío.
+- El bloqueo mantiene el motivo del productor: los colegios comparten HOST, así
+  que N reportes en un run alcanzarían el kill-switch por un episodio
+  transitorio. El barrido corta en el primer fallo y el kill-switch nuevo cuenta
+  UN bloqueo por run.
+
+#### Mosaic en Workday (`2200b56`, CI `38694111472` verde)
+
+- El único tablero de la familia que es una API. Tres ofertas vivas, misma
+  huella SHA-256 que el scraper en título, empresa, ubicación, URL, tags e
+  idioma.
+- **Toda la cadena de validación de `externalPath` se porta íntegra**, porque
+  cada eslabón se añadió tras un defecto medido: una sonda en vivo demostró que
+  `?job=123` pasaba el guard de tipo y se persistía como URL «válida» sin oferta
+  detrás. Veintisiete formas rechazadas y cuatro aceptadas quedan fijadas por
+  pruebas, incluidas la doble codificación (`%252E`), los overlong (`%C0%AF`),
+  los surrogates (`%ED%A0%80`) y los sustitutos UTF-16 sueltos.
+- Dos reglas de ORDEN se conservan con su motivo: el filtro de colegio va ANTES
+  de los guards por elemento, porque el tenant de Workday es COMPARTIDO y
+  validar filas de otros colegios apagaría una fuente sana cuyos cero matches
+  son legítimos; y un elemento degenerado degrada ESE elemento, nunca la página.
+- `published_at` queda ausente a propósito: Workday publica un bucket relativo
+  («Posted 16 Days Ago»), nunca una fecha. **No lo "arregles".**
+
+#### schuljobs (`020469e`, CI `38696733154` verde 9/9)
+
+- La paridad que el inventario pedía ANTES de migrar, medida: 84 filas de
+  listado y 83 páginas de detalle idénticas, y la proyección de las 83 ofertas
+  con la misma huella SHA-256 en diez campos.
+- **La mitad de los detalles no trae JSON-LD** (41 de 83), así que un detalle
+  sin él es el caso normal y el stub del listado se sostiene solo: título,
+  empresa, ciudad y cantón salen del listado.
+- **El scope DECLARA su presupuesto de páginas**: cuatro —el listado inicial más
+  tres de scroll, las 83 ofertas medidas en vivo y unas dos veces lo que trae el
+  presupuesto dinámico del productor— contra un techo de 26. Ampliar el barrido
+  es una decisión de params con su propia validación, no un cambio de código.
+  Eso compra 87 peticiones por barrido.
+- Rarezas conservadas con su motivo: `data-nextpage` y el `nextpage` del
+  fragmento se castean SEGURO (`int("")` reventaba el barrido entero y perdía
+  los detalles ya descargados), un fallo a mitad de scroll se REPORTA (aprender
+  sólo la página inicial dejaría las de scroll sin pedir jamás) y sólo una
+  cabeza de dos letras de «CANTÓN · Ciudad · Empresa» cuenta como cantón. La
+  mejora: un `employmentType` multivaluado se renderiza en vez de perderse al
+  entrar en una columna de texto — le pasa a 3 de 83.
+- **`_SCRAPER_CLASSES` queda VACÍO**: los trece scrapers de SwissJob están
+  traspasados, sus módulos siguen como vía de rollback y el docstring del
+  registro recoge por qué medjobs, Riviera, Verbier e ISR nunca estuvieron.
+
+#### Estado tras este checkpoint
+
+- Inventario: **40 de las 42 fuentes migrables tienen `core_adapter`**. Las dos
+  sin adaptador son `proz` y `remoteco`. Siguen en el registro de providers de
+  SwissJob nueve nombres, y siete de ellos (`careerjet`, `jooble` y los cinco
+  partner restringidos) ya están `retired` con cero publicadores y cero
+  credenciales: son clases inertes que no emiten ninguna petición.
+- Validación: Core **1.952 aprobadas** y ninguna omitida (1.871 → +46 de ISP →
+  1.917 → +35 de schuljobs); backend SwissJob **1.916 aprobadas y 4 `xfail`** en
+  las cuatro tandas, los recuentos de siempre. Lint del repo completo,
+  `diff --check`, `check_no_secrets` y ratchet
+  `{"core_owned":16,"local_pending":26,"sources":58}` verdes.
+- El ratchet NO se mueve a propósito: el inventario describe PRODUCCIÓN, y
+  producción sigue cosechando en local hasta el corte agrupado aprobado.
+- **Siguiente paso exacto si hay relevo:** ya no queda ningún portal por
+  implementar. Lo que falta para cerrar DT-144 es (1) la decisión del
+  propietario sobre `proz` y `remoteco` —retirarlas con la evidencia o pagar
+  navegador stealth—, (2) comprobar la CI de ReactPortfolio, que no se puede
+  leer desde este host, y (3) el corte agrupado: provisionar y habilitar los
+  scopes, drenar y retirar los productores locales, borrar `CompositeCatalog` y
+  `FallbackCatalog`, y fusionar tras la aprobación explícita. Nada de eso se
+  hace sin el propietario.
 
 ### Registro cerrado · Forgejo no forma parte de DT-144
 

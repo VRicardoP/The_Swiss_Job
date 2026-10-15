@@ -9,8 +9,9 @@
 > está haciendo**, qué trampas ya se pisaron y qué queda, para que no haya que
 > reconstruirlo leyendo veinte checkpoints.
 >
-> Última actualización: **2026-10-15** (cuatro residuos cerrados; tes y
-> stelle_admin centralizados; 11 portales pendientes, todos de SwissJob).
+> Última actualización: **2026-10-15** — cuatro residuos cerrados y **cero
+> portales pendientes de implementar**: 40 de 42 fuentes migrables tienen
+> adaptador en rama.
 
 ---
 
@@ -26,12 +27,14 @@ fusión final aprobada por el propietario.
 
 | Repositorio | Rama de trabajo | Cabeza | `main` remoto (INTACTO) |
 |---|---|---|---|
-| SwissJob/Core (`The_Swiss_Job`) | `feat/fase-a-core` | `82c742d` | `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` |
+| SwissJob/Core (`The_Swiss_Job`) | `feat/fase-a-core` | `020469e` | `e59283b83ffc5deb0ff0bb82efffc1c04a28123b` |
 | ReactPortfolio (`ReactPortfolioServer`) | `feat/dt144-free-gate` | `5f03c68` | `5bf457afbde5b44a995acce4ef241324f066f836` |
 
 El worktree de ReactPortfolio está en `/tmp/reactportfolio-dt144-free-gate`
 (**`/tmp` es volátil**: si no existe, recrearlo con `git worktree add` desde
-`/home/lothar/Public/ReactPortfolio/backend`).
+`/home/lothar/Public/ReactPortfolio/backend`). Las capturas selladas de cada
+portal viven en el scratchpad de la sesión, que también es volátil: las huellas
+SHA-256 que las identifican están en los artefactos de `docs/audits/`.
 
 Inventario: **58 fuentes · 16 `local_removed` · 26 `local_pending` · 16
 `retired`**, y el ratchet cruzado devuelve
@@ -39,16 +42,27 @@ Inventario: **58 fuentes · 16 `local_removed` · 26 `local_pending` · 16
 producción** y por eso no se mueven al migrar en rama: una fuente migrada
 conserva `state=local_pending` con `core_adapter: true` hasta el corte agrupado.
 
-### Portales con adaptador nativo en rama
+### Ya no queda ningún portal por implementar
 
-Jobicy, RemoteOK, Himalayas, SwissTechJobs, ICTJobs, SwissDevJobs, Job-Room,
-Adzuna, JSearch, DynamiteJobs, JobScout24 (los once de ReactPortfolio) más
-myScience, gastrojob, tes y stelle_admin (los cuatro primeros de SwissJob).
+**40 de las 42 fuentes migrables tienen adaptador nativo en rama.** El registro
+de scrapers de SwissJob (`_SCRAPER_CLASSES`) está VACÍO y el de providers
+conserva nueve nombres, siete de ellos ya `retired` con cero publicadores y cero
+credenciales (clases inertes que no emiten ninguna petición).
 
-### Faltan 11, todos de SwissJob
+Las dos que faltan, y por qué: `proz` y `remoteco` **no son implementables con
+un cliente conforme desde este host** (403 con challenge de Cloudflare y un
+servidor que completa TLS y nunca responde). Esperan decisión del propietario:
+retirarlas con la evidencia o pagar un navegador stealth. Ver §6.
 
-Los ocho `swiss_schools_*`, `schuljobs`, y `proz` y `remoteco` a la espera de
-decisión del propietario. Sus condiciones particulares están en §6.
+### Lo que falta para cerrar DT-144 (nada de ello se hace sin el propietario)
+
+1. La decisión sobre `proz` y `remoteco`.
+2. Comprobar la CI de ReactPortfolio, que **no se puede leer desde este host**
+   (repositorio privado, sin token): los runs de `04a020d`, `ffcc0ba` y
+   `5f03c68`.
+3. El corte agrupado: provisionar y habilitar los scopes, drenar y retirar los
+   productores locales, **borrar `CompositeCatalog` y `FallbackCatalog`** (son
+   la vía de rollback hasta entonces) y fusionar tras la aprobación explícita.
 
 ## 3. Cómo se migra un portal (receta ya rodada)
 
@@ -150,6 +164,15 @@ min: son los últimos en cerrar.
   descarta cierres huérfanos y excluye `script`/`style`/`template`/`noscript`.
   Existe porque un parser que suponía etiquetas balanceadas **cortó una
   descripción real siete párrafos antes del final**.
+- **En una watchlist, un barrido vacío es el estado NORMAL.** Los adaptadores de
+  portales de empleo LANZAN cuando no encuentran nada, porque ahí significa
+  parser roto. Los ocho colegios hacen lo contrario: bajan la página, la
+  RECONOCEN por su título (y por el marcador de vacío donde el portal lo tiene)
+  y sólo entonces reportan cero como sano. Si escribes una fuente de este tipo,
+  no copies el `raise`.
+- **`0 == 0` no prueba un parser.** Tres de los cinco tableros escolares están
+  vacíos hoy, así que se compararon contra el parser legado sobre fixtures
+  construidos con la estructura que sus propios selectores declaran.
 - **Un SPA no obliga a un navegador.** `jobs.admin.ch` parecía exigir Playwright
   y resultó ser un React sobre una API JSON pública que su propio bundle
   declara. Antes de dar por necesario un navegador: bajar el cascarón, leer el
@@ -168,34 +191,24 @@ min: son los últimos en cerrar.
 - **Un barrido que no devuelve nada falla.** El productor conservaba su caché
   anterior en ese caso; Core, en silencio, archivaría un corpus vivo.
 
-## 6. Los 13 que faltan, con su condición real
+## 6. Las dos que faltan, y por qué no son código
 
-| Fuente | Estado MEDIDO el 2026-10-15 | Nota para quien la coja |
+| Fuente | Estado MEDIDO el 2026-10-15 | Decisión pendiente |
 |---|---|---|
-| `swiss_schools_hautlac` | 1 oferta en el tablero | **empezar por aquí**: con ISCS son los dos únicos con paridad medible hoy |
-| `swiss_schools_iscs` | 2 ofertas | ídem |
-| `swiss_schools_zis`, `_isb`, `_ecolint`, `_inspired`, `_nae` | **tablero vacío, página 200** | el cero es el estado NORMAL de una watchlist: hace falta el «vacío verificado» (marcador estructural por tablero), no un `raise` |
-| `swiss_schools_inspired`, `_nae` | además, varios colegios por fuente | cada uno con su URL de carreras y filtro por nombre sobre un ATS de terceros; un bloqueo NO debe reportarse N veces |
-| `swiss_schools_isp` | no usa la base compartida | 467 líneas con su propio `normalize` (Workday) y URL dinámica |
-| `schuljobs` | último intento sin desenlace, cursor sin bootstrap completo | resolver paridad antes de migrar |
-| `proz` | **403 con challenge de Cloudflare** en feed Y portada; 46 errores seguidos, ninguna cosecha jamás | NO implementable con cliente conforme; decisión del propietario: retirar o pagar navegador stealth |
-| `remoteco` | **TCP y TLS completan, el servidor NO responde nunca**; 54 errores seguidos, ninguna cosecha jamás | ídem |
+| `proz` | **403 con challenge de Cloudflare** en feed Y portada; 46 errores seguidos, ninguna cosecha jamás | retirar con la evidencia, o pagar navegador stealth (`SCRAPER_BROWSER_CDP_URL`) |
+| `remoteco` | **TCP conecta, TLS completa, el servidor NO responde nunca**; 54 errores seguidos, ninguna cosecha jamás | ídem |
 
-Evidencia medida de los tres casos:
-[preflight de colegios](../audits/2026-10-15-dt144-swiss-schools-preflight.json)
-y [sonda de proz/remoteco](../audits/2026-10-15-dt144-proz-remoteco-probe.json).
+Migrarlas sin resolver eso sería inverificable por construcción: la metodología
+exige línea base viva y paridad campo a campo, y ninguna de las dos ha producido
+nunca una cosecha contra la que medir. Evidencia:
+[sonda de proz/remoteco](../audits/2026-10-15-dt144-proz-remoteco-probe.json).
 
-**La regla que los colegios invierten:** los cinco adaptadores escritos hasta
-ahora LANZAN cuando un barrido no encuentra nada, porque en un portal de empleo
-eso significa parser roto. En una watchlist significa lo normal. Para los
-colegios hay que bajar la estructura, RECONOCERLA y sólo entonces reportar cero
-como sano.
-
-Los ocho `swiss_schools_*` tienen además una particularidad: **hoy publican
-observaciones al núcleo** por `POST /v1/schools/{monitor_id}/jobs`. El núcleo ya
-es dueño del corpus escolar, su ciclo de vida, el feedback y las candidaturas;
-lo que NO es dueño es de la captura, que la hacen esos ocho scrapers. Eso es lo
-que incumple los invariantes 1 y 5 del contrato y por eso cuentan como pendientes.
+Los ocho `swiss_schools_*` ya tienen adaptador. Nota para quien opere el corte:
+**hoy publican observaciones al núcleo** por `POST /v1/schools/{monitor_id}/jobs`.
+El núcleo ya era dueño del corpus escolar, su ciclo de vida, el feedback y las
+candidaturas; lo que no era dueño es de la CAPTURA. Al habilitar sus scopes, la
+captura pasa a Core y ese empuje desde SwissJob debe apagarse en el mismo corte,
+o el corpus escolar recibiría las mismas ofertas por dos caminos.
 
 ## 7. Trampas ya pisadas (no repetirlas)
 
