@@ -103,7 +103,9 @@ async def main() -> int:
         if _module_exists(module)
     )
     portal_credentials_present = sorted(PORTAL_CREDENTIAL_NAMES & os.environ.keys())
-    forbidden_distributions_present = sorted(filter(_installed, FORBIDDEN_DISTRIBUTIONS))
+    forbidden_distributions_present = sorted(
+        filter(_installed, FORBIDDEN_DISTRIBUTIONS)
+    )
     async with AsyncSessionLocal() as session:
         modes = await read_all_modes_fresh(session, sorted(EXPECTED_CAPABILITIES))
 
