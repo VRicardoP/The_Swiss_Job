@@ -212,6 +212,12 @@ continuar sin rediseñarlo.
 - El scope JSearch permanece habilitado con dos fallos consecutivos y no ha
   alcanzado el kill-switch. Este ciclo **no satisface** el gate 50/50 y no se
   despliegan aún los consumidores.
+- Una comparación posterior dentro del NAS, limitada a presencia e igualdad y
+  sin exponer valores ni huellas, confirmó que Core y `portfolio_backend` usan
+  la **misma** credencial JSearch; `portfolio_worker` no contiene otra. No hay
+  una segunda cuota productiva ya disponible. Esperar el reset sigue siendo la
+  única acción autónoma segura, salvo que el propietario facilite otra
+  credencial válida y gratuita.
 - Reanudación exacta: al restablecerse la cuota —o con otra credencial válida
   sin coste— reejecutar sólo el scope JSearch usando su misma clave de ventana.
   Si queda `ok`, el primer ciclo será 50/50 y continúa el orden ya documentado:
