@@ -307,6 +307,7 @@ SOURCES_DECIDED_IN_ADVANCE: frozenset[str] = frozenset(
         "swiss_schools_iscs",
         "swiss_schools_nae",
         "swiss_schools_inspired",
+        "swiss_schools_isp",
         "adzuna",
         "jsearch",
         "undpjobs",

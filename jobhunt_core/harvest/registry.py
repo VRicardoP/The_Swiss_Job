@@ -45,6 +45,7 @@ def _altas_exact_match() -> dict:
     from jobhunt_core.harvest.providers import native_tes
     from jobhunt_core.harvest.providers import native_stelle_admin
     from jobhunt_core.harvest.providers import native_swiss_schools
+    from jobhunt_core.harvest.providers import native_isp_workday
 
     return {
         arbeitnow.SOURCE_NAME: arbeitnow.register_handlers,
@@ -68,9 +69,10 @@ def _altas_exact_match() -> dict:
         native_tes.SOURCE_NAME: native_tes.register_handlers,
         native_stelle_admin.SOURCE_NAME: native_stelle_admin.register_handlers,
         **{
-            board.source: native_swiss_schools.register_handlers
-            for board in native_swiss_schools.BOARDS
+            source: native_swiss_schools.register_handlers
+            for source in native_swiss_schools.boards_by_source()
         },
+        native_isp_workday.SOURCE_NAME: native_isp_workday.register_handlers,
     }
 
 

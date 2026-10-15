@@ -30,6 +30,7 @@ from jobhunt_core.harvest.providers.native_stelle_admin import StelleAdminProvid
 from jobhunt_core.harvest.providers.native_swiss_schools import (
     providers as swiss_school_providers,
 )
+from jobhunt_core.harvest.providers.native_isp_workday import ISPWorkdayProvider
 
 _PROVIDERS: dict[str, BaseProvider] = {
     ArbeitnowProvider.name: ArbeitnowProvider(),
@@ -53,6 +54,7 @@ _PROVIDERS: dict[str, BaseProvider] = {
     TESProvider.name: TESProvider(),
     StelleAdminProvider.name: StelleAdminProvider(),
     **{provider.name: provider for provider in swiss_school_providers()},
+    ISPWorkdayProvider.name: ISPWorkdayProvider(),
 }
 
 
