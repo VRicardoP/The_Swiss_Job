@@ -76,6 +76,16 @@ del volumen de otra forma. Producción no cambió. La corrección estrecha vive 
 `fix/dt144-live-compose-format`; después de CI/fusión se reintenta desde el
 nuevo SHA exacto de `main`.
 
+Tras desplegar SwissJob `ae3cb02` y Portfolio `c47b7a3`, Core y Portfolio
+pasan sus sondas finales. SwissJob falla sólo porque el contexto Docker copió
+`backend/providers/__pycache__`: registros, credenciales, dependencias y los
+módulos fuente sí están ausentes. La causa comprobada es que `.dockerignore`
+excluía bytecode sólo en primer nivel. La exclusión recursiva elimina los
+ficheros, pero Docker conserva el directorio padre vacío y Python lo reconoce
+como paquete namespace; `fix/dt144-docker-context` excluye también
+`providers/`. El ratchet exige las tres reglas. Producción sigue funcional;
+para cerrar hay que fusionar, redesplegar BFF/worker y repetir las tres sondas.
+
 1. No repetir el inventario ni la Fase 0: las 58 fuentes están verificadas y
    los ratchets están activos. GitHub Free es el único forge autorizado; no
    desplegar ni volver a proponer Forgejo, GitLab, Bitbucket o GitHub Pro.

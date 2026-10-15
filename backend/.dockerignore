@@ -5,6 +5,9 @@ tests_live/
 .ruff_cache/
 __pycache__/
 *.pyc
+**/__pycache__/
+**/*.pyc
+providers/
 .env
 .env.*
 !.env.prod.example

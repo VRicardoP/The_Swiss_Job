@@ -353,6 +353,16 @@ def validate(manifest: dict, portfolio_root: Path | None) -> list[str]:
         errors.append(
             f"retired SwissJob harvest dependencies present: {retired_dependencies}"
         )
+    dockerignore = (ROOT / "backend/.dockerignore").read_text(encoding="utf-8")
+    missing_recursive_ignores = sorted(
+        {"**/__pycache__/", "**/*.pyc", "providers/"}
+        - set(dockerignore.splitlines())
+    )
+    if missing_recursive_ignores:
+        errors.append(
+            "backend Docker context admits nested Python bytecode: "
+            f"{missing_recursive_ignores}"
+        )
     for relative_path in SWISSJOB_RUNTIME_FILES:
         contents = (ROOT / relative_path).read_text(encoding="utf-8").lower()
         markers = sorted(
