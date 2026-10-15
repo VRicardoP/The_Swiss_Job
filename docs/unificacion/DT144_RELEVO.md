@@ -9,11 +9,12 @@
 > ha hecho, cómo, en qué estado está respecto al objetivo final y qué queda**,
 > para que no haya que reconstruirlo leyendo veinte checkpoints.
 >
-> Última actualización: **2026-10-15**. Fase de implementación TERMINADA: las
-> 40 fuentes operativas tienen adaptador nativo en rama. El propietario aprobó
-> la retirada definitiva de `proz` y `remoteco`; ya no están en el registro
-> ejecutable de SwissJob. **Nada está cortado en producción** y los dos `main`
-> siguen intactos.
+> Última actualización: **2026-10-15, corte en curso**. Las dos ramas iniciales
+> ya están fusionadas y Core `239a737` está desplegado. Los 33 scopes DT-144
+> están habilitados, SwissJob local está detenido y Portfolio local está
+> verificablemente quiescente. El primer ciclo se pausó al descubrir una fuga
+> de credenciales en el INFO de `httpx`; el worker de cosecha Core permanece
+> detenido hasta desplegar la corrección descrita en §0.1.
 
 ---
 
@@ -30,6 +31,50 @@
 9. Trampas ya pisadas
 10. Lo que queda: el corte agrupado (propietario)
 11. Mapa de ficheros
+
+---
+
+## 0.1 Checkpoint vivo del corte (2026-10-15 09:30 UTC)
+
+Este bloque **prevalece sobre las fotografías anteriores de este documento**
+hasta el siguiente checkpoint:
+
+- Fusiones verificadas: `ReactPortfolioServer/main` = `8b38ddd5aefb36ca4e07d1ffceded93a04ba593b`
+  (CI `38706379993`, verde) y `The_Swiss_Job/main` =
+  `239a73754b63924894ab2a7cc7d127c4809ac692` (CI `38708626741`, verde).
+- Core productivo: cuatro contenedores en `swissjob-core:point5-239a737`,
+  `/v1/ready` publica `ready`, `authoritative=true`, Alembic `core0055`.
+  El directorio de despliegue y Compose independiente, que habían desaparecido,
+  se reconstruyeron desde manifiestos saneados; el supervisor QTS se restauró y
+  volvió a estado `ok`.
+- La primera ejecución del despliegue falló cerrada antes de recrear: `grep -v`
+  devolvía 1 cuando `.env.core.admin.prod` contenía legítimamente una sola línea.
+  La corrección pendiente sustituye esas dos eliminaciones por `sed`. Además,
+  `CORE_DB_PASSWORD` del fichero recuperado no coincidía con el DSN vivo: se
+  sincronizó atómicamente sin imprimirlo; el bootstrap convergente verificó rol,
+  aislamiento, `pgvector` y aplicó `core0055`.
+- Provisión exacta: base productiva con 71 fuentes y 79 scopes; 40 fuentes y 50
+  scopes habilitados. Los 24 orígenes DT-144 existen con exactamente 33 scopes
+  (Adzuna 3, Jobicy 8, los otros 22 uno cada uno).
+- Productores locales: `swissjob-worker` está detenido. `portfolio_worker` no se
+  detuvo porque también ejecuta Uvicorn: se recreó con la misma imagen y
+  `BACKGROUND_SCHEDULERS_ENABLED=false`; su log de arranque confirma «0
+  background tasks armed». El backend Portfolio sigue en rol `api`.
+- Primer ciclo: clave `dt144-cutover-1`, run
+  `ec3e6041-463a-5d89-987e-506aaa5a2940`, tarea Celery `c50b3cfe-7a2a-4d84-9848-ea2cbf7f75f1`.
+  Cerró 2 scopes `ok` y fue interrumpido durante JobScout24 porque el logger INFO
+  de `httpx` publicó la URL completa de Adzuna con sus parámetros de
+  autenticación. **No copiar esos valores desde logs.** `swissjob-core-harvest-worker-r5`
+  está detenido; este ciclo parcial no cuenta como validación.
+- Corrección en el árbol, todavía sin publicar: `jobhunt_core/celery_app.py`
+  fuerza `httpx`/`httpcore` a WARNING al importar y tras las dos señales de
+  logging de Celery; regresión focal 23/23 y Ruff/formato verdes. También está
+  corregido `scripts/deploy_nas.sh` para el caso de env administrativo mínimo.
+- Punto exacto de reanudación: versionar únicamente esos ficheros y este
+  checkpoint, push/PR/CI/fusión normal; desplegar Core de nuevo; comprobar que
+  el contenedor anterior (y su log sensible) desaparece; relanzar la **misma**
+  clave `dt144-cutover-1` cuando el lease de 900 s haya vencido; exigir 50
+  cierres sin fallo. No arrancar aún SwissJob local ni rearmar Portfolio.
 
 ---
 

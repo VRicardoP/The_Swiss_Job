@@ -6,10 +6,31 @@ namespace de colas. Aunque un worker legacy apuntara por error al broker del
 core, ninguna cola coincide.
 """
 
+import logging
+
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import after_setup_logger, after_setup_task_logger
 
 from jobhunt_core.config import settings
+
+
+def protect_http_logs(*_args, **_kwargs) -> None:
+    """Never log complete outbound URLs from HTTP clients at request volume.
+
+    Adzuna authenticates through query parameters, so httpx's INFO request log
+    would disclose its credentials.  Providers already record their own
+    credential-free outcome; the library-level URL adds noise and secret risk.
+    """
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
+# Import-time covers eager/unit execution.  Celery may rebuild its handlers and
+# levels during worker startup, so re-apply after both logger setup signals.
+protect_http_logs()
+after_setup_logger.connect(protect_http_logs, weak=False)
+after_setup_task_logger.connect(protect_http_logs, weak=False)
 
 celery_app = Celery(
     "jobhunt_core",
