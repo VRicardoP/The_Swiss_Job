@@ -94,12 +94,19 @@ hasta el siguiente checkpoint:
   autenticado de Core, sin tabla de compliance ni registry local. Formato y
   Ruff pasan; prueba focal en Compose: 10/10.
 - ReactPortfolio ya tiene una corrección reproducible en
-  `feat/dt144-consumer-cutover` (`bf91254`, PR 2): el próximo despliegue fija
+  `feat/dt144-consumer-cutover` (`bf91254` + `0c2c9a6`, PR 2): el próximo despliegue fija
   `BACKGROUND_SCHEDULERS_ENABLED=true` para recuperar mantenimiento, alertas,
   digest y enriquecimiento, pero fuerza
   `SCHEDULER_DAILY_HARVEST_ENABLED=false` y conserva las veinte fuentes en
   `LEGACY_DISABLED_SOURCES`. Así se retira el quiesce global sin reactivar un
-  portal. Prueba focal 42/42, `bash -n` y despliegue seco correctos.
+  portal. Además elimina del Compose vivo `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` y
+  `JSEARCH_RAPIDAPI_KEY`. Prueba focal 43/43, `bash -n` y despliegue seco
+  correctos.
+- SwissJob `3af3dc6` prepara el mismo invariante: antes de recrear BFF/worker,
+  el despliegue guarda una copia de recuperación, elimina del `.env.prod` los
+  diez nombres de credenciales de portales conocidos, verifica su ausencia y
+  borra la copia sólo después de la sonda saludable. No imprime nombres con
+  valores ni toca las credenciales `CORE_*` del colector central.
 - Punto exacto de reanudación: no contar este ciclo como superado hasta obtener
   50/50 `ok`. Cuando la cuota esté disponible —o se aporte otra credencial
   válida sin coste— reejecutar **sólo JSearch** con la misma clave determinista

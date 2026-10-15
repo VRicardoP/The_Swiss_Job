@@ -222,15 +222,22 @@ continuar sin rediseñarlo.
   `BACKGROUND_SCHEDULERS_ENABLED=false`, que detiene también purgas, alertas,
   digest y enriquecimiento. Mantenerlo tras el corte empeoraría funciones y
   permitiría crecer sin cota tres tablas; no es un estado final válido.
-- ReactPortfolio `bf91254` (rama `feat/dt144-consumer-cutover`, PR 2) incorpora
+- ReactPortfolio `bf91254` + `0c2c9a6` (rama
+  `feat/dt144-consumer-cutover`, PR 2) incorpora
   al manifiesto y a la política convergente de despliegue dos valores en ambos
   procesos: `BACKGROUND_SCHEDULERS_ENABLED=true` y
   `SCHEDULER_DAILY_HARVEST_ENABLED=false`. Las veinte fuentes siguen en
   `LEGACY_DISABLED_SOURCES` y los registros de caché/actualizadores están
-  vacíos, por lo que no reaparece tráfico de portal.
-- Evidencia: `tests/test_source_handover_quiesce.py` 42 passed, `bash -n` verde
-  y `scripts/deploy_nas.sh --dry-run` correcto. La política no se despliega
-  antes de que JSearch complete el primer gate 50/50.
+  vacíos, por lo que no reaparece tráfico de portal. El mismo transformador
+  elimina del Compose vivo las tres variables locales de Adzuna/JSearch.
+- SwissJob `3af3dc6` elimina de `.env.prod` los diez nombres de credenciales de
+  providers locales antes de recrear BFF/worker. Conserva una copia sólo
+  durante la maniobra, verifica los nombres sin mostrar valores y la destruye
+  tras la sonda saludable; los secretos `CORE_*` viven en el env aislado del
+  núcleo y no se tocan.
+- Evidencia: `tests/test_source_handover_quiesce.py` 43 passed; `bash -n` y los
+  modos secos de Portfolio, BFF y worker son correctos. La política no se
+  despliega antes de que JSearch complete el primer gate 50/50.
 
 ### Checkpoint 2026-10-14 · Fase -1 parcialmente completada
 
