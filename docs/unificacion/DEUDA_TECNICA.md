@@ -163,6 +163,12 @@ continuar sin rediseñarlo.
   colector. Validación: `bash -n`, `py_compile`, Ruff, búsqueda nominal y
   ratchet verdes; el manifiesto sólo cambia las siete banderas de registro y
   mantiene honestamente `16` Core-owned/`24` local-pending hasta el borrado.
+- La única rotura de colección de CI era el import histórico de
+  `_PROVIDER_CLASSES`; se mantiene como diccionario vacío de compatibilidad,
+  sin capacidad de construir providers. La colección completa descubre 2.068
+  pruebas sin errores y la corrección está publicada en `66b3e6a`. El segundo
+  ciclo avanzó: Arbeitnow, Jobroom y TES terminaron `ok`; hay al menos 27
+  scopes terminales y JSearch no fue despachado.
 - Punto exacto y metodología de relevo: ver
   `DT144_RELEVO.md` §0.1, checkpoint «despliegue de consumidores y limpieza
   final en curso». Los worktrees y ramas están allí fijados; ningún cambio de

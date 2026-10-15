@@ -289,6 +289,14 @@ hasta el siguiente checkpoint:
   marca ya como falsas las siete banderas de registro retiradas y el ratchet
   vuelve a verde (`16` Core-owned, `24` local-pending); esas cifras no se
   elevarán artificialmente hasta el borrado físico y el gate final.
+- La primera CI de código detectó una única rotura de colección: una prueba
+  histórica importaba `_PROVIDER_CLASSES`. Se conservó ese símbolo como
+  diccionario vacío, que no registra ni construye proveedores. La colección
+  local completa vuelve a pasar con 2.068 pruebas descubiertas y el ratchet
+  sigue verde. La corrección está publicada en `66b3e6a`; su CI reemplaza a
+  los runs anteriores. En Core, Arbeitnow cerró `ok` en 1.489,6 s con 11.350
+  ofertas; después Jobroom y TES cerraron `ok`, dejando al menos 27 scopes
+  terminales sin ejecutar JSearch.
 - Checkpoint `2026-10-15T19:14+02:00`: el PR 13 de relevo quedó completamente
   verde. Su único fallo inicial, `docker-build`, fue un `BrokenPipeError`
   descargando el wheel de PyTorch; se reintentó sólo ese job sobre el mismo SHA
