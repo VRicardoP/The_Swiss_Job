@@ -117,6 +117,10 @@ continuar sin rediseñarlo.
 - Siguiente puerta: pruebas estrechas y ratchets, commit/push y CI verde antes
   de fusionar. Los módulos físicos se borran con todo el legado después de que
   Core esté desplegado y sus scopes hayan completado ciclos correctos.
+- Primera CI del corte (`38703963650`): Core y otros siete trabajos verdes;
+  backend detectó correctamente dos políticas huérfanas de `proz`/`remoteco`.
+  Se eliminan de `_POLICIES` porque una fuente retirada no es una fuente viva ni
+  una pre-decisión de cosecha. Repetir CI antes de fusionar.
 
 ### Checkpoint 2026-10-14 · Fase -1 parcialmente completada
 
