@@ -91,7 +91,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: swissjob-worker
-    command: celery -A celery_app worker -l info -Q default,scraping --concurrency=4 -P prefork
+    command: celery -A celery_app worker -l info -Q default --concurrency=4 -P prefork
     # Recuperación NO-GO 2026-07-28 (DECISIÓN DELEGADA del propietario):
     # un fallo DNS transitorio ("Temporary failure in name resolution" hacia
     # redis) tumbó este worker y quedó 7 días caído por no tener política de
@@ -108,8 +108,7 @@ services:
         condition: service_healthy
 
   worker-ai:
-    # Worker DEDICADO a la cola "ai": carga el modelo de embeddings UNA vez
-    # (concurrency=1). El worker general ya no escucha "ai" (PF.4).
+    # Worker dedicado al análisis de CV mediante servicios LLM (concurrency=1).
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -124,7 +123,6 @@ services:
     env_file:
       - .env
     environment:
-      # Sin reciclado del hijo prefork → NO recarga el modelo de embeddings (rev.3 #2).
       - CELERY_MAX_TASKS_PER_CHILD=0
     depends_on:
       postgres:
@@ -250,7 +248,7 @@ services:
         RELEASE_SHA: ${RELEASE_SHA:-unknown}
     image: swissjob-core:dev
     container_name: swissjob-core-worker
-    # SOLO colas core.* — el worker legacy escucha default/scraping/ai en OTRO broker.
+    # SOLO colas core.* — el worker de producto escucha default/ai en OTRO broker.
     # Beat EMBEBIDO (-B) en el worker (B-05, decisión del propietario 2026-07-25):
     # el beat lanzado con `exec -d ... beat` moría EN SILENCIO con cada `up -d`
     # (recreate) y con él la única alerta de retención WAL de la BD compartida

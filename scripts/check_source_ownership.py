@@ -86,6 +86,26 @@ FORBIDDEN_SWISSJOB_PATHS = {
     "backend/utils/http.py",
 }
 FORBIDDEN_SWISSJOB_DEPENDENCIES = {"beautifulsoup4", "playwright"}
+SWISSJOB_RUNTIME_FILES = (
+    "backend/Dockerfile",
+    "backend/Dockerfile.prod",
+    "docker-compose.yml",
+    "docker-compose.prod.yml",
+    "docker-compose.qnap.yml",
+    "docker-compose.rehearsal.qnap.yml",
+    "deploy/nas/containerstation-swissjob.yml",
+    "deploy/nas/rehearsal-r5.yml",
+    "deploy/nas/swissjob.configured.yml",
+)
+FORBIDDEN_SWISSJOB_RUNTIME_MARKERS = (
+    "install_browsers",
+    "playwright_browsers_path",
+    "playwright install",
+    "/home/app/.cache/huggingface",
+    "swissjob_hfcache",
+    "default,scraping",
+    "tasks.fetch_providers",
+)
 
 
 def _literal_assignments(path: Path, names: set[str]) -> list[object]:
@@ -333,12 +353,17 @@ def validate(manifest: dict, portfolio_root: Path | None) -> list[str]:
         errors.append(
             f"retired SwissJob harvest dependencies present: {retired_dependencies}"
         )
-    dockerfile = (ROOT / "backend/Dockerfile").read_text(encoding="utf-8").lower()
-    if "playwright install" in dockerfile:
-        errors.append("retired Playwright browser installation present")
-    compose = (ROOT / "deploy/nas/swissjob.configured.yml").read_text(encoding="utf-8")
-    if "PLAYWRIGHT_BROWSERS_PATH" in compose:
-        errors.append("retired Playwright browser environment present")
+    for relative_path in SWISSJOB_RUNTIME_FILES:
+        contents = (ROOT / relative_path).read_text(encoding="utf-8").lower()
+        markers = sorted(
+            marker
+            for marker in FORBIDDEN_SWISSJOB_RUNTIME_MARKERS
+            if marker in contents
+        )
+        if markers:
+            errors.append(
+                f"retired SwissJob runtime markers in {relative_path}: {markers}"
+            )
 
     if portfolio_root is not None:
         expected_portfolio = {

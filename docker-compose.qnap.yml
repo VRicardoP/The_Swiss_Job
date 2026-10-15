@@ -61,40 +61,17 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      # Cache de HuggingFace persistente — evita re-descargar el modelo
-      # paraphrase-multilingual-MiniLM-L12-v2 (~120 MB) en cada Recreate.
-      - hfcache:/home/app/.cache/huggingface
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
       interval: 30s
       timeout: 5s
-      # start_period generoso: el primer arranque carga el modelo embedding
-      # (~120 MB) en CPU del NAS, ~4-5 min. Después del primer arranque el
-      # modelo queda en el volumen hfcache y el siguiente Recreate es <60s.
       start_period: 360s
       retries: 5
     networks:
       - swissjob-net
 
   worker:
-    # Worker ÚNICO: consume default + scraping + ai. Alineado con lo REALMENTE
-    # desplegado en el NAS (verificado 2026-08-06); la separación worker/worker-ai
-    # del repo nunca llegó a desplegarse y su imagen swissjob-worker:prod no existe
-    # ni en el NAS ni en dev → un `up` con ella daba "pull access denied".
-    #
-    # ⚠ ACOPLE: este servicio ejecuta los scrapers Playwright, así que
-    # swissjob-backend:prod DEBE construirse CON Chromium (INSTALL_BROWSERS=true).
-    # La imagen cargada hoy en el NAS lo lleva (/ms-playwright/chromium-1228,
-    # verificado lanzando Chromium 149). Pero docker-compose.prod.yml:84 construye
-    # el backend con INSTALL_BROWSERS=false: si se rebuildea el backend desde ahí y
-    # se carga en el NAS, el worker pierde Chromium y TODO scraper Playwright
-    # (jobs.admin.ch, medjobs...) falla. Rebuild del backend ⇒ INSTALL_BROWSERS=true,
-    # o restaurar la separación worker/worker-ai construyendo swissjob-worker:prod.
-    #
-    # ⚠ DEUDA PF.4: con concurrency=2 sobre la cola "ai" pueden coexistir 2 copias
-    # del modelo de embeddings (~400MB c/u). La separación worker-ai existía para
-    # dejarlo en 1 sola carga. Al alinear con lo desplegado, esa mejora queda fuera.
+    # Worker único de producto: consume tareas generales y análisis de CV.
     image: swissjob-backend:prod
     container_name: swissjob-worker
     restart: unless-stopped
@@ -103,8 +80,6 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-    volumes:
-      - hfcache:/home/app/.cache/huggingface
     entrypoint: []
     command:
       - celery
@@ -112,7 +87,7 @@ services:
       - celery_app
       - worker
       - -Q
-      - default,scraping,ai
+      - default,ai
       - --concurrency=2
       - --loglevel=info
     networks:
@@ -212,7 +187,7 @@ services:
     image: swissjob-core:prod
     container_name: swissjob-core-worker
     restart: unless-stopped
-    # SOLO colas core.* — el worker legacy escucha default/scraping/ai en OTRO broker.
+    # SOLO colas core.* — el worker de producto escucha default/ai en OTRO broker.
     # Beat EMBEBIDO (-B, B-05, alineado con dev): las cadencias de la sombra
     # (proyección/salud del slot/muestreo outbox/despacho cada 5 min +
     # run_cycle 06:05 Europe/Zurich) rearrancan con cada Recreate — un beat
@@ -273,8 +248,6 @@ volumes:
   pgdata:
     driver: local
   redisdata:
-    driver: local
-  hfcache:
     driver: local
   redis_core_data:
     driver: local

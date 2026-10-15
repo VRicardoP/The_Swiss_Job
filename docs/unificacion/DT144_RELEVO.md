@@ -9,12 +9,13 @@
 > ha hecho, cómo, en qué estado está respecto al objetivo final y qué queda**,
 > para que no haya que reconstruirlo leyendo veinte checkpoints.
 >
-> Última actualización: **2026-10-15, limpieza final publicada**. Core `5b3bf3d`
-> está desplegado y el segundo ciclo terminó con **49/49 scopes ejecutables
-> `ok`**, delivery drenado y cero filas de JSearch. Las retiradas físicas de
-> SwissJob y ReactPortfolio están publicadas en sus PR finales; ReactPortfolio
-> tiene CI verde y SwissJob está verificando en CI el ajuste Alembic descrito en
-> §0.1. JSearch continúa deshabilitado y no se ha reintentado.
+> Última actualización: **2026-10-15, corrección final de runtime validada en
+> local**. Core `5b3bf3d` está desplegado y su sonda final pasa; las retiradas
+> físicas ya están fusionadas en ambos `main`. El despliegue de los consumidores
+> aún no ha empezado: se detuvo antes de transferir ninguna imagen al NAS al
+> detectar un residuo de Chromium en el Dockerfile de SwissJob. La corrección
+> está preparada y probada en `fix/dt144-runtime-residue`; JSearch continúa
+> deshabilitado y no se ha reintentado.
 
 ---
 
@@ -39,7 +40,48 @@
 Este bloque **prevalece sobre las fotografías anteriores de este documento**
 hasta el siguiente checkpoint:
 
-### Checkpoint más reciente · retiradas físicas publicadas y verificadas
+### Checkpoint más reciente · fusiones terminadas, producción sin tocar
+
+- **Fusiones:** ReactPortfolio PR 4 está en `main` como `c47b7a3` y su CI de
+  `main` `38794582363` terminó verde. SwissJob PR 13 está en `main` como
+  `f50c0f1` y su CI de `main` `38794769320` terminó con sus nueve trabajos
+  verdes. El árbol `jobhunt_core` es idéntico entre el Core productivo
+  `5b3bf3d` y `f50c0f1`, por lo que no se reconstruyó ni recreó el Core.
+- **Sonda Core previa al consumidor:** `ready`, autoritativo, Alembic
+  `core0055`, release `5b3bf3d`; 49/49 scopes habilitados observados, cero
+  alertas, staging y delivery drenados. JSearch es exactamente el único scope
+  manualmente deshabilitado, sin `disabled_by_blocks_at` y sin ejecución desde
+  la dispensa. No hubo petición ni reintento a JSearch.
+- **Despliegue detenido de forma segura:** el primer `deploy_nas.sh bff` llegó
+  a construir la imagen local, pero se interrumpió antes de `docker save`, SCP,
+  sustitución del Compose o recreación. No se transfirió ni cambió nada en el
+  NAS. La inspección reveló que `backend/Dockerfile.prod` todavía podía instalar
+  Chromium aunque `playwright` ya no era dependencia.
+- **Corrección preparada:** rama SwissJob `fix/dt144-runtime-residue`, base
+  `f50c0f1`. Elimina instalación/args/entorno de Playwright, cola `scraping`,
+  montajes y definiciones `hfcache` del BFF y manifiestos alternativos, y el
+  disparador de cosecha del rehearsal. Conserva la cola `ai`: se comprobó su
+  consumidor real `tasks.ai.analyze_cv_and_autofill` desde la subida de CV. El
+  volumen existente no se borra; el despliegue sólo deja de montarlo.
+- **No regresión:** `check_source_ownership.py` inspecciona ahora ambos
+  Dockerfiles y siete manifiestos ejecutables para impedir que reaparezcan
+  Chromium, la caché del matcher, la cola `scraping` o
+  `tasks.fetch_providers`. Resultado: `40 core_owned / 0 local_pending / 58
+  total`; Ruff, `py_compile`, `bash -n`, `git diff --check` y carga de los siete
+  YAML pasan. La imagen de producción se construyó y confirmó usuario `app`,
+  sin módulos `playwright`/`sentence_transformers` ni `/ms-playwright`. Suite
+  BFF completa en el entorno PostgreSQL/Redis local real:
+  **783 passed, 4 warnings**. Dos intentos previos fallaron sólo por heredar los
+  hosts/credenciales de ejemplo; los 25 casos que dependían de Redis pasaron
+  25/25 al autenticar el entorno, antes de repetir la suite completa.
+- **Punto exacto de reanudación:** commit y push de esta rama, PR, CI verde y
+  fusión; actualizar este worktree al nuevo SHA exacto de `github/main`;
+  desplegar SwissJob BFF y worker, después ReactPortfolio `c47b7a3`; ejecutar
+  las sondas finales Core/SwissJob/Portfolio, verificar imágenes, colas,
+  ausencia de módulos/dependencias/credenciales/montajes locales y cerrar
+  DT-144. No desplegar desde la rama ni ejecutar JSearch.
+
+### Checkpoint anterior · retiradas físicas publicadas y verificadas
 
 - **SwissJob:** `7441e0e` retiró exactamente 60 módulos locales, 58 ficheros de
   pruebas exclusivamente locales y las dependencias/configuración obsoletas;

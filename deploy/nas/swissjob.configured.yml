@@ -69,11 +69,6 @@ services:
         aliases:
         - swissjob-backend
         - backend
-    volumes:
-    - type: volume
-      source: swissjob_hfcache
-      target: /home/app/.cache/huggingface
-      read_only: false
     shm_size: 67108864
     healthcheck:
       test:
@@ -134,7 +129,7 @@ services:
     - celery_app
     - worker
     - -Q
-    - default,scraping,ai
+    - default,ai
     - --concurrency=2
     - --loglevel=info
     working_dir: /app
@@ -144,11 +139,6 @@ services:
         aliases:
         - swissjob-worker
         - worker
-    volumes:
-    - type: volume
-      source: swissjob_hfcache
-      target: /home/app/.cache/huggingface
-      read_only: false
     shm_size: 67108864
     logging:
       driver: json-file
@@ -197,7 +187,3 @@ networks:
   swissjob_swissjob-net:
     external: true
     name: swissjob_swissjob-net
-volumes:
-  swissjob_hfcache:
-    external: true
-    name: swissjob_hfcache

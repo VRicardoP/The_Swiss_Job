@@ -41,8 +41,6 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    volumes:
-    - hfcache:/home/app/.cache/huggingface
     healthcheck:
       test:
       - CMD-SHELL
@@ -65,8 +63,6 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-    volumes:
-    - hfcache:/home/app/.cache/huggingface
     entrypoint: []
     command:
     - celery
@@ -74,31 +70,12 @@ services:
     - celery_app
     - worker
     - -Q
-    - default,scraping,ai
+    - default,ai
     - --concurrency=2
     - --loglevel=info
     networks:
     - legacy-net
     - prod-db-net
-  harvest-trigger:
-    image: ${R5_LEGACY_IMAGE:-swissjob-backend:prod}
-    container_name: swissjob-harvest-trigger-r5
-    restart: unless-stopped
-    env_file:
-    - /share/Public/swissjob/rehearsal-r5/.env.legacy.r5
-    entrypoint: []
-    command:
-    - sh
-    - -c
-    - "while true; do\n  celery -A celery_app call tasks.fetch_providers;\n  sleep\
-      \ 21600;\ndone"
-    depends_on:
-      redis:
-        condition: service_healthy
-      worker:
-        condition: service_started
-    networks:
-    - legacy-net
   redis-core:
     image: redis:7-alpine
     mem_limit: 256m
@@ -220,6 +197,5 @@ networks:
     name: swissjob_swissjob-net
 volumes:
   redisdata: null
-  hfcache: null
   redis-core-data: null
   core-hf-cache: null

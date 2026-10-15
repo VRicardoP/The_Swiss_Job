@@ -67,8 +67,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-    - hfcache:/home/app/.cache/huggingface
     healthcheck:
       test:
       - CMD-SHELL
@@ -91,8 +89,6 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-    volumes:
-    - hfcache:/home/app/.cache/huggingface
     entrypoint: []
     command:
     - celery
@@ -100,7 +96,7 @@ services:
     - celery_app
     - worker
     - -Q
-    - default,scraping,ai
+    - default,ai
     - --concurrency=2
     - --loglevel=info
     networks:
@@ -130,6 +126,4 @@ volumes:
   pgdata:
     driver: local
   redisdata:
-    driver: local
-  hfcache:
     driver: local
