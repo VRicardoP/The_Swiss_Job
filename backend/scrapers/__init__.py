@@ -1,21 +1,24 @@
-"""Scraper registry: discover and instantiate all HTML-scraping providers."""
+"""Scraper registry: the HTML-scraping providers this deployment still owns.
 
-from scrapers.schuljobs import SchulJobsScraper
+EMPTY since the DT-144 handover: the thirteen scrapers that lived here are
+harvested by jobhunt-core, and their modules stay in the tree as the rollback
+path. `scripts/check_source_ownership.py` fails CI if one comes back without an
+explicit decision.
+
+Two sources were never in here and the reason still stands:
+
+- medjobs (med-jobs.com) sits behind a hard Cloudflare challenge
+  (/cdn-cgi/challenge-platform) that the local hardened Playwright does not
+  pass. It would need a paid remote stealth browser via
+  `settings.SCRAPER_BROWSER_CDP_URL`.
+- Riviera, Verbier and ISR stay manual: Riviera publishes no jobs in static
+  HTML, Verbier only links to TES (already covered), and ISR uses an
+  AbaServices SPA that would need a browser for about one vacancy.
+"""
+
 from services.job_service import BaseJobProvider
 
-_SCRAPER_CLASSES: dict[str, type[BaseJobProvider]] = {
-    "schuljobs": SchulJobsScraper,
-    # medjobs (med-jobs.com) SIGUE deshabilitado: está tras un challenge duro de
-    # Cloudflare (/cdn-cgi/challenge-platform) que el Playwright endurecido local
-    # NO supera. Requiere un browser stealth remoto de pago vía CDP
-    # (settings.SCRAPER_BROWSER_CDP_URL). Reactívalo solo con ese opt-in.
-    # Watchlist Fase 1: portales centralizados (NAE + ISP + Inspired)
-    # Watchlist Fase 2: Group A propios (ZIS + ISB + Ecolint)
-    # Watchlist Fase 3: HTML propio menores (Haut-Lac + ISCS)
-    # Riviera, Verbier, ISR quedan como "manual": Riviera no expone jobs
-    # en HTML estático; Verbier solo enlaza a TES (ya cubierto); ISR usa
-    # SPA AbaServices que requeriría Playwright para ~1 vacante.
-}
+_SCRAPER_CLASSES: dict[str, type[BaseJobProvider]] = {}
 
 
 def get_all_scrapers() -> list[BaseJobProvider]:

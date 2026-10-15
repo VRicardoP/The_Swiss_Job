@@ -40,6 +40,7 @@ DATE_FIELDS = {
     "gastrojob": "_core_published_at",
     "tes": ("advert", "startDate"),
     "stelle_admin": "start_date",
+    "schuljobs": "date_posted",
     "weworkremotely": "pubDate",
     "euremotejobs": "pubDate",
     "jobspresso": "pubDate",

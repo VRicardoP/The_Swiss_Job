@@ -1,0 +1,109 @@
+{
+  "source": "schuljobs",
+  "captured_at_utc": {
+    "listing_and_scroll": "2026-10-15T06:43:49+00:00",
+    "detail_pages": "2026-10-15T06:50:05+00:00"
+  },
+  "method": "Both the retiring scraper and the new Core adapter were replayed offline against this SAME sealed capture, so the parity below is byte-level. This is the parity the inventory asked for before migrating this source.",
+  "transport_contract": {
+    "listing": "https://www.schuljobs.ch/suche (SSR)",
+    "pagination": "AJAX /scroll/searchhash/{hash}/page/{n} with X-Requested-With: XMLHttpRequest; the hash comes from the first page",
+    "detail": "the offer page's JSON-LD JobPosting",
+    "credentials": null,
+    "rate_limit_seconds": 2.0,
+    "declared_budget": {
+      "max_pages": 4,
+      "why": "The ceiling is 26 pages. The scope DECLARES four — the initial listing plus three scroll pages, the 83 offers measured live, about twice what the producer's dynamic budget fetches. Widening it is a params decision with its own validation, not a code change."
+    }
+  },
+  "capture": {
+    "pages": [
+      {
+        "what": "initial",
+        "status": 200,
+        "bytes": 202921,
+        "sha256": "90990e463d1693313ffd9f5cbb8093fa2f1e18a4454e08aa33693a8bfcc539c9"
+      },
+      {
+        "what": "scroll-2",
+        "status": 200,
+        "bytes": 83250,
+        "sha256": "f6cd3639d0146bca58c068b68a170e71c9d76075dd70ccb6d71252a357faa3ae"
+      },
+      {
+        "what": "scroll-3",
+        "status": 200,
+        "bytes": 83037,
+        "sha256": "39954edc63cc16d06b6350cbf0aeeaaf2126022fec97011e33d6a7a69c31817f"
+      },
+      {
+        "what": "scroll-4",
+        "status": 200,
+        "bytes": 81688,
+        "sha256": "f92104f341d3d3b90d02494b575e04ac3d5d319b89b335bab8e2ad791c18ca04"
+      }
+    ],
+    "details": 83,
+    "all_status_200": true,
+    "detail_bytes_total": 8847314
+  },
+  "live_state": {
+    "initial_stubs": 24,
+    "per_scroll_page": 20,
+    "unique_offers": 83,
+    "duplicates_across_pages": 1,
+    "details_with_json_ld": 41,
+    "note": "Only HALF the detail pages carry a JSON-LD JobPosting (41 of 83), so a detail without it is the normal case and the listing stub stands on its own: title, company, city and canton all come from the listing."
+  },
+  "parity": {
+    "listing_rows_compared": 84,
+    "listing_differences": 0,
+    "detail_pages_compared": 83,
+    "detail_differences": 0,
+    "projection_rows": 83,
+    "compared_fields": [
+      "title",
+      "company",
+      "location",
+      "canton",
+      "description",
+      "url",
+      "remote",
+      "tags",
+      "logo",
+      "published_at"
+    ],
+    "field_differences": 0,
+    "projection_sha256": "4a10e00cd59a4629f545622207d8cd9f0916da819f12262d28c32ff467f5d45d",
+    "legacy_projection_sha256": "4a10e00cd59a4629f545622207d8cd9f0916da819f12262d28c32ff467f5d45d",
+    "identical": true,
+    "requests": {
+      "total": 87,
+      "listing": 4,
+      "detail": 83
+    }
+  },
+  "deliberate_improvements": [
+    {
+      "what": "a multi-valued employmentType is rendered instead of lost",
+      "evidence": "3 of 83 offers publish a list (['FULL_TIME','TEMPORARY'])",
+      "effect": "the producer carried the list straight into a string column; Core renders 'FULL_TIME, TEMPORARY'"
+    },
+    {
+      "what": "identity is the portal's own job id (J991993)",
+      "evidence": "83 of 83 offer URLs match /job/<slug>/<id>",
+      "effect": "a retitled offer keeps one identity, and a tracking query is the same offer"
+    }
+  ],
+  "preserved_quirks": [
+    "data-nextpage and the fragment's nextpage are cast safely: int('') used to take the whole sweep down and lose the details already downloaded.",
+    "A failure mid-scroll is REPORTED: learning only the first page would leave the scroll pages unfetched forever.",
+    "A scroll response that is not a JSON object, or carries no html, ends the sweep cleanly.",
+    "The listing metadata is read as 'CANTON · City · Company', and only a two-letter head counts as a canton.",
+    "An empty logo is not a logo."
+  ],
+  "notes": [
+    "No credential exists for this source and none was created.",
+    "The artifact carries no personal data: only byte counts, hashes and counters."
+  ]
+}
