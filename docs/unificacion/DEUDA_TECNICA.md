@@ -242,6 +242,20 @@ continuar sin rediseñarlo.
   modos secos de Portfolio, BFF y worker son correctos. La política no se
   despliega antes de que JSearch complete el primer gate 50/50.
 
+### Checkpoint 2026-10-15 · Sonda final Core actualizada y roja por la causa real
+
+- `probe_core_final.py` deja atrás el supuesto de 17 scopes: exige 50
+  observados, 50 habilitados, 50 con estado, cero scopes autoapagados y cero
+  alertas, además de las invariantes previas de readiness, delivery, staging y
+  retirada del slot de captura.
+- Compila y se ejecutó por stdin dentro de `swissjob-core-api-r5`, sin escritura.
+  Producción devuelve Core autoritativo `5b3bf3d`, Alembic `core0055`, delivery
+  y staging drenados, slot ausente y censo 50/50 con cero autoapagados.
+- Resultado deliberadamente rojo: una única alerta
+  `cosecha_sin_completar` para JSearch, cuyo `last_complete_at` sigue nulo. No
+  apareció ninguna segunda causa. Tras completar ese scope con la misma clave
+  de ventana, esta sonda debe quedar verde antes de avanzar.
+
 ### Checkpoint 2026-10-14 · Fase -1 parcialmente completada
 
 - Inventario reconciliado: 58 fuentes, 16 `local_removed`, 26

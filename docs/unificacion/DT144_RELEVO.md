@@ -111,6 +111,12 @@ hasta el siguiente checkpoint:
   diez nombres de credenciales de portales conocidos, verifica su ausencia y
   borra la copia sólo después de la sonda saludable. No imprime nombres con
   valores ni toca las credenciales `CORE_*` del colector central.
+- `probe_core_final.py` ya exige el censo nuevo (50 observados/habilitados/con
+  estado, cero autoapagados y cero alertas), no los 17 scopes históricos. Su
+  ejecución de sólo lectura contra producción confirma readiness autoritativo,
+  delivery drenado, staging drenado, slot de captura ausente y censo 50/50;
+  falla únicamente por la alerta de JSearch sin ciclo completo. La sonda queda
+  roja por la misma puerta real, no por expectativas obsoletas.
 - Punto exacto de reanudación: no contar este ciclo como superado hasta obtener
   50/50 `ok`. Cuando la cuota esté disponible —o se aporte otra credencial
   válida sin coste— reejecutar **sólo JSearch** con la misma clave determinista

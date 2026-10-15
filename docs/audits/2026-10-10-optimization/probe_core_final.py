@@ -51,6 +51,9 @@ async def main() -> int:
             "observed": health.get("scopes"),
             "enabled": health.get("censo", {}).get("habilitados"),
             "with_state": health.get("censo", {}).get("con_estado"),
+            "disabled_by_blocks": health.get("censo", {}).get(
+                "apagados_por_bloqueo"
+            ),
             "alerts": health.get("alertas", []),
         },
         "delivery": delivery,
@@ -61,12 +64,13 @@ async def main() -> int:
     if ready.get("status") != "ready" or ready.get("authoritative") is not True:
         failures.append("core_not_ready_or_authoritative")
     if result["harvest"] != {
-        "observed": 17,
-        "enabled": 17,
-        "with_state": 17,
+        "observed": 50,
+        "enabled": 50,
+        "with_state": 50,
+        "disabled_by_blocks": 0,
         "alerts": [],
     }:
-        failures.append("harvest_not_17_of_17")
+        failures.append("harvest_not_50_of_50")
     if delivery.get("dead_total") != 0 or any(
         delivery.get("by_state", {}).get(state, 0) for state in ("pending", "inflight")
     ):
