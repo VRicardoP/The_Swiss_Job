@@ -173,6 +173,21 @@ continuar sin rediseñarlo.
   `DT144_RELEVO.md` §0.1, checkpoint «despliegue de consumidores y limpieza
   final en curso». Los worktrees y ramas están allí fijados; ningún cambio de
   limpieza está versionado todavía y no se debe desplegar desde ellos.
+- La sonda final de Core ya codifica la dispensa sin falsear JSearch: exige
+  49/49 scopes ejecutables sanos y, por separado, exactamente un scope JSearch
+  configurado, deshabilitado manualmente, sin sello del kill-switch y sin runs
+  posteriores a `2026-10-15T17:54:15+02:00`. Ejecutada por stdin y en sólo
+  lectura contra producción, pasa sin fallos: Core `ready`/autoritativo,
+  delivery y staging drenados, y slot de captura ausente. El gate independiente
+  del segundo ciclo avanzó a 41 `ok` + `zentraljob` en curso, cero errores y
+  cero ejecuciones de JSearch; todavía no se declara 49/49 terminal.
+- La CI de `dcc653a` deja verdes lint, Compose, Docker, frontend, ratchet y la
+  primera suite Core. Backend llega a 1.895 aprobadas, pero queda rojo por 15
+  fallos y 11 errores: salvo un timeout de carta LLM pendiente de reproducir en
+  el entorno completo, todos fijan providers, políticas o credenciales locales
+  ya retirados de `Settings`. No se reintroducen esos secretos ni se ocultan los
+  tests: se eliminan o migran junto con el código local en la retirada física
+  aprobada.
 
 ### Checkpoint 2026-10-15 · Decisión de retirada y comienzo del corte
 

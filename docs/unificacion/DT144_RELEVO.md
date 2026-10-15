@@ -314,6 +314,24 @@ hasta el siguiente checkpoint:
   fuera de Compose no resolvía el host `postgres`; no se registra como fallo de
   código ni como suite verde. La retirada física de módulos continúa pendiente
   de la confirmación informada específica y recuperable por Git.
+- `probe_core_final.py` ya implementa la dispensa ratificada: 49 scopes
+  ejecutables sanos y una puerta separada que exige un único scope JSearch
+  manualmente deshabilitado, sin `disabled_by_blocks_at` y sin runs desde
+  `2026-10-15T15:54:15Z`. La ejecución productiva por stdin es de sólo lectura y
+  terminó con `failures: []`: readiness autoritativo, 49/49, delivery/staging
+  drenados y slot de captura ausente. No llama a ningún proveedor.
+- La lectura posterior del segundo ciclo contiene 42 filas: 41 `ok` y
+  `zentraljob` todavía `running`, cero errores y cero filas JSearch. La sonda de
+  estado global ya pasa, pero el gate de ciclo permanece abierto hasta que las
+  49 tareas de esa ventana estén terminales `ok`.
+- La CI de `dcc653a` diagnosticó el límite de la retirada parcial: backend
+  ejecutó 1.919 casos, con 1.895 aprobados, 15 fallos, 11 errores y 4 `xfail`.
+  Todos salvo el caso de timeout de carta LLM pertenecen a pruebas de providers,
+  políticas y credenciales locales que siguen en el árbol. Varias de ellas
+  parchean el objeto global `asyncio.sleep`, por lo que la contaminación entre
+  tests es una hipótesis concreta, no un hecho todavía reproducido: repetir el
+  caso tras retirar ese bloque. No restaurar campos de secretos en `Settings`:
+  retirar/migrar esas pruebas en el mismo commit que sus módulos.
 
 ---
 
