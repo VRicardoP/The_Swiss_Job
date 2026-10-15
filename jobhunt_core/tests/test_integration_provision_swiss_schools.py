@@ -1,10 +1,10 @@
-"""The five watched boards are provisioned together, disabled, idempotently."""
+"""The seven watched sources are provisioned together, disabled, idempotently."""
 
 import asyncio
 
 import sqlalchemy as sa
 
-from jobhunt_core.harvest.providers.native_swiss_schools import BOARDS
+from jobhunt_core.harvest.providers.native_swiss_schools import boards_by_source
 from jobhunt_core.provision_swiss_schools import provision
 from jobhunt_core.tests.test_integration_harvest import db, pytestmark  # noqa: F401
 
@@ -16,11 +16,12 @@ def test_provision_every_board_disabled_then_explicitly_enabled(db):  # noqa: F8
         async with factory() as session:
             first = await provision(session)
             await session.commit()
-            assert len(first) == len(BOARDS) == 5
-            for board in BOARDS:
+            sources = list(boards_by_source())
+            assert len(first) == len(sources) == 7
+            for source in sources:
                 source_id = await session.scalar(
                     sa.text("SELECT id FROM sources WHERE name=:name"),
-                    {"name": board.source},
+                    {"name": source},
                 )
                 made["extra_sources"].append(source_id)
                 row = (
@@ -44,6 +45,6 @@ def test_provision_every_board_disabled_then_explicitly_enabled(db):  # noqa: F8
                 ),
                 {"ids": first},
             )
-            assert enabled == len(BOARDS)
+            assert enabled == len(sources)
 
     asyncio.run(run())

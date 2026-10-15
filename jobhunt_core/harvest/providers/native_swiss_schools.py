@@ -191,6 +191,14 @@ _HAUTLAC_NOT_A_TITLE = {"profile", "profil", "mission", "responsibilities"}
 
 @dataclass(frozen=True)
 class Board:
+    """One watched target: a school and the page where it publishes.
+
+    Most sources are one school on its own site. Two of them (Nord Anglia and
+    Inspired) are several schools on a shared third-party career portal, each
+    with its own query and its own filter value, so a source carries a LIST of
+    boards.
+    """
+
     source: str
     school_id: str
     school_name: str
@@ -201,6 +209,11 @@ class Board:
     parse: Callable[[_Document, "Board"], list[dict]]
     pages: int = 1
     page_url: Callable[["Board", int], str] | None = None
+    # SuccessFactors boards only: which tile field carries the school and what
+    # it must contain. The portal's search is fuzzy, so without this filter a
+    # query for one school returns every school's vacancies.
+    match_field: str = ""
+    match_value: str = ""
 
 
 def _stub(board: Board, source_id: str, title: str, url: str) -> dict:
@@ -450,6 +463,8 @@ SOURCE_NAMES = (
     "swiss_schools_ecolint",
     "swiss_schools_hautlac",
     "swiss_schools_iscs",
+    "swiss_schools_nae",
+    "swiss_schools_inspired",
 )
 
 
@@ -466,6 +481,127 @@ def board_rows(board: Board, html: str) -> list[dict]:
             f"page title {document.title[:60]!r} is not {board.school_name}'s board"
         )
     return board.parse(document, board)
+
+
+# ---------------------------------------------------------------------------
+# SuccessFactors career portals (Nord Anglia and Inspired share the markup).
+# ---------------------------------------------------------------------------
+
+
+def _tile_field(document: _Document, tile: Element, field: str) -> str:
+    suffix = f"-desktop-section-{field}-value"
+    for element in document.find(tag="div", within=tile):
+        if (element.attrs.get("id") or "").endswith(suffix):
+            return element.text
+    return ""
+
+
+def _successfactors(document: _Document, board: Board) -> list[dict]:
+    """`li.job-tile` tiles, filtered by the school field.
+
+    The portal's search is fuzzy: querying one school returns vacancies of
+    others, so the tile's own school field decides. A tile whose field is
+    missing is not attributed to anyone.
+    """
+    out = []
+    for tile in document.find(tag="li", class_name="job-tile"):
+        school_field = _tile_field(document, tile, board.match_field)
+        if not school_field or board.match_value.lower() not in school_field.lower():
+            continue
+        link = next(
+            (
+                element
+                for element in document.find(tag="a", attr="href", within=tile)
+                if "jobTitle-link" in element.classes
+            ),
+            None,
+        )
+        if link is None:
+            continue
+        title = link.text
+        href = link.attrs["href"]
+        url = f"{board.base_url}{href}" if href.startswith("/") else href
+        data_url = tile.attrs.get("data-url") or ""
+        source_id = data_url.rstrip("/").split("/")[-1] if data_url else url
+        city = _tile_field(document, tile, "city") or board.city
+        country = _tile_field(document, tile, "country") or "CH"
+        stub = _stub(board, source_id, title, url)
+        stub["location"] = f"{city}, {country}" if city else country
+        out.append(stub)
+    return out
+
+
+NAE_BASE = "https://careers.nordangliaeducation.com"
+INSPIRED_BASE = "https://jobs.inspirededu.com"
+
+ATS_BOARDS: tuple[Board, ...] = (
+    Board(
+        source="swiss_schools_nae",
+        school_id="champittet_nyon",
+        school_name="Collège Champittet",
+        city="Nyon",
+        base_url=NAE_BASE,
+        listing_url=f"{NAE_BASE}/search/?q=champittet",
+        title_marker="nord anglia education jobs",
+        parse=_successfactors,
+        match_field="customfield3",
+        match_value="Collège Champittet",
+    ),
+    Board(
+        source="swiss_schools_nae",
+        school_id="beausoleil_villars",
+        school_name="Collège Alpin Beau Soleil",
+        city="Villars-sur-Ollon",
+        base_url=NAE_BASE,
+        listing_url=f"{NAE_BASE}/search/?q=beau+soleil",
+        title_marker="nord anglia education jobs",
+        parse=_successfactors,
+        match_field="customfield3",
+        # Nord Anglia lists it without "Alpin".
+        match_value="Collège Beau Soleil",
+    ),
+    Board(
+        source="swiss_schools_nae",
+        school_id="lcis_aubonne",
+        school_name="La Côte International School Aubonne",
+        city="Aubonne",
+        base_url=NAE_BASE,
+        listing_url=f"{NAE_BASE}/search/?q=la+cote",
+        title_marker="nord anglia education jobs",
+        parse=_successfactors,
+        match_field="customfield3",
+        match_value="La Côte International School",
+    ),
+    Board(
+        source="swiss_schools_inspired",
+        school_id="ges_versoix",
+        school_name="Geneva English School",
+        city="Versoix",
+        base_url=INSPIRED_BASE,
+        listing_url=(
+            f"{INSPIRED_BASE}/search/?optionsFacetsDD_facility=Geneva+English+School"
+        ),
+        title_marker="inspired education jobs",
+        parse=_successfactors,
+        match_field="facility",
+        match_value="Geneva English School",
+    ),
+    Board(
+        source="swiss_schools_inspired",
+        school_id="stgeorges_montreux",
+        school_name="St. George's International School",
+        city="Montreux",
+        base_url=INSPIRED_BASE,
+        listing_url=(
+            f"{INSPIRED_BASE}/search/"
+            "?optionsFacetsDD_facility=St.+George%27s+International+School"
+        ),
+        title_marker="inspired education jobs",
+        parse=_successfactors,
+        match_field="facility",
+        match_value="St. George's International School",
+    ),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -498,7 +634,7 @@ def _content(raw: dict) -> dict:
 
 
 def register_handlers() -> None:
-    for board in BOARDS:
+    for board in ALL_BOARDS:
         register_normalizer(board.source, _content)
         register_extractor(
             board.source,
@@ -549,59 +685,63 @@ async def _read(http, url: str) -> str:
 
 
 class SwissSchoolProvider(BaseProvider):
-    """One watched board. Zero vacancies is a RESULT, not a failure."""
+    """The boards of one watched source. Zero vacancies is a RESULT.
+
+    A source is usually one school on its own site, but Nord Anglia and
+    Inspired are several schools on a shared career portal, so the sweep walks
+    every board the source declares.
+    """
 
     SEMANTIC_PARAMS = ()
 
-    def __init__(self, board: Board):
-        self.board = board
-        self.name = board.source
+    def __init__(self, source: str, boards: tuple[Board, ...]):
+        self.name = source
+        self.boards = boards
         register_handlers()
 
     async def fetch_new(self, params, cursor, http):
-        board = self.board
         if not isinstance(params, dict) or set(params) - {MAX_PAGES_PARAM}:
-            raise ProviderConfigError(f"{board.source} scope takes no query parameters")
-        budget = page_budget(params, board.pages) or board.pages
+            raise ProviderConfigError(f"{self.name} scope takes no query parameters")
         by_identity: dict[str, dict] = {}
         pages = 0
 
-        for page in range(1, budget + 1):
-            if pages:
-                await _pause(PAGE_PAUSE_S)
-            url = board.page_url(board, page) if board.page_url else board.listing_url
-            try:
-                rows = board_rows(board, await _read(http, url))
-            except StructureUnknown as exc:
-                # A page we cannot recognise is NOT an empty board.
-                raise ProviderResponseError(f"{board.source}: {exc}") from None
-            pages += 1
-            fresh = 0
-            for row in rows:
-                if row["source_id"] not in by_identity:
-                    by_identity[row["source_id"]] = row
-                    fresh += 1
-            if not fresh:
-                break
+        for board in self.boards:
+            budget = page_budget(params, board.pages) or board.pages
+            for page in range(1, budget + 1):
+                if pages:
+                    await _pause(PAGE_PAUSE_S)
+                url = (
+                    board.page_url(board, page) if board.page_url else board.listing_url
+                )
+                try:
+                    rows = board_rows(board, await _read(http, url))
+                except StructureUnknown as exc:
+                    # A page we cannot recognise is NOT an empty board.
+                    raise ProviderResponseError(f"{board.source}: {exc}") from None
+                pages += 1
+                fresh = 0
+                for row in rows:
+                    identity = f"{board.school_id}:{row['source_id']}"
+                    if identity not in by_identity:
+                        by_identity[identity] = row
+                        fresh += 1
+                if not fresh:
+                    break
 
         listings = tuple(
-            RawListing(
-                external_id=f"{board.school_id}:{row['source_id']}",
-                url=row["url"],
-                payload=row,
-            )
-            for row in by_identity.values()
+            RawListing(external_id=identity, url=row["url"], payload=row)
+            for identity, row in by_identity.items()
         )
         if not listings:
-            # VERIFIED empty: the page was fetched and recognised as this
-            # school's board. In a watchlist that is the normal state, and
-            # reporting it as a failure would make most of the family fail
-            # every day.
-            logger.info("%s: board recognised with no vacancies", board.source)
+            # VERIFIED empty: every board was fetched and recognised. In a
+            # watchlist that is the normal state, and reporting it as a failure
+            # would make most of the family fail every day.
+            logger.info("%s: boards recognised with no vacancies", self.name)
         return FetchResult(
             listings,
             {
                 "pages": pages,
+                "boards": len(self.boards),
                 "vacancies": len(listings),
                 "verified_empty": not listings,
             },
@@ -610,5 +750,18 @@ class SwissSchoolProvider(BaseProvider):
         )
 
 
+ALL_BOARDS: tuple[Board, ...] = BOARDS + ATS_BOARDS
+
+
+def boards_by_source() -> dict[str, tuple[Board, ...]]:
+    grouped: dict[str, list[Board]] = {}
+    for board in ALL_BOARDS:
+        grouped.setdefault(board.source, []).append(board)
+    return {source: tuple(boards) for source, boards in grouped.items()}
+
+
 def providers() -> list[SwissSchoolProvider]:
-    return [SwissSchoolProvider(board) for board in BOARDS]
+    return [
+        SwissSchoolProvider(source, boards)
+        for source, boards in boards_by_source().items()
+    ]

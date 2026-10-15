@@ -69,7 +69,7 @@ def fetch(source, pages, *, params=None, monkeypatch=None):
     if monkeypatch:
         monkeypatch.setattr(module, "PAGE_PAUSE_S", 0)
         monkeypatch.setattr(module, "RETRY_BACKOFF_S", 0)
-    provider = SwissSchoolProvider(BOARDS_BY_SOURCE[source])
+    provider = SwissSchoolProvider(source, module.boards_by_source()[source])
     requests = []
 
     async def run():
@@ -234,13 +234,106 @@ def test_an_invalid_scope_fails_before_the_network(monkeypatch):
 
 def test_every_board_declares_a_title_marker_and_a_school():
     from jobhunt_core.harvest.providers.native_swiss_schools import (
-        BOARDS,
+        ALL_BOARDS,
         SOURCE_NAMES,
+        boards_by_source,
     )
 
-    # The literal census the ownership ratchet reads must match the boards.
-    assert tuple(board.source for board in BOARDS) == SOURCE_NAMES
-    assert len(BOARDS) == 5
+    # The literal census the ownership ratchet reads must match the sources.
+    assert tuple(boards_by_source()) == SOURCE_NAMES
+    assert len(ALL_BOARDS) == 10
+    BOARDS = ALL_BOARDS
     for board in BOARDS:
         assert board.title_marker and board.school_id and board.school_name
         assert board.listing_url.startswith("https://")
+
+
+# ---------------------------------------------------------------------------
+# The two shared career portals (Nord Anglia and Inspired)
+# ---------------------------------------------------------------------------
+
+SF_PAGE = """<html><head><title>Champittet - Nord Anglia Education Jobs</title></head>
+<body><ul>
+  <li class="job-tile" data-url="/job/Nyon-Teacher-of-Maths/1234/">
+    <a class="jobTitle-link" href="/job/Nyon-Teacher-of-Maths/1234/">Teacher of Maths</a>
+    <div id="job-1234-desktop-section-customfield3-value">Collège Champittet</div>
+    <div id="job-1234-desktop-section-city-value">Pully</div>
+    <div id="job-1234-desktop-section-country-value">CH</div>
+  </li>
+  <li class="job-tile" data-url="/job/Shanghai-Teacher/9999/">
+    <a class="jobTitle-link" href="/job/Shanghai-Teacher/9999/">Teacher of Science</a>
+    <div id="job-9999-desktop-section-customfield3-value">Nord Anglia Shanghai</div>
+    <div id="job-9999-desktop-section-city-value">Shanghai</div>
+  </li>
+  <li class="job-tile" data-url="/job/no-field/7777/">
+    <a class="jobTitle-link" href="/job/no-field/7777/">Unattributed</a>
+  </li>
+</ul></body></html>"""
+
+SF_EMPTY = """<html><head><title>Inspired Education Jobs</title></head>
+<body><p>No results found.</p></body></html>"""
+
+
+def _board(school_id):
+    from jobhunt_core.harvest.providers.native_swiss_schools import ATS_BOARDS
+
+    return next(board for board in ATS_BOARDS if board.school_id == school_id)
+
+
+def test_the_shared_portal_filters_by_the_tile_s_own_school():
+    """La búsqueda del portal es difusa: sin el filtro, una consulta de un
+    colegio devuelve las vacantes de todos."""
+    rows = board_rows(_board("champittet_nyon"), SF_PAGE)
+
+    assert [row["title"] for row in rows] == ["Teacher of Maths"]
+    assert rows[0]["source_id"] == "1234"
+    assert rows[0]["url"] == (
+        "https://careers.nordangliaeducation.com/job/Nyon-Teacher-of-Maths/1234/"
+    )
+    # The tile's own city wins over the school's configured one.
+    assert rows[0]["location"] == "Pully, CH"
+
+
+def test_a_tile_without_the_school_field_is_attributed_to_nobody():
+    rows = board_rows(_board("champittet_nyon"), SF_PAGE)
+
+    assert "Unattributed" not in [row["title"] for row in rows]
+
+
+def test_an_empty_shared_portal_is_a_verified_empty(monkeypatch):
+    result, requests = fetch(
+        "swiss_schools_inspired", SF_EMPTY, monkeypatch=monkeypatch
+    )
+
+    # Two schools, two pages, zero vacancies and a healthy run.
+    assert len(requests) == 2
+    assert result.listings == () and result.complete
+    assert result.next_cursor == {
+        "pages": 2,
+        "boards": 2,
+        "vacancies": 0,
+        "verified_empty": True,
+    }
+
+
+def test_the_shared_portal_sweeps_every_school_of_the_source(monkeypatch):
+    result, requests = fetch("swiss_schools_nae", SF_PAGE, monkeypatch=monkeypatch)
+
+    # Three schools; only Champittet's board matches this fixture's tiles, and
+    # the other two recognise the page and find nothing of theirs.
+    assert len(requests) == 3
+    assert [listing.external_id for listing in result.listings] == [
+        "champittet_nyon:1234"
+    ]
+    assert result.next_cursor["boards"] == 3
+
+
+def test_a_shared_portal_page_that_is_not_the_portal_fails(monkeypatch):
+    from jobhunt_core.harvest.provider import ProviderResponseError
+
+    with pytest.raises(ProviderResponseError):
+        fetch(
+            "swiss_schools_nae",
+            "<html><head><title>Login</title></head></html>",
+            monkeypatch=monkeypatch,
+        )

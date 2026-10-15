@@ -1,9 +1,7 @@
 """Scraper registry: discover and instantiate all HTML-scraping providers."""
 
 from scrapers.schuljobs import SchulJobsScraper
-from scrapers.swiss_schools_inspired import SwissSchoolsInspiredScraper
 from scrapers.swiss_schools_isp import SwissSchoolsISPScraper
-from scrapers.swiss_schools_nae import SwissSchoolsNAEScraper
 from services.job_service import BaseJobProvider
 
 _SCRAPER_CLASSES: dict[str, type[BaseJobProvider]] = {
@@ -13,9 +11,7 @@ _SCRAPER_CLASSES: dict[str, type[BaseJobProvider]] = {
     # NO supera. Requiere un browser stealth remoto de pago vía CDP
     # (settings.SCRAPER_BROWSER_CDP_URL). Reactívalo solo con ese opt-in.
     # Watchlist Fase 1: portales centralizados (NAE + ISP + Inspired)
-    "swiss_schools_nae": SwissSchoolsNAEScraper,
     "swiss_schools_isp": SwissSchoolsISPScraper,
-    "swiss_schools_inspired": SwissSchoolsInspiredScraper,
     # Watchlist Fase 2: Group A propios (ZIS + ISB + Ecolint)
     # Watchlist Fase 3: HTML propio menores (Haut-Lac + ISCS)
     # Riviera, Verbier, ISR quedan como "manual": Riviera no expone jobs
