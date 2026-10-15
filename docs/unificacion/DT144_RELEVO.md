@@ -195,8 +195,8 @@ min: son los últimos en cerrar.
 
 | Fuente | Estado MEDIDO el 2026-10-15 | Decisión pendiente |
 |---|---|---|
-| `proz` | **403 con challenge de Cloudflare** en feed Y portada; 46 errores seguidos, ninguna cosecha jamás | retirar con la evidencia, o pagar navegador stealth (`SCRAPER_BROWSER_CDP_URL`) |
-| `remoteco` | **TCP conecta, TLS completa, el servidor NO responde nunca**; 54 errores seguidos, ninguna cosecha jamás | ídem |
+| `proz` | **Managed challenge de Cloudflare en TODA la zona** (también `robots.txt`), con cualquier cabecera y desde cuatro redes; el muro se levantó entre junio y julio de 2026; 46 errores seguidos | retirar con la evidencia; o el propietario comprueba con su cuenta si el **feed de miembro** queda exento (un minuto); o navegador stealth de pago |
+| `remoteco` | **El feed no existe desde 2025-12-21** (antes de escribir el provider) **y** el edge es Akamai Bot Manager conductual: sirve a quien parece navegador hasta que su puntuación cae, y a nadie de forma estable sin el sensor JS; 54 errores seguidos | retirar: ni con navegador queda feed que leer; haría falta scraper HTML nuevo + navegador stealth de pago |
 
 Migrarlas sin resolver eso sería inverificable por construcción: la metodología
 exige línea base viva y paridad campo a campo, y ninguna de las dos ha producido

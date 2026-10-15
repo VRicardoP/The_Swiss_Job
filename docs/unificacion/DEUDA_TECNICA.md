@@ -2020,15 +2020,35 @@ cuatro bloqueaban la definición de terminado del contrato (§10).
 
 #### proz y remoteco: NO son implementables desde esta infraestructura
 
-- **proz**: el feed RSS y la portada devuelven **403 con challenge de
-  Cloudflare** (`/cdn-cgi/challenge-platform`, «Just a moment...»). No es un
-  feed seco: es el dominio entero rechazando a este cliente.
-- **remoteco**: `remote.co` resuelve a Akamai, **el TCP conecta en 0,17 s y el
-  TLS completa**, y después el servidor **no responde nunca** (timeout de
-  lectura; con HTTP/2, `INTERNAL_ERROR`). No está caído: acepta la conexión y
-  descarta la petición. Es mitigación por huella de cliente.
-- Producción concuerda: 46 y 54 errores seguidos y **ninguna cosecha correcta
-  jamás**.
+- **proz**: Cloudflare aplica un *managed challenge* (`cType: 'managed'`) a
+  **toda la zona**: feed, portada, `robots.txt` y `www2` responden 403 con el
+  desafío, con cualquier juego de cabeceras y protocolo, y desde cuatro puntos
+  de vista (este host, el NAS —misma IP pública—, el fetcher de Anthropic y el
+  rastreador de archive.org). Exige ejecutar JavaScript; no hay cabecera que lo
+  resuelva. El archivo fecha el muro entre junio y julio de 2026, dos meses
+  después de escribir el provider (2026-04-22).
+- **remoteco**: dos fallos independientes. (A) **El feed ya no existe**: el
+  archivo lo tiene en `301 → 404` desde el **2025-12-21**, cuatro meses ANTES
+  de escribir el provider; el feed del blog y `wp-json` tampoco están. (B) El
+  edge es **Akamai Bot Manager con puntuación conductual** (`AkamaiGHost`,
+  cookies `bm_s`/`bm_so`): a los clientes desconocidos les resetea el stream o
+  les retiene la petición; a los que parecen navegador les sirvió `200`/`301`
+  hasta que, tras ~20 sondas, pasó a `403 Access Denied` para los mismos. No
+  es bloqueo por IP (otra red también falla) y un proxy no lo arreglaría: pasar
+  de forma estable requiere el sensor JS de Akamai, es decir, un navegador.
+- Producción concuerda: 46 y 54 errores seguidos. «Ninguna cosecha jamás» está
+  probado **sólo desde el 2026-08-29**, inicio de la ventana de salud; proz
+  probablemente cosechó de abril a junio; remoteco no pudo cosechar nunca.
+- Lo que arreglaría cada una: proz, o bien un navegador que resuelva el
+  desafío (fuera de la imagen de Core y de la regla de no-evasión de
+  `docs/SCRAPING_HUMANO.md`, precedente medjobs), o bien comprobar con una
+  cuenta ProZ si el **feed de miembro** que describe su foro queda exento del
+  desafío —una prueba manual de un minuto que sólo el propietario puede hacer—.
+  remoteco necesitaría un scraper HTML nuevo del listado **y** un navegador
+  stealth de pago; no queda nada que leer aunque el edge dejara pasar.
+- Evidencia:
+  [`2026-10-15-dt144-proz-remoteco-analysis.json`](../audits/2026-10-15-dt144-proz-remoteco-analysis.json)
+  (corrige dos afirmaciones de la sonda del día 14, que se conserva).
 - **Por qué migrarlas aun así sería un error:** la metodología exige línea base
   viva reproducible y paridad campo a campo contra el productor. Ninguna de las
   dos ha producido nunca una cosecha, así que no hay nada contra lo que medir:
