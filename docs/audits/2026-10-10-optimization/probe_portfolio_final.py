@@ -13,6 +13,20 @@ from services.routing import MODE_CORE_PRIMARY, read_all_modes_fresh
 
 
 LOCAL_PRODUCER_MODULES = {
+    *(
+        f"routers.{name}"
+        for name in (
+            "adzuna_jobs",
+            "dynamitejobs_jobs",
+            "himalayas_jobs",
+            "ictjobs_jobs",
+            "jobroom_jobs",
+            "jobscout24_jobs",
+            "remoteok_jobs",
+            "swissdevjobs_jobs",
+            "swisstechjobs_jobs",
+        )
+    ),
     "adzuna_config",
     "dynamitejobs_config",
     "himalayas_config",
@@ -22,22 +36,27 @@ LOCAL_PRODUCER_MODULES = {
     "jsearch_config",
     "remoteok_config",
     "services.adzuna_provider_impl",
+    "services.analysis_runner",
     "services.cache_registry",
     "services.dynamitejobs_provider_impl",
     "services.job_cache_updater",
+    "services.job_router_helpers",
     "services.jobicy_provider_impl",
     "services.jobroom_provider_impl",
     "services.jobscout24_provider_impl",
     "services.jsearch_provider_impl",
     "services.remoteok_provider_impl",
     "services.swissdevjobs_provider_impl",
+    "services.worker_bridge",
     "services.wordpress_job_base",
     "swissdevjobs_config",
     "swisstechjobs_config",
 }
 LOCAL_FALLBACK_MODULES = {
     "services.catalog.composite",
+    "services.catalog.local",
     "services.matching.composite",
+    "services.matching.local",
 }
 PORTAL_CREDENTIAL_NAMES = {
     "ADZUNA_APP_ID",

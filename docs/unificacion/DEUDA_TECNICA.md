@@ -188,6 +188,22 @@ continuar sin rediseñarlo.
   ya retirados de `Settings`. No se reintroducen esos secretos ni se ocultan los
   tests: se eliminan o migran junto con el código local en la retirada física
   aprobada.
+- Se cerró un hueco de la sonda SwissJob antes del borrado: ahora comprueba
+  `tasks.harvest_persist` (ruta real) y `services.harvest_window`; ambos sólo son
+  alcanzables desde las tareas locales retiradas del despacho. Se conserva
+  `scrapers.swiss_schools_config`, que sí tiene consumidores de producto.
+- Ejecutada de nuevo en sólo lectura, la sonda SwissJob confirma el alcance:
+  41 módulos importables, siete entradas de provider y dos variables heredadas
+  en el contenedor. Autoridades, perfiles y snapshots siguen sanos; no aparece
+  ninguna cuarta causa de fallo.
+- La sonda Portfolio también se endureció antes del commit: comprueba routers
+  por fuente, helpers/worker de cosecha y los motores locales además de las
+  implementaciones y composites que ya enumeraba. Así el gate valida la
+  retirada completa, no sólo la ausencia del registro.
+- La ejecución de sólo lectura en producción identifica exactamente 37 módulos
+  Portfolio y ninguna otra causa de rojo: las seis rutas están en
+  `core_primary`, no hay providers registrados ni credenciales de portal y los
+  schedulers de producto permanecen activos con cosecha diaria deshabilitada.
 
 ### Checkpoint 2026-10-15 · Decisión de retirada y comienzo del corte
 

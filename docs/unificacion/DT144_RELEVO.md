@@ -332,6 +332,29 @@ hasta el siguiente checkpoint:
   tests es una hipótesis concreta, no un hecho todavía reproducido: repetir el
   caso tras retirar ese bloque. No restaurar campos de secretos en `Settings`:
   retirar/migrar esas pruebas en el mismo commit que sus módulos.
+- La auditoría nominal del borrado corrigió un falso negativo de la sonda
+  SwissJob: el persistidor real es `tasks.harvest_persist`, no
+  `services.harvest_persist`, y `services.harvest_window` también es exclusivo
+  de las tareas locales. Ambos forman parte de la retirada y el gate final ya
+  exige que no sean importables; `scrapers.swiss_schools_config` se conserva
+  porque sigue siendo un contrato de producto usado fuera de la cosecha.
+- La sonda corregida se ejecutó contra `swissjob-backend` sin mutar datos:
+  conserva verdes las cuatro autoridades y la entrega 2/2, y enumera exactamente
+  41 módulos locales importables, siete providers registrados y las dos
+  variables heredadas `CAREERJET_AFFID`/`JOOBLE_API_KEY`. Son las tres únicas
+  causas de rojo; por tanto el inventario de retirada ya no depende de un
+  recuento estimado.
+- El mismo contraste cerró un hueco equivalente en la sonda Portfolio: ahora
+  incluye los nueve routers locales, `analysis_runner`, `job_router_helpers`,
+  `worker_bridge` y las implementaciones `catalog.local`/`matching.local`,
+  además de providers, cachés y composites. Son módulos ya retirados en el
+  worktree, pero el gate debía nombrarlos para impedir que una recuperación
+  parcial del árbol pasara inadvertida.
+- Ejecutada contra `portfolio_backend`, la sonda endurecida conserva verdes
+  schedulers, registro vacío, cero credenciales y las seis capacidades
+  exactamente `core_primary`; su única causa de rojo son los 37 módulos locales
+  que enumera nominalmente. Coinciden con las eliminaciones preparadas en el
+  worktree, de modo que el gate y el diff físico tienen el mismo alcance.
 
 ---
 

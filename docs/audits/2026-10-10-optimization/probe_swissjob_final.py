@@ -67,9 +67,10 @@ LOCAL_PRODUCER_MODULES = {
             "tes",
         )
     ),
-    "services.harvest_persist",
+    "services.harvest_window",
     "services.schools.producer",
     "tasks.fetch_tasks",
+    "tasks.harvest_persist",
     "tasks.pipeline_tasks",
     "tasks.scraping_tasks",
 }
