@@ -5,8 +5,6 @@ import logging
 from config import settings
 from providers.careerjet import CareerjetProvider
 from providers.jooble import JoobleProvider
-from providers.proz import ProzProvider
-from providers.remoteco import RemoteCoProvider
 from providers.restricted import (
     GlassdoorPartnerProvider,
     IndeedPartnerProvider,
@@ -21,8 +19,6 @@ logger = logging.getLogger(__name__)
 _PROVIDER_CLASSES: dict[str, type[BaseJobProvider]] = {
     "careerjet": CareerjetProvider,
     "jooble": JoobleProvider,
-    "remoteco": RemoteCoProvider,
-    "proz": ProzProvider,
     "jobcloud_partner": JobCloudPartnerProvider,
     "linkedin_authorized": LinkedInAuthorizedProvider,
     "indeed_partner": IndeedPartnerProvider,

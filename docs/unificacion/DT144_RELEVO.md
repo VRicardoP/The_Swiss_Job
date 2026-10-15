@@ -9,10 +9,11 @@
 > ha hecho, cómo, en qué estado está respecto al objetivo final y qué queda**,
 > para que no haya que reconstruirlo leyendo veinte checkpoints.
 >
-> Última actualización: **2026-10-15**. Fase de implementación TERMINADA: 40 de
-> las 42 fuentes migrables tienen adaptador nativo en rama; las dos restantes
-> están diagnosticadas y esperan decisión del propietario. **Nada está cortado
-> en producción** y los dos `main` siguen intactos.
+> Última actualización: **2026-10-15**. Fase de implementación TERMINADA: las
+> 40 fuentes operativas tienen adaptador nativo en rama. El propietario aprobó
+> la retirada definitiva de `proz` y `remoteco`; ya no están en el registro
+> ejecutable de SwissJob. **Nada está cortado en producción** y los dos `main`
+> siguen intactos.
 
 ---
 
@@ -61,18 +62,19 @@ fusión final aprobada por el propietario.
 - Suites en la cabeza: **Core 1.952 passed**, **backend SwissJob 1.916 passed +
   4 xfailed**, ReactPortfolio **2.256 passed + 3 skipped** (en `5f03c68`).
   Ratchets: `check_no_secrets` 0 hallazgos; `check_source_ownership` devuelve
-  `{"core_owned":16,"local_pending":26,"sources":58}`.
+  `{"core_owned":16,"local_pending":24,"sources":58}` tras retirar
+  `proz`/`remoteco`.
 
-**Inventario: 58 fuentes · 16 `local_removed` · 26 `local_pending` · 16
+**Inventario: 58 fuentes · 16 `local_removed` · 24 `local_pending` · 18
 `retired`.** Esas cifras **describen producción** y por eso no se mueven al
 migrar en rama: una fuente migrada conserva `state=local_pending` con
-`core_adapter: true` hasta el corte agrupado. Las 26 `local_pending` siguen
-cosechando en local AHORA MISMO (11 de ReactPortfolio, 16 de SwissJob, `jobicy`
+`core_adapter: true` hasta el corte agrupado. Las 24 `local_pending` siguen
+cosechando en local AHORA MISMO (11 de ReactPortfolio, 14 de SwissJob, `jobicy`
 en los dos).
 
 Registros locales en rama: SwissJob `_SCRAPER_CLASSES` **VACÍO**; SwissJob
-`_PROVIDER_CLASSES` con 9 nombres (`proz`, `remoteco` y 7 `retired` inertes:
-`careerjet`, `jooble` y los cinco partner restringidos). ReactPortfolio sin
+`_PROVIDER_CLASSES` con 7 nombres `retired` inertes (`careerjet`, `jooble` y
+los cinco partner restringidos). ReactPortfolio sin
 productores locales: `services/catalog/seam.py` devuelve `CoreCatalog()`
 directamente.
 
@@ -80,8 +82,8 @@ directamente.
 
 | Condición del §10 | Estado | Qué falta |
 |---|---|---|
-| 100 % de fuentes operativas en `core_primary` o `local_removed` | **NO** · 16 de 42 | el corte agrupado (§10 de este doc) mueve 24; `proz`/`remoteco` se retiran o se resuelven |
-| Sin `local_pending` ni `core_shadow` | **NO** · 26 `local_pending` | ídem |
+| 100 % de fuentes operativas en `core_primary` o `local_removed` | **NO** · 16 de 40 | el corte agrupado (§10 de este doc) mueve 24; `proz`/`remoteco` están retirados |
+| Sin `local_pending` ni `core_shadow` | **NO** · 24 `local_pending` | ídem |
 | Cero productores externos activos en ambos productos | **En rama SÍ; en producción NO** | desplegar la rama tras la fusión |
 | Sin secretos ni tráfico de portales en los productos | **En rama SÍ** (`check_no_secrets` 0) · en producción las credenciales de Adzuna/JSearch siguen en el `.env` del Portfolio | rotarlas a `CORE_ADZUNA_APP_ID/APP_KEY` y `CORE_JSEARCH_RAPIDAPI_KEY` en el core del NAS y retirarlas del Portfolio en el corte |
 | Sin catálogo compuesto ni fallback local | **NO** · `CompositeCatalog` y `FallbackCatalog` existen pero no se construyen (vía de rollback) | borrarlos en el corte final |
@@ -179,8 +181,8 @@ credenciales; las clases que quedan registradas no emiten peticiones.
 
 | Fuente | Diagnóstico MEDIDO (2026-10-15) | Qué lo arreglaría | Decisión |
 |---|---|---|---|
-| `proz` | Cloudflare *managed challenge* en **toda la zona** (feed, portada, `robots.txt`, `www2`), con cualquier cabecera/protocolo y desde cuatro redes (este host, NAS —misma IP—, fetcher de Anthropic, archive.org). Muro levantado entre jun y jul 2026; el provider es de abr 2026 y probablemente cosechó hasta entonces. 46 errores seguidos | (a) retirar; (b) **el propietario comprueba con su cuenta ProZ si el feed de miembro queda exento** (un minuto, `curl` sobre la URL del botón naranja de `/translation-jobs`): si da XML, un adaptador RSS normal de Core lo lee; (c) navegador que resuelva el desafío (fuera de la imagen de Core, contra la regla de no-evasión, precedente medjobs) | **propietario** |
-| `remoteco` | Dos fallos: **el feed `/remote-jobs/feed/` es 404 desde 2025-12-21**, antes de escribir el provider; y el edge es Akamai Bot Manager conductual (sirve a quien parece navegador hasta que su puntuación cae; sin el sensor JS nadie pasa de forma estable; un proxy no ayuda). 54 errores seguidos; nunca pudo cosechar | scraper HTML nuevo del listado (WordPress sin feed ni REST) **y** navegador stealth de pago. Ni con navegador queda feed que leer | **propietario** (recomendación: retirar) |
+| `proz` | Cloudflare *managed challenge* en **toda la zona** (feed, portada, `robots.txt`, `www2`), con cualquier cabecera/protocolo y desde cuatro redes (este host, NAS —misma IP—, fetcher de Anthropic, archive.org). Muro levantado entre jun y jul 2026; el provider es de abr 2026 y probablemente cosechó hasta entonces. 46 errores seguidos | (a) retirar; (b) feed de miembro; (c) navegador que resuelva el desafío, fuera de la regla de no-evasión | **RETIRADO por decisión explícita del propietario, 2026-10-15** |
+| `remoteco` | Dos fallos: **el feed `/remote-jobs/feed/` es 404 desde 2025-12-21**, antes de escribir el provider; y el edge es Akamai Bot Manager conductual (sirve a quien parece navegador hasta que su puntuación cae; sin el sensor JS nadie pasa de forma estable; un proxy no ayuda). 54 errores seguidos; nunca pudo cosechar | scraper HTML nuevo del listado (WordPress sin feed ni REST) **y** navegador stealth de pago. Ni con navegador queda feed que leer | **RETIRADO por decisión explícita del propietario, 2026-10-15** |
 
 Evidencia: [`2026-10-15-dt144-proz-remoteco-analysis.json`](../audits/2026-10-15-dt144-proz-remoteco-analysis.json)
 (corrige dos afirmaciones de la sonda del día 14, que se conserva). No se
@@ -277,10 +279,9 @@ Nueve trabajos: `source-ownership`, `backend-lint`, `core-lint`, `backend-test`,
 §4 están verdes 9/9; el último verificado es `38696733154` (`020469e`). Los
 commits documentales posteriores (`80785d2`, `bc1ba91`, éste) no tocan código.
 
-`ReactPortfolioServer` **es privado y aquí no hay token**: su CI NO se puede
-leer desde este host y no se declara verde por reproducir su mandato en local.
-**Pendiente de confirmar por el propietario**: runs de `04a020d`, `ffcc0ba`
-y `5f03c68`.
+`ReactPortfolioServer` es privado, pero la sesión actual sí dispone de acceso
+autenticado de solo lo necesario para comprobar Actions. Verificados como
+`completed/success`: `04a020d`, `ffcc0ba` y `5f03c68`.
 
 ## 8. Decisiones de diseño ya tomadas (no re-litigar sin evidencia)
 
@@ -349,10 +350,8 @@ y `5f03c68`.
 Nada de esto se ejecuta sin aprobación explícita. Orden sugerido, derivado del
 contrato §6 (fases 8-10) y de lo medido:
 
-1. **Decidir `proz` y `remoteco`** (§5). Si se retiran: `state: retired`,
-   quitar del registro de providers de SwissJob y del `.env`, evidencia en el
-   inventario. Si proz se resuelve por feed de miembro: adaptador RSS como
-   `native_rss`, misma receta.
+1. **HECHO · `proz` y `remoteco` retirados** (§5): `state: retired`, fuera del
+   registro de providers de SwissJob y decisión registrada en el inventario.
 2. **Confirmar la CI de ReactPortfolio** (`04a020d`, `ffcc0ba`, `5f03c68`).
 3. **Credenciales a Core en el NAS**: `CORE_ADZUNA_APP_ID/APP_KEY`,
    `CORE_JSEARCH_RAPIDAPI_KEY` (hoy en el `.env` del Portfolio).

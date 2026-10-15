@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "objective": "Core is the sole external job-offer publisher; SwissJob and ReactPortfolio are consumers.",
-  "verified_at": "2026-10-14",
+  "verified_at": "2026-10-15",
   "ratchet": {
     "min_core_owned_sources": 16,
     "min_inventory_verified_sources": 58,
-    "max_local_pending_sources": 26,
-    "max_active_local_publishers": 27
+    "max_local_pending_sources": 24,
+    "max_active_local_publishers": 25
   },
   "sources": [
     {
@@ -621,7 +621,7 @@
     {
       "name": "proz",
       "aliases": ["proz.com"],
-      "current_harvesters": [{"product": "swissjob", "module": "backend/providers/proz.py", "triggers": ["tasks.pipeline.daily_harvest at 12:00 Europe/Zurich with +/-4h jitter"]}],
+      "current_harvesters": [],
       "credentials": [],
       "transport": "public RSS XML feed over HTTPS",
       "external_identity": "RSS offer URL, falling back to GUID; the dormant normalizer computes MD5(title|company|URL-or-GUID)",
@@ -629,14 +629,14 @@
       "last_success": [{"product": "swissjob", "at": null, "evidence": "latest attempt 2026-10-13T10:25:07.962809+00:00 failed; 46 consecutive errors and no stored row or successful run"}],
       "production_metrics": {"stored_entries": 0, "active_entries": 0, "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0, "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/proz/field_presence"},
       "core_scope_ids": [],
-      "blocker": "The scheduled local producer has 46 consecutive errors and no successful production run; determine a compliant working transport or retire it, after the Phase -1 gate.",
+      "blocker": "Retired by explicit owner decision on 2026-10-15 after 46 consecutive production errors, zero stored rows, and confirmation that no compliant transport is currently available.",
       "inventory_verified": true,
-      "state": "local_pending",
-      "target_owner": "core",
-      "active_publishers": ["swissjob"],
+      "state": "retired",
+      "target_owner": null,
+      "active_publishers": [],
       "swissjob_module": true,
-      "swissjob_registry": true,
-      "evidence": "SwissJob schedules it, but production records 46 errors and no successful run; validate for migration or retirement."
+      "swissjob_registry": false,
+      "evidence": "Owner approved definitive retirement on 2026-10-15; removed from the SwissJob provider registry before the grouped cutover."
     },
     {
       "name": "publicjobs",
@@ -677,7 +677,7 @@
     {
       "name": "remoteco",
       "aliases": ["remote.co"],
-      "current_harvesters": [{"product": "swissjob", "module": "backend/providers/remoteco.py", "triggers": ["tasks.pipeline.daily_harvest at 12:00 Europe/Zurich with +/-4h jitter"]}],
+      "current_harvesters": [],
       "credentials": [],
       "transport": "public RSS XML feed over HTTPS",
       "external_identity": "RSS offer URL, falling back to GUID; the dormant normalizer computes MD5(title|company|URL-or-GUID)",
@@ -685,14 +685,14 @@
       "last_success": [{"product": "swissjob", "at": null, "evidence": "latest attempt 2026-10-13T10:26:53.928274+00:00 failed; 54 consecutive errors and no stored row or successful run"}],
       "production_metrics": {"stored_entries": 0, "active_entries": 0, "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0, "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/remoteco/field_presence"},
       "core_scope_ids": [],
-      "blocker": "The scheduled local producer has 54 consecutive errors and no successful production run; determine a compliant working transport or retire it, after the Phase -1 gate.",
+      "blocker": "Retired by explicit owner decision on 2026-10-15 after 54 consecutive production errors, zero stored rows, a dead upstream feed, and confirmation that no compliant transport is currently available.",
       "inventory_verified": true,
-      "state": "local_pending",
-      "target_owner": "core",
-      "active_publishers": ["swissjob"],
+      "state": "retired",
+      "target_owner": null,
+      "active_publishers": [],
       "swissjob_module": true,
-      "swissjob_registry": true,
-      "evidence": "SwissJob schedules it, but production records 54 errors and no successful run; validate for migration or retirement."
+      "swissjob_registry": false,
+      "evidence": "Owner approved definitive retirement on 2026-10-15; removed from the SwissJob provider registry before the grouped cutover."
     },
     {
       "name": "remoteok",

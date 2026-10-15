@@ -68,12 +68,11 @@ continuar sin rediseñarlo.
    (`5f03c68` en ReactPortfolio y `c7d5388` en Core). DynamiteJobs quedó cerrado antes (`9ec6901` /
    `1a0db8d`, CI `38607230379` y `38608902811` verdes), igual que JSearch y
    Adzuna en los commits de sus checkpoints. No se ha desplegado ninguno.
-6. **Cero portales pendientes de implementar.** 40 de las 42 fuentes migrables
-   tienen `core_adapter` en rama; las dos que no son `proz` y `remoteco`, que no
-   son implementables con un cliente conforme desde este host (medido el
-   2026-10-15) y esperan decisión del propietario: retirarlas con la evidencia o
-   pagar un navegador stealth. El registro de scrapers de SwissJob está VACÍO y
-   los trece módulos siguen como rollback.
+6. **Cero portales pendientes de implementar.** Las 40 fuentes operativas tienen
+   `core_adapter` en rama. `proz` y `remoteco`, no implementables con un cliente
+   conforme (medido el 2026-10-15), fueron retirados definitivamente por
+   decisión explícita del propietario ese mismo día. El registro de scrapers de
+   SwissJob está VACÍO y los módulos legados siguen temporalmente como rollback.
 7. **Relevo operativo verificado el 2026-10-15:** SwissJob/Core continúa en
    `feat/fase-a-core` (última cabeza funcional `020469e`, CI `38696733154`
    verde; después sólo commits documentales); ReactPortfolio continúa en
@@ -103,6 +102,21 @@ continuar sin rediseñarlo.
    huellas; implementación mínima en Core; pruebas por capas y doble ciclo
    aislado; paridad explicada; adaptación del consumidor y apagado local;
    suites/CI; y checkpoint de relevo antes de avanzar al portal siguiente.
+
+### Checkpoint 2026-10-15 · Decisión de retirada y comienzo del corte
+
+- El propietario confirmó la retirada definitiva de `proz` y `remoteco` y
+  autorizó continuar con fusión, despliegue, activación de scopes, retirada de
+  código local y sondas finales.
+- Ambos quedan fuera de `_PROVIDER_CLASSES`, sin publicador activo y en estado
+  `retired`. La evidencia histórica se conserva; nunca almacenaron una oferta
+  productiva (46 y 54 errores consecutivos respectivamente).
+- El inventario pasa a 58 fuentes: 16 `local_removed`, 24 `local_pending` y 18
+  `retired`; el ratchet se endurece a un máximo de 24 pendientes y 25
+  publicadores locales (Jobicy todavía cuenta dos veces hasta el corte).
+- Siguiente puerta: pruebas estrechas y ratchets, commit/push y CI verde antes
+  de fusionar. Los módulos físicos se borran con todo el legado después de que
+  Core esté desplegado y sus scopes hayan completado ciclos correctos.
 
 ### Checkpoint 2026-10-14 · Fase -1 parcialmente completada
 
