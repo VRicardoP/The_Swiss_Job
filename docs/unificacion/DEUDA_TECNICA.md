@@ -182,10 +182,13 @@ continuar sin rediseñarlo.
 - La ventana nativa `2026-10-15T12:00:00+02:00` terminó con 49 scopes `ok`,
   cero en ejecución, cero sin iniciar y un único error: JSearch `http_429`.
   Celery agotó sus reintentos y dejó la cola vacía; no hay otro fallo oculto.
-- Una única sonda segura desde el contenedor Core confirmó 429, límite publicado
-  de 200 peticiones y `x-ratelimit-requests-reset=1544540` (aprox. 17,9 días
-  desde esa lectura). La salida excluyó secreto, URL, query y cuerpo. No se
-  vuelve a consumir cuota con sondeos repetidos.
+- Dos sondas seguras desde el contenedor Core confirmaron 429. La segunda se
+  justificó para distinguir la cuota gratuita y devolvió límite 200, restante
+  `-2`, reset en 1.543.221 segundos (aprox. 17,9 días) y ningún encabezado
+  separado de *free-plan hard limit*. RapidAPI documenta oficialmente que
+  `x-ratelimit-requests-reset` son segundos hasta el reinicio. Las salidas
+  excluyeron secreto, URL, query y cuerpo; no se harán más peticiones antes del
+  reset.
 - El scope JSearch permanece habilitado con dos fallos consecutivos y no ha
   alcanzado el kill-switch. Este ciclo **no satisface** el gate 50/50 y no se
   despliegan aún los consumidores.

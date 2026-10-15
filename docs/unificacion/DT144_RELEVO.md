@@ -81,11 +81,15 @@ hasta el siguiente checkpoint:
   `scope:{scope_id}:native:{window}:{scope_id}`. El ciclo terminó su trabajo:
   49 scopes están `ok`, ninguno sigue ejecutándose o sin iniciar y sólo JSearch
   falló con `http_429` tras agotar sus reintentos.
-- Diagnóstico seguro de JSearch: una única petición de control desde el Core
-  devolvió 429, límite publicado de 200 peticiones y
-  `x-ratelimit-requests-reset=1544540` (aprox. 17,9 días desde la sonda). No se
-  imprimieron clave, URL, query ni cuerpo. El scope sigue habilitado, acumula
-  dos fallos y todavía no alcanzó el umbral de autoapagado. La cola quedó vacía.
+- Diagnóstico seguro de JSearch: dos peticiones de control desde el Core
+  devolvieron 429. La segunda se hizo sólo para distinguir el límite gratuito:
+  publicó límite 200, restante `-2`, reset en 1.543.221 segundos (aprox. 17,9
+  días) y ningún encabezado separado de *free-plan hard limit*. La
+  [documentación oficial de RapidAPI](https://docs.rapidapi.com/docs/response-headers)
+  confirma que `x-ratelimit-requests-reset` son segundos hasta reiniciar la
+  cuota. No se imprimieron clave, URL, query ni cuerpo y no se harán más sondas
+  antes del reset. El scope sigue habilitado, acumula dos fallos y todavía no
+  alcanzó el umbral de autoapagado. La cola quedó vacía.
 - Preparación de consumidores: se detectó antes del despliegue que
   `watchlist_tasks._get_watchlist_sources()` derivaba de `_SCRAPER_CLASSES`, ya
   vacío por el traspaso, de modo que la alerta de salud y el digest escolar
