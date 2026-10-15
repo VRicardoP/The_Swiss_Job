@@ -104,6 +104,19 @@ hasta el siguiente checkpoint:
   una segunda cuota ya configurada; no se debe rotar ni repetir la petición
   antes del reset salvo que el propietario aporte otra credencial válida y
   gratuita.
+- Revalidación de espera `2026-10-15T17:02:34+02:00`: la sonda final se
+  ejecutó otra vez por stdin y en sólo lectura. Core sigue `ready`, autoritativo,
+  en release `5b3bf3d` y Alembic `core0055`; observa 50/50 scopes habilitados y
+  con estado, cero autoapagados, 25.795 entregas, cero pendientes/dead-letter,
+  staging 0 y slot de captura ausente. Su única causa de salida 1 es el gate
+  `harvest_not_50_of_50` de JSearch; no hizo una petición al proveedor.
+  Los nombres productivos exactos son `swissjob-core-api-r5`,
+  `swissjob-core-worker-r5`, `swissjob-core-harvest-worker-r5` y
+  `swissjob-core-ops-worker-r5`: los cuatro ejecutan la misma imagen y tienen
+  cero reinicios. `swissjob-worker` continúa `exited (0)` y
+  `portfolio_worker` sigue sin reinicios, con
+  `BACKGROUND_SCHEDULERS_ENABLED=false` y la lista de fuentes heredadas
+  configurada. No hubo despliegue ni mutación productiva.
 - Preparación de consumidores: se detectó antes del despliegue que
   `watchlist_tasks._get_watchlist_sources()` derivaba de `_SCRAPER_CLASSES`, ya
   vacío por el traspaso, de modo que la alerta de salud y el digest escolar
