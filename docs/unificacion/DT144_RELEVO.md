@@ -97,6 +97,16 @@ hasta el siguiente checkpoint:
   cuota. No se imprimieron clave, URL, query ni cuerpo y no se harán más sondas
   antes del reset. El scope sigue habilitado, acumula dos fallos y todavía no
   alcanzó el umbral de autoapagado. La cola quedó vacía.
+- Hora segura de reanudación comprobable: los logs sitúan los intentos nativos
+  en `2026-10-15T12:10:37Z` y `2026-10-15T12:44:14Z`, pero las dos sondas
+  directas no dejaron marca temporal y no permiten afirmar el instante exacto
+  del reset. GitHub sí registró a `2026-10-15T13:47:57Z` el primer CI
+  (`38745776582`) del commit que ya contenía el valor 1.543.221; esa hora es
+  necesariamente posterior a la respuesta. Sumando el contador resulta el
+  límite conservador `2026-11-02T10:28:18Z`, es decir,
+  `2026-11-02T11:28:18+01:00` en Madrid/Zúrich. No ejecutar JSearch antes. A
+  partir de esa hora, hacer **un único** `run_scope` con la clave determinista
+  documentada; si aún devuelve 429, conservar el nuevo reset sin repetir.
 - Se comprobó después, dentro del NAS y sin imprimir valores ni huellas, la
   credencial efectiva de `swissjob-core-api-r5` frente a la de
   `portfolio_backend`: ambas son la **misma** credencial JSearch. El worker de

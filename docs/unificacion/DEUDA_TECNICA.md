@@ -209,6 +209,14 @@ continuar sin rediseñarlo.
   `x-ratelimit-requests-reset` son segundos hasta el reinicio. Las salidas
   excluyeron secreto, URL, query y cuerpo; no se harán más peticiones antes del
   reset.
+- El instante exacto de las sondas directas no quedó en logs; sólo constan los
+  intentos nativos de `12:10:37Z` y `12:44:14Z`. Para no asumir, se tomó la
+  primera marca externa que forzosamente es posterior: GitHub creó a
+  `2026-10-15T13:47:57Z` el CI `38745776582` del commit que ya documentaba el
+  contador 1.543.221. Su suma fija el límite conservador de reintento en
+  `2026-11-02T10:28:18Z` (`11:28:18+01:00` Madrid/Zúrich). No llamar antes; a
+  partir de entonces ejecutar una sola vez el `run_scope` determinista de
+  JSearch y, si persiste el 429, registrar el nuevo reset sin otra repetición.
 - El scope JSearch permanece habilitado con dos fallos consecutivos y no ha
   alcanzado el kill-switch. Este ciclo **no satisface** el gate 50/50 y no se
   despliegan aún los consumidores.
