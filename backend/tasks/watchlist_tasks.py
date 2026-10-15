@@ -1,8 +1,8 @@
 """Celery tasks específicas de la watchlist de colegios suizos.
 
-- check_watchlist_health: monitor del propio módulo. Detecta scrapers de la
-  watchlist que llevan > 24h sin ejecutarse con éxito o cuyos contadores de
-  bloqueo en compliance están altos. Emite notificaciones a los usuarios
+- check_watchlist_health: monitor del propio módulo. Detecta fuentes de la
+  watchlist que llevan > 24h sin completar en Core, están deshabilitadas o
+  acumulan fallos. Emite notificaciones a los usuarios
   con watchlist_schools_enabled=True.
 
 DECISIÓN D.1 (gate anti-doble-motor, §15bis): `send_watchlist_digest` SÍ se
@@ -20,24 +20,78 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import httpx
+from pydantic import AwareDatetime, BaseModel, Field, ValidationError
+
 from celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
 
+_WATCHLIST_SOURCES = (
+    "swiss_schools_ecolint",
+    "swiss_schools_hautlac",
+    "swiss_schools_inspired",
+    "swiss_schools_isb",
+    "swiss_schools_iscs",
+    "swiss_schools_isp",
+    "swiss_schools_nae",
+    "swiss_schools_zis",
+)
+
+
 def _get_watchlist_sources() -> tuple[str, ...]:
-    """Deriva del registry los source_keys que pertenecen a la watchlist.
-
-    Cualquier scraper cuyo nombre empiece por `swiss_schools_` se considera
-    parte de la watchlist. Esto evita la divergencia silenciosa que tenía
-    la lista hardcoded cuando se añadían nuevos scrapers (Fase 2-3).
-    """
-    from scrapers import _SCRAPER_CLASSES
-
-    return tuple(k for k in _SCRAPER_CLASSES if k.startswith("swiss_schools_"))
+    """Fuentes escolares del contrato Core que alimentan esta watchlist."""
+    return _WATCHLIST_SOURCES
 
 
-# Umbral de "scraper silencioso": si lleva más de N horas sin éxito
+class _CoreSourceHealth(BaseModel):
+    source: str
+    last_complete_at: AwareDatetime | None
+    enabled_scopes: int = Field(ge=0)
+    observed_scopes: int = Field(ge=0)
+    max_consecutive_failures: int = Field(ge=0)
+    update_in_progress: bool
+
+
+async def _read_core_source_health(client, source: str) -> _CoreSourceHealth:
+    try:
+        response = await client.get(
+            f"/harvest/sources/{source}/aggregate",
+            params={"item_limit": 1, "top_n": 1},
+        )
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Core inaccesible al consultar {source}") from exc
+    if response.status_code != 200:
+        raise RuntimeError(f"Core devolvió HTTP {response.status_code} para {source}")
+    try:
+        result = _CoreSourceHealth.model_validate(response.json())
+    except (ValidationError, ValueError, TypeError) as exc:
+        raise RuntimeError(f"Core devolvió salud inválida para {source}") from exc
+    if result.source != source:
+        raise RuntimeError(f"Core devolvió otra fuente al consultar {source}")
+    return result
+
+
+async def _core_watchlist_health(client_factory=None) -> list[_CoreSourceHealth]:
+    from config import settings
+    from services.catalog.core_client import default_client_factory
+
+    factory = client_factory or default_client_factory
+    if client_factory is None and not settings.CORE_CONSUMER_KEY:
+        raise RuntimeError("CORE_CONSUMER_KEY no configurada")
+    async with factory() as client:
+        return list(
+            await asyncio.gather(
+                *(
+                    _read_core_source_health(client, source)
+                    for source in _WATCHLIST_SOURCES
+                )
+            )
+        )
+
+
+# Umbral de fuente silenciosa: si lleva más de N horas sin ciclo completo.
 _SILENT_HOURS = 24
 
 # G1/P3-21 — cooldown de re-notificación de salud: sin él, una fuente
@@ -56,7 +110,7 @@ _DIGEST_SENT_PREFIX = "watchlist_digest:sent"
 
 @celery_app.task(name="tasks.watchlist.check_health")
 def check_watchlist_health() -> dict[str, Any]:
-    """Comprueba que los scrapers de la watchlist están operativos."""
+    """Comprueba que las fuentes de la watchlist están operativas en Core."""
     try:
         return asyncio.run(_check_health_async())
     except Exception as exc:
@@ -64,80 +118,51 @@ def check_watchlist_health() -> dict[str, Any]:
         return {"status": "error", "error": str(exc)}
 
 
-async def _check_health_async() -> dict[str, Any]:
-    from sqlalchemy import select
-
+async def _check_health_async(client_factory=None) -> dict[str, Any]:
     from database import task_session
-    from models.source_compliance import SourceCompliance
 
     issues: list[dict] = []
     now = datetime.now(timezone.utc)
     threshold = now - timedelta(hours=_SILENT_HOURS)
-    watchlist_sources = _get_watchlist_sources()
+    sources = await _core_watchlist_health(client_factory)
 
     async with task_session() as db:
-        # 1) Fuentes de la watchlist con problemas
-        stmt = select(SourceCompliance).where(
-            SourceCompliance.source_key.in_(watchlist_sources)
-        )
-        sources = (await db.execute(stmt)).scalars().all()
-        sources_by_key = {s.source_key: s for s in sources}
-
-        # 1a) Sources registradas en el scraper registry pero sin fila en
-        # source_compliance — error de seeding o migración perdida.
-        for key in watchlist_sources:
-            if key not in sources_by_key:
-                issues.append(
-                    {
-                        "source": key,
-                        "kind": "no_compliance_row",
-                        "detail": "Scraper registrado sin source_compliance",
-                    }
-                )
-
-        # 1b) Issues por fuente conocida
+        # Fuentes de la watchlist con problemas según su autoridad única.
         for s in sources:
-            if not s.is_allowed:
+            if s.enabled_scopes == 0:
                 issues.append(
                     {
-                        "source": s.source_key,
+                        "source": s.source,
                         "kind": "disabled",
-                        "detail": "Compliance kill-switch activado",
+                        "detail": "Core no tiene scopes habilitados",
                     }
                 )
                 continue
-            if s.consecutive_blocks > 0:
+            if s.max_consecutive_failures > 0:
                 issues.append(
                     {
-                        "source": s.source_key,
-                        "kind": "blocks",
-                        "detail": f"{s.consecutive_blocks} bloques consecutivos",
+                        "source": s.source,
+                        "kind": "failures",
+                        "detail": (
+                            f"{s.max_consecutive_failures} fallos consecutivos en Core"
+                        ),
                     }
                 )
-            if s.last_blocked_at and s.last_blocked_at >= threshold:
+            if s.last_complete_at is None:
                 issues.append(
                     {
-                        "source": s.source_key,
-                        "kind": "recently_blocked",
-                        "detail": f"Último bloqueo {s.last_blocked_at.isoformat()}",
-                    }
-                )
-            # 1c) NUEVO: silencio sin éxito en >24h
-            if s.last_success_at is None:
-                issues.append(
-                    {
-                        "source": s.source_key,
+                        "source": s.source,
                         "kind": "never_succeeded",
-                        "detail": "Nunca completó un scrape exitosamente",
+                        "detail": "Nunca completó una cosecha en Core",
                     }
                 )
-            elif s.last_success_at < threshold:
+            elif s.last_complete_at < threshold and not s.update_in_progress:
                 issues.append(
                     {
-                        "source": s.source_key,
+                        "source": s.source,
                         "kind": "silent",
                         "detail": (
-                            f"Sin éxito desde {s.last_success_at.isoformat()} "
+                            f"Sin ciclo completo desde {s.last_complete_at.isoformat()} "
                             f"(>{_SILENT_HOURS}h)"
                         ),
                     }

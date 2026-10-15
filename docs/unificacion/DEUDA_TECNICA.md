@@ -195,6 +195,27 @@ continuar sin rediseñarlo.
   consumidores y sondas, segundo ciclo 50/50, borrado físico, inventario,
   suites/CI, despliegue y sondas finales.
 
+### Checkpoint 2026-10-15 · Salud y digest escolar preservados antes del corte
+
+- La revisión del consumidor encontró una regresión concreta antes de
+  desplegarlo: `_get_watchlist_sources()` leía `_SCRAPER_CLASSES`; como el
+  registro local está vacío, `check_watchlist_health` comprobaba cero fuentes y
+  el digest filtraba todas las ofertas escolares.
+- Corrección mínima en `feat/dt144-consumer-cutover`: las ocho fuentes escolares
+  son ahora el contrato cerrado del consumidor. La alerta consulta en paralelo
+  su agregado autenticado de Core y valida fuente, fecha de último ciclo,
+  scopes habilitados/observados, fallos y ejecución activa. Se eliminó la
+  lectura de `SourceCompliance`; no se añadió endpoint ni dependencia.
+- Evidencia local: Ruff/formato verdes y
+  `docker compose run --rm --no-deps backend pytest -q
+  tests/test_g1_fix_api_y_watchlist.py` = 10 passed. La primera ejecución fuera
+  de Compose no alcanzó las pruebas porque el host Docker `postgres` no se
+  resuelve desde el host; queda registrada como error de entorno, no como fallo
+  funcional.
+- Esta corrección debe fusionarse y desplegarse junto con el consumidor, pero
+  no altera la puerta vigente: JSearch debe cerrar el primer ciclo 50/50 antes
+  de desplegar BFF/worker.
+
 ### Checkpoint 2026-10-14 · Fase -1 parcialmente completada
 
 - Inventario reconciliado: 58 fuentes, 16 `local_removed`, 26

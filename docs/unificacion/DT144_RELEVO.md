@@ -86,6 +86,13 @@ hasta el siguiente checkpoint:
   `x-ratelimit-requests-reset=1544540` (aprox. 17,9 días desde la sonda). No se
   imprimieron clave, URL, query ni cuerpo. El scope sigue habilitado, acumula
   dos fallos y todavía no alcanzó el umbral de autoapagado. La cola quedó vacía.
+- Preparación de consumidores: se detectó antes del despliegue que
+  `watchlist_tasks._get_watchlist_sources()` derivaba de `_SCRAPER_CLASSES`, ya
+  vacío por el traspaso, de modo que la alerta de salud y el digest escolar
+  habrían filtrado cero fuentes. La rama `feat/dt144-consumer-cutover` fija las
+  ocho fuentes del contrato del consumidor y obtiene su salud del agregado
+  autenticado de Core, sin tabla de compliance ni registry local. Formato y
+  Ruff pasan; prueba focal en Compose: 10/10.
 - Punto exacto de reanudación: no contar este ciclo como superado hasta obtener
   50/50 `ok`. Cuando la cuota esté disponible —o se aporte otra credencial
   válida sin coste— reejecutar **sólo JSearch** con la misma clave determinista
