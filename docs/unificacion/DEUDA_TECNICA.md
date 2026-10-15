@@ -150,6 +150,33 @@ continuar sin rediseñarlo.
   pasado el lease de 900 s, y se exigen los 50 scopes cerrados sin fallo.
 - Estado completo y receta exacta de relevo: `DT144_RELEVO.md` §0.1.
 
+### Checkpoint 2026-10-15 · Corrección desplegada y primer ciclo nativo en curso
+
+- La pausa anterior está resuelta: PR 2 fusionada en
+  `5b3bf3dad27a8575ab6d8f380d4343ba4f540ae3`, run de `main` `38715523686`
+  entero en verde y los cuatro procesos Core desplegados en
+  `swissjob-core:point5-5b3bf3d`. Readiness autoritativo, Alembic `core0055`,
+  cero reinicios del nuevo worker de cosecha.
+- La regresión de logger pasó 23/23 y, ya en producción, el log nuevo mantiene
+  cero coincidencias de parámetros sensibles y cero INFO de `httpx`. El
+  contenedor anterior fue recreado; no se copiaron secretos al ledger.
+- Hallazgo operativo: el helper agregado `run_all_task` no sirve para demostrar
+  un ciclo de 50 scopes bajo los límites globales Celery 1.800/2.100 s. Su run
+  parcial y sus reintentos se invalidaron; se revocaron sin `terminate` las
+  tareas `c50b3cfe-7a2a-4d84-9848-ea2cbf7f75f1` y `87de6aad`. La primera
+  lectura que asoció Jobroom a actividad real era incorrecta y queda corregida:
+  Celery mostró que el trabajo vivo era un `run_scope` de Arbeitnow.
+- Gate válido: dispatcher nativo real de beat, ventana
+  `2026-10-15T12:00:00+02:00`, una tarea independiente por scope. A las 11:58
+  UTC hay 50 esperados, 24 `ok`, 1 Arbeitnow `running`, 25 no iniciados y cero
+  fallos. La tarea activa empezó a las 11:38:37 UTC y su heartbeat avanzó a
+  11:53:52 UTC, dentro de `SWEEP_BUDGET_S=1500`; no se interrumpe.
+- Reanudación exacta: esperar 50/50 `ok`; desplegar y sondar ambos consumidores;
+  ejecutar un segundo ciclo nativo completo; sólo entonces borrar productores,
+  credenciales, conexiones y fallbacks locales, actualizar
+  `source_ownership.json`, pasar suites/CI, fusionar, redesplegar y ejecutar las
+  sondas finales. El detalle vivo manda en `DT144_RELEVO.md` §0.1.
+
 ### Checkpoint 2026-10-14 · Fase -1 parcialmente completada
 
 - Inventario reconciliado: 58 fuentes, 16 `local_removed`, 26

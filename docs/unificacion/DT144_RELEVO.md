@@ -10,11 +10,11 @@
 > para que no haya que reconstruirlo leyendo veinte checkpoints.
 >
 > Última actualización: **2026-10-15, corte en curso**. Las dos ramas iniciales
-> ya están fusionadas y Core `239a737` está desplegado. Los 33 scopes DT-144
-> están habilitados, SwissJob local está detenido y Portfolio local está
-> verificablemente quiescente. El primer ciclo se pausó al descubrir una fuga
-> de credenciales en el INFO de `httpx`; el worker de cosecha Core permanece
-> detenido hasta desplegar la corrección descrita en §0.1.
+> y la corrección de redacción están fusionadas; Core `5b3bf3d` está desplegado.
+> Los 33 scopes DT-144 están habilitados, SwissJob local está detenido y
+> Portfolio local está verificablemente quiescente. El primer ciclo válido es
+> el ciclo nativo de las 12:10 Europe/Zurich: sigue en curso, sin fallos, como
+> detalla §0.1.
 
 ---
 
@@ -34,25 +34,26 @@
 
 ---
 
-## 0.1 Checkpoint vivo del corte (2026-10-15 09:30 UTC)
+## 0.1 Checkpoint vivo del corte (2026-10-15 11:58 UTC)
 
 Este bloque **prevalece sobre las fotografías anteriores de este documento**
 hasta el siguiente checkpoint:
 
 - Fusiones verificadas: `ReactPortfolioServer/main` = `8b38ddd5aefb36ca4e07d1ffceded93a04ba593b`
   (CI `38706379993`, verde) y `The_Swiss_Job/main` =
-  `239a73754b63924894ab2a7cc7d127c4809ac692` (CI `38708626741`, verde).
-- Core productivo: cuatro contenedores en `swissjob-core:point5-239a737`,
-  `/v1/ready` publica `ready`, `authoritative=true`, Alembic `core0055`.
-  El directorio de despliegue y Compose independiente, que habían desaparecido,
-  se reconstruyeron desde manifiestos saneados; el supervisor QTS se restauró y
-  volvió a estado `ok`.
-- La primera ejecución del despliegue falló cerrada antes de recrear: `grep -v`
-  devolvía 1 cuando `.env.core.admin.prod` contenía legítimamente una sola línea.
-  La corrección pendiente sustituye esas dos eliminaciones por `sed`. Además,
-  `CORE_DB_PASSWORD` del fichero recuperado no coincidía con el DSN vivo: se
-  sincronizó atómicamente sin imprimirlo; el bootstrap convergente verificó rol,
-  aislamiento, `pgvector` y aplicó `core0055`.
+  `5b3bf3dad27a8575ab6d8f380d4343ba4f540ae3`. Esta última cabeza incluye la
+  corrección de redacción/despliegue de la PR 2; su run de `main`
+  `38715523686` terminó entero en verde.
+- Core productivo: cuatro contenedores en `swissjob-core:point5-5b3bf3d`,
+  `/v1/ready` publica `ready`, `authoritative=true`, Alembic `core0055`; los
+  cuatro procesos comparten release y el worker de cosecha nuevo no ha
+  reiniciado. El directorio de despliegue y Compose independiente se
+  reconstruyeron desde manifiestos saneados; el supervisor QTS volvió a `ok`.
+- El falso fallo de `grep -v` sobre un env administrativo de una línea quedó
+  sustituido por `sed` en la release desplegada. `CORE_DB_PASSWORD` del fichero
+  recuperado no coincidía con el DSN vivo: se sincronizó atómicamente sin
+  imprimirlo; el bootstrap convergente verificó rol de mínimo privilegio,
+  aislamiento, `pgvector` y cabeza `core0055`.
 - Provisión exacta: base productiva con 71 fuentes y 79 scopes; 40 fuentes y 50
   scopes habilitados. Los 24 orígenes DT-144 existen con exactamente 33 scopes
   (Adzuna 3, Jobicy 8, los otros 22 uno cada uno).
@@ -60,21 +61,33 @@ hasta el siguiente checkpoint:
   detuvo porque también ejecuta Uvicorn: se recreó con la misma imagen y
   `BACKGROUND_SCHEDULERS_ENABLED=false`; su log de arranque confirma «0
   background tasks armed». El backend Portfolio sigue en rol `api`.
-- Primer ciclo: clave `dt144-cutover-1`, run
-  `ec3e6041-463a-5d89-987e-506aaa5a2940`, tarea Celery `c50b3cfe-7a2a-4d84-9848-ea2cbf7f75f1`.
-  Cerró 2 scopes `ok` y fue interrumpido durante JobScout24 porque el logger INFO
-  de `httpx` publicó la URL completa de Adzuna con sus parámetros de
-  autenticación. **No copiar esos valores desde logs.** `swissjob-core-harvest-worker-r5`
-  está detenido; este ciclo parcial no cuenta como validación.
-- Corrección en el árbol, todavía sin publicar: `jobhunt_core/celery_app.py`
-  fuerza `httpx`/`httpcore` a WARNING al importar y tras las dos señales de
-  logging de Celery; regresión focal 23/23 y Ruff/formato verdes. También está
-  corregido `scripts/deploy_nas.sh` para el caso de env administrativo mínimo.
-- Punto exacto de reanudación: versionar únicamente esos ficheros y este
-  checkpoint, push/PR/CI/fusión normal; desplegar Core de nuevo; comprobar que
-  el contenedor anterior (y su log sensible) desaparece; relanzar la **misma**
-  clave `dt144-cutover-1` cuando el lease de 900 s haya vencido; exigir 50
-  cierres sin fallo. No arrancar aún SwissJob local ni rearmar Portfolio.
+- La fuga de la URL de Adzuna no se repite: `jobhunt_core/celery_app.py` fija
+  `httpx`/`httpcore` a WARNING al importar y tras las dos señales de logging de
+  Celery. Tras peticiones reales, los recuentos seguros son cero coincidencias
+  de parámetros sensibles y cero líneas INFO `HTTP Request`; el contenedor que
+  contenía el log anterior fue recreado. **No copiar valores históricos.**
+- Corrección de metodología: `run_all_task("dt144-cutover-1")` NO es el gate
+  productivo. Un barrido agregado de 50 scopes no cabe en los límites Celery
+  globales 1.800/2.100 s; sus reintentos y leases dejaron una fotografía
+  parcial (24 `ok`, `financejobs` error y `jobroom` marcado en ejecución) que
+  **se invalida**. Las tareas `c50b3cfe-7a2a-4d84-9848-ea2cbf7f75f1` y la
+  duplicada manual `87de6aad` se revocaron sin terminar procesos. No atribuir
+  aquella marca de Jobroom a trabajo vivo: una inspección Celery posterior
+  demostró que la tarea activa real era un `run_scope` de Arbeitnow.
+- La validación correcta sigue el camino real de producción: beat despachó a
+  las 12:10 Europe/Zurich la ventana exacta
+  `2026-10-15T12:00:00+02:00`, una tarea independiente por scope con identidad
+  `scope:{scope_id}:native:{window}:{scope_id}`. La sonda de las 11:58 UTC
+  devuelve 50 esperados, 24 `ok`, 1 `running` (Arbeitnow) y 25 aún no iniciados,
+  sin fallos. Celery confirma esa misma tarea activa desde las 11:38:37 UTC,
+  sin duplicados reservados; su heartbeat avanzó a las 11:53:52 UTC y está
+  dentro del presupuesto documentado de 1.500 s.
+- Punto exacto de reanudación: no interrumpir esta ventana. Exigir 50/50 `ok`,
+  desplegar BFF/worker de SwissJob y backend/worker de Portfolio, sondar ambos
+  consumidores, lanzar un segundo dispatcher nativo con ventana única y exigir
+  otro 50/50. Sólo después retirar físicamente productores, credenciales,
+  `CompositeCatalog` y `FallbackCatalog`, actualizar el inventario y repetir
+  suites, CI, despliegues y sondas finales.
 
 ---
 
