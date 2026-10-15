@@ -40,14 +40,18 @@
 Este bloque **prevalece sobre las fotografías anteriores de este documento**
 hasta el siguiente checkpoint:
 
-- Fusiones verificadas: `ReactPortfolioServer/main` =
+- Fusiones de código verificadas: `ReactPortfolioServer/main` incorporó
   `682a3e589d137fe180c2b905a508250e6f0d1e10` (PR 2, CI de `main`
   `38742958119` verde). La preparación SwissJob/Core quedó en
   `136116df590e98477a17ac23a20ec6243cc75633` (PR 5, CI `38744550106` verde) y
-  el relevo documental se fusionó después en `The_Swiss_Job/main` como
+  el relevo documental se fusionó después como
   `205987ac01b88893b2199eeea083ed9f31341a66` (PR 6, CI de `main`
-  `38747081401`, 9/9 trabajos verdes). Las dos preparaciones están fusionadas,
-  pero **no se han desplegado** porque el gate JSearch sigue en 49/50.
+  `38747081401`, 9/9 trabajos verdes). Los PR documentales posteriores no
+  cambian código operativo: la autoridad para la cabeza documental es siempre
+  `github/main`, que debe actualizarse con `git fetch github main` al reanudar;
+  ningún SHA documental de este párrafo es un objetivo de despliegue. Las dos
+  preparaciones están fusionadas, pero **no se han desplegado** porque el gate
+  JSearch sigue en 49/50.
 - Core productivo: cuatro contenedores en `swissjob-core:point5-5b3bf3d`,
   `/v1/ready` publica `ready`, `authoritative=true`, Alembic `core0055`; los
   cuatro procesos comparten release y el worker de cosecha nuevo no ha
@@ -136,15 +140,17 @@ hasta el siguiente checkpoint:
   23 módulos productores/fallback importables y tres nombres de credencial.
   Las sondas sólo enumeran nombres, nunca valores, y convierten estos residuos
   en condiciones ejecutables del corte final.
-- Despliegue futuro aislado de los cambios ajenos del workspace: worktrees
-  limpios `/tmp/swissjob-dt144-cutover-main` (`136116d`) y
-  `/tmp/reactportfolio-dt144-cutover-main` (`682a3e5`). Los modos secos exactos
-  resuelven `swissjob-backend:point5-136116d`,
+- Despliegue futuro aislado de los cambios ajenos del workspace: los worktrees
+  de `/tmp` son desechables y **no son autoridad**. Los últimos modos secos se
+  hicieron desde los SHAs operativos `136116d` (SwissJob/Core) y `682a3e5`
+  (Portfolio), resolviendo `swissjob-backend:point5-136116d`,
   `swissjob-worker:point5-136116d` y `portfolio-backend:board-682a3e5`, sin
-  construir ni tocar el NAS. Una inspección posterior a las fusiones confirma
-  que producción no se autodesplegó: BFF/worker siguen en `4017081`, Portfolio
-  en `444f072` y Core en `5b3bf3d`; cero reinicios y los productores locales
-  permanecen quiescentes.
+  construir ni tocar el NAS. Antes del despliegue real hay que recrear o
+  actualizar worktrees limpios desde el `github/main` vigente de cada repo y
+  repetir el modo seco; no reutilizar por nombre un checkout de `/tmp`. Una
+  inspección posterior a las fusiones confirma que producción no se
+  autodesplegó: BFF/worker siguen en `4017081`, Portfolio en `444f072` y Core en
+  `5b3bf3d`; cero reinicios y los productores locales permanecen quiescentes.
 - Punto exacto de reanudación: no contar este ciclo como superado hasta obtener
   50/50 `ok`. Cuando la cuota esté disponible —o se aporte otra credencial
   válida sin coste— reejecutar **sólo JSearch** con la misma clave determinista
