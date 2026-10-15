@@ -2,6 +2,8 @@
 
 from services.job_service import BaseJobProvider
 
+_PROVIDER_CLASSES: dict[str, type[BaseJobProvider]] = {}
+
 
 def get_provider(name: str) -> BaseJobProvider | None:
     """Local providers were retired by the DT-144 Core cutover."""
