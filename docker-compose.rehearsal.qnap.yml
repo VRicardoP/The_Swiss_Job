@@ -30,8 +30,6 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    volumes:
-      - hfcache:/home/app/.cache/huggingface
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
       interval: 30s
@@ -52,8 +50,6 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-    volumes:
-      - hfcache:/home/app/.cache/huggingface
     entrypoint: []
     command:
       - celery
@@ -61,38 +57,12 @@ services:
       - celery_app
       - worker
       - -Q
-      - default,scraping,ai
+      - default,ai
       - --concurrency=2
       - --loglevel=info
     networks:
       - legacy-net
       - prod-db-net
-
-  # ÚNICO disparador autónomo de cosecha del rehearsal. El scheduler general
-  # del backend permanece apagado para no ejecutar emails, búsquedas ni otros
-  # side effects; esta cola solo recibe la tarea real de providers cada 6 h.
-  harvest-trigger:
-    image: ${R5_LEGACY_IMAGE:-swissjob-backend:prod}
-    container_name: swissjob-harvest-trigger-r5
-    restart: unless-stopped
-    env_file:
-      - /share/Public/swissjob/rehearsal-r5/.env.legacy.r5
-    entrypoint: []
-    command:
-      - sh
-      - -c
-      - >-
-        while true; do
-          celery -A celery_app call tasks.fetch_providers;
-          sleep 21600;
-        done
-    depends_on:
-      redis:
-        condition: service_healthy
-      worker:
-        condition: service_started
-    networks:
-      - legacy-net
 
   redis-core:
     image: redis:7-alpine
@@ -208,6 +178,5 @@ networks:
 
 volumes:
   redisdata:
-  hfcache:
   redis-core-data:
   core-hf-cache:

@@ -44,20 +44,30 @@ continuar sin rediseñarlo.
 > trampas ya pisadas. Esta lista es el punto de reanudación; ese fichero es el
 > contexto.
 
-**Checkpoint prevalente 2026-10-15 — las dos limpiezas están publicadas:**
-SwissJob PR 13 contiene `7441e0e` (60 módulos y 58 suites locales retirados) y
-`20355b1` (las tablas históricas se preservan en Alembic sin restaurar sus
-runtimes). ReactPortfolio PR 4 contiene `c0c87fb`: 40 módulos y 29 suites
-locales retirados, 22.111 líneas eliminadas; ratchet 40/40 y suite **1740
-passed, 1 skipped**; `935ed56` limpia las variables y cachés de modelo del
-Compose vivo. Sus dos CI de código son verdes (`38791663711`, `38791703790`);
-los dos `backend-test` SwissJob confirman migración y `alembic check` verdes
-(`38792413497`, `38792421864`). El ratchet común permanece en
-`40 core_owned / 0 local_pending / 58 total`. JSearch sigue configurado y
-manualmente deshabilitado, sin llamada nueva. Siguiente paso exacto: CI verde
-de SwissJob, fusionar ambas PR, desplegar desde `main` en orden Core → SwissJob
-→ ReactPortfolio y ejecutar las tres sondas finales. Detalles y método de
-reanudación: `DT144_RELEVO.md` §0.1.
+**Checkpoint prevalente 2026-10-15 — fusiones terminadas; corrección de runtime
+pendiente de publicar:** ReactPortfolio PR 4 está fusionada en `main` como
+`c47b7a3` y SwissJob PR 13 como `f50c0f1`; sus CI de `main` son verdes
+(`38794582363` y `38794769320`, nueve trabajos SwissJob). La sonda Core previa
+al despliegue pasa sobre `5b3bf3d`/`core0055`: 49/49 scopes ejecutables sanos,
+colas drenadas y JSearch como único scope manualmente deshabilitado, sin nueva
+ejecución. El Core no se redesplegó porque su árbol es byte a byte igual al de
+la fusión.
+
+El despliegue BFF se detuvo antes de transferir o cambiar el NAS al descubrir
+instalación condicional de Chromium todavía presente en
+`backend/Dockerfile.prod`; producción sigue intacta. La rama
+`fix/dt144-runtime-residue`, sobre `f50c0f1`, retira Chromium/Playwright, la cola
+`scraping`, la caché HuggingFace local y el disparador de cosecha del rehearsal,
+pero conserva la cola funcional `ai` usada por el análisis de CV. El ratchet
+abarca ambos Dockerfiles y siete manifiestos. Validación local: `40 core_owned /
+0 local_pending / 58 total`, Ruff, compilación, Bash, YAML y diff verdes; suite
+completa **783 passed, 4 warnings** con PostgreSQL/Redis autenticados; la imagen
+construida conserva el usuario `app` y no contiene Playwright, el matcher ni el
+directorio de Chromium. Siguiente
+paso exacto: commit/push/PR/CI/fusión de la corrección; desplegar BFF y worker
+SwissJob desde el nuevo `main`, desplegar ReactPortfolio `c47b7a3`, ejecutar las
+tres sondas finales y cerrar. No ejecutar JSearch. Detalles en
+`DT144_RELEVO.md` §0.1.
 
 1. No repetir el inventario ni la Fase 0: las 58 fuentes están verificadas y
    los ratchets están activos. GitHub Free es el único forge autorizado; no

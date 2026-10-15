@@ -1,15 +1,5 @@
-# Backend producción — gunicorn + uvicorn workers, sin --reload, usuario non-root.
-#
-# Imagen compartida por API y worker, pero SOLO el worker ejecuta scrapers
-# Playwright. INSTALL_BROWSERS controla si se instala Chromium (~1 GB):
-#   - API (backend):  --build-arg INSTALL_BROWSERS=false  → imagen esbelta.
-#   - worker:         INSTALL_BROWSERS=true (default)      → con Chromium.
-# El paquete Python `playwright` se instala siempre (está en requirements); solo
-# el binario del navegador es condicional, así que importar playwright no rompe
-# en la API mientras no lance el navegador (los scrapers corren en el worker).
+# Backend producción — API y tareas de producto, sin cosecha local.
 FROM python:3.12-slim
-
-ARG INSTALL_BROWSERS=true
 
 # build-essential para extensiones con wheels nativas; curl para healthcheck.
 RUN apt-get update \
@@ -17,9 +7,6 @@ RUN apt-get update \
         build-essential \
         curl \
     && rm -rf /var/lib/apt/lists/*
-
-# Playwright deja el binario en esta ruta global accesible por cualquier user
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # Python sin buffering para que los logs salgan al stdout en tiempo real
 ENV PYTHONUNBUFFERED=1
@@ -33,14 +20,6 @@ WORKDIR /app
 # Cache de pip layer: requirements antes que el código
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Playwright + Chromium con sus dependencias del sistema.
-# --with-deps añade fuentes y libs nativas. Pesa ~1 GB; necesario para los
-# scrapers de medjobs, jobs.admin.ch, etc. (solo en la imagen del worker).
-RUN if [ "$INSTALL_BROWSERS" = "true" ]; then \
-        playwright install --with-deps chromium \
-        && chmod -R 755 ${PLAYWRIGHT_BROWSERS_PATH}; \
-    fi
 
 # Copia del código + entrypoint ejecutable
 COPY . .

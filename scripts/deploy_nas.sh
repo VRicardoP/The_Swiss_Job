@@ -16,15 +16,17 @@
 #    El BFF no lo necesita: su entrypoint corre `alembic upgrade head`.
 # 6. Los tres workers se recrean junto a `core-api`: modelo, cosecha y el
 #    worker de operaciones que ejecuta el beat deben publicar la misma release.
-# 7. El worker BFF usa la misma fuente que la API, pero otra imagen con Chromium.
-#    Se despliega explícitamente para no dejar código Celery antiguo en producción.
+# 7. El worker BFF usa la misma fuente que la API y se despliega explícitamente
+#    para no dejar código Celery antiguo en producción.
 # 8. BFF y worker eliminan del Compose vivo las antiguas variables
 #    LEGACY_DISABLED_* y del env compartido las credenciales de portales; las
 #    fuentes transferidas ya no existen en su imagen.
 # 9. El respaldo incluye el servicio: BFF y worker comparten SHA y no deben
 #    sobrescribir el punto de vuelta atrás del otro al desplegarse por separado.
 # 10. El compose transformado se valida como candidato antes de sustituir el vivo.
-# 11. `--config-only` conserva la imagen viva de BFF/worker y permite aplicar
+# 11. BFF/worker retiran del Compose vivo la caché HuggingFace que pertenecía
+#     al matcher local eliminado. El volumen no se borra: sólo deja de montarse.
+# 12. `--config-only` conserva la imagen viva de BFF/worker y permite aplicar
 #     cambios de Compose sin publicar código.
 #
 # Uso:  scripts/deploy_nas.sh core|bff|worker|frontend [--dry-run|--config-only]
@@ -89,7 +91,7 @@ elif [[ "$SERVICIO" == bff ]]; then
   IMAGEN="swissjob-backend:point5-$SHA"
   COMPOSE="swissjob.configured.yml"; PROYECTO="swissjob"
   SERVICIOS=(backend)
-  CONSTRUIR=(docker build --build-arg INSTALL_BROWSERS=false -f backend/Dockerfile.prod -t "$IMAGEN" backend/)
+  CONSTRUIR=(docker build -f backend/Dockerfile.prod -t "$IMAGEN" backend/)
   ETIQUETAR=(true)
   PATRON="swissjob-backend:point5-"
   CONTENEDOR_SALUD="swissjob-backend"
@@ -176,7 +178,27 @@ from pathlib import Path
 
 ruta = Path("$TMP/compose.yml")
 servicios = "${SERVICIOS[*]}".split()
-lineas = ruta.read_text().splitlines()
+contenido = ruta.read_text()
+if "$SERVICIO" in {"bff", "worker"}:
+    patron_cache = re.compile(
+        r"(?m)^    volumes:\n"
+        r"    - type: volume\n"
+        r"      source: swissjob_hfcache\n"
+        r"      target: /home/app/\.cache/huggingface\n"
+        r"      read_only: false\n"
+    )
+    contenido = patron_cache.sub("", contenido)
+    contenido = re.sub(
+        r"(?m)^  swissjob_hfcache:\n"
+        r"    external: true\n"
+        r"    name: swissjob_hfcache\n",
+        "",
+        contenido,
+    )
+    contenido = re.sub(r"(?m)^volumes:\n(?=\s*\Z)", "", contenido)
+    if "swissjob_hfcache" in contenido or "/home/app/.cache/huggingface" in contenido:
+        sys.exit("ABORTA: no se pudo retirar la caché local HuggingFace del Compose")
+lineas = contenido.splitlines()
 salida = []
 actual = None
 etiquetadas = set()

@@ -26,7 +26,7 @@
 # Stop / restart:
 #   docker compose -f docker-compose.prod.yml down
 #   docker compose -f docker-compose.prod.yml up -d
-# Los volúmenes pgdata, redisdata y hfcache persisten entre restarts.
+# Los volúmenes pgdata y redisdata persisten entre restarts.
 
 services:
   postgres:
@@ -78,10 +78,6 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile.prod
-      args:
-        # La API no ejecuta scrapers Playwright (los corre el worker), así que su
-        # imagen se construye sin Chromium (~1 GB menos).
-        INSTALL_BROWSERS: "false"
     image: swissjob-backend:prod
     container_name: swissjob-backend
     restart: unless-stopped
@@ -92,31 +88,19 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      # Cache de HuggingFace persistente — evita re-descargar el modelo
-      # paraphrase-multilingual-MiniLM-L12-v2 (~120 MB) en cada recreate.
-      - hfcache:/home/app/.cache/huggingface
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
       interval: 30s
       timeout: 5s
-      # start_period generoso: el primer arranque carga el modelo embedding
-      # (~120 MB) en CPU del NAS, hasta 5 min. Después del primer arranque
-      # el modelo queda en hfcache y los siguientes recreates son <60s.
       start_period: 360s
       retries: 5
     networks:
       - swissjob-net
 
   worker:
-    # Imagen propia CON Chromium: el worker ejecuta los scrapers Playwright.
-    # Comparte la capa de pip con swissjob-backend:prod (BuildKit la cachea);
-    # solo añade la capa del navegador.
     build:
       context: ./backend
       dockerfile: Dockerfile.prod
-      args:
-        INSTALL_BROWSERS: "true"
     image: swissjob-worker:prod
     container_name: swissjob-worker
     restart: unless-stopped
@@ -125,7 +109,6 @@ services:
     depends_on:
       backend:
         condition: service_healthy  # espera a que el backend haya migrado
-    # Ya NO monta hfcache: el worker general no escucha "ai" → no carga el modelo (PF.4).
     # NO ejecuta entrypoint.sh (no migra). Arranca celery directamente.
     entrypoint: []
     command:
@@ -134,16 +117,14 @@ services:
       - celery_app
       - worker
       - -Q
-      - default,scraping
+      - default
       - --concurrency=2
       - --loglevel=info
     networks:
       - swissjob-net
 
   worker-ai:
-    # Worker DEDICADO a la cola "ai": carga el modelo de embeddings UNA sola vez
-    # (concurrency=1). El worker general ya no escucha "ai", así que no lo carga.
-    # Resultado: 1 sola copia del modelo (~400MB) en vez de hasta 3 (PF.4).
+    # Worker dedicado al análisis de CV mediante servicios LLM (concurrency=1).
     image: swissjob-worker:prod
     container_name: swissjob-worker-ai
     restart: unless-stopped
@@ -152,10 +133,7 @@ services:
     depends_on:
       backend:
         condition: service_healthy  # espera a que el backend haya migrado
-    volumes:
-      - hfcache:/home/app/.cache/huggingface
     environment:
-      # Sin reciclado del hijo prefork → NO recarga el modelo de embeddings (rev.3 #2).
       - CELERY_MAX_TASKS_PER_CHILD=0
     # No ejecuta entrypoint.sh (no migra). Arranca celery directamente.
     entrypoint: []
@@ -268,7 +246,7 @@ services:
     image: swissjob-core:prod
     container_name: swissjob-core-worker
     restart: unless-stopped
-    # SOLO colas core.* — el worker legacy escucha default/scraping/ai en OTRO broker.
+    # SOLO colas core.* — los workers de producto escuchan default/ai en OTRO broker.
     # Beat EMBEBIDO (-B, B-05, alineado con dev): cadencias de la sombra cada
     # 5 min + run_cycle 06:05 rearrancan con cada recreate. `-s /tmp/...`:
     # el proceso corre como usuario `core` y /app es de root.
@@ -324,8 +302,6 @@ volumes:
   pgdata:
     driver: local
   redisdata:
-    driver: local
-  hfcache:
     driver: local
   redis_core_data:
     driver: local
