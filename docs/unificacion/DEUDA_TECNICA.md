@@ -260,16 +260,17 @@ continuar sin rediseñarlo.
 
 - ReactPortfolio PR 2 se fusionó en `main` como
   `682a3e589d137fe180c2b905a508250e6f0d1e10` después de dos ejecuciones
-  Backend CI completas y verdes. La fusión prepara la política final
+  Backend CI completas y verdes; su CI de `main` `38742958119` también terminó
+  verde. La fusión prepara la política final
   (`BACKGROUND_SCHEDULERS_ENABLED=true`, cosecha diaria `false` y retirada de
   tres credenciales del Compose); no se ha desplegado y no altera el gate
   vigente 49/50.
-- SwissJob PR 5 conserva verdes tests backend/Core/frontend, builds, Compose y
-  ratchet. Los dos jobs `backend-lint` fallaron únicamente porque
-  `probe_core_final.py` no llevaba el formato Ruff esperado. La corrección
-  mecánica ya pasa localmente `ruff check scripts docs` y
-  `ruff format --check scripts docs`; se publica junto con las sondas finales
-  actualizadas antes de considerar fusionable la PR.
+- SwissJob PR 5 se fusionó como
+  `136116df590e98477a17ac23a20ec6243cc75633` después de que sus dos
+  ejecuciones pasaran tests backend/Core/frontend, builds, Compose, lint y
+  ratchet. La CI de `main` `38744550106` repitió todos los trabajos y terminó
+  completamente verde. El fallo de formato anterior quedó corregido en
+  `b27cde6`; no se omitió ni forzó ninguna comprobación.
 - `probe_swissjob_final.py` ya representa el estado terminado: registros de
   providers y scrapers vacíos, cero módulos productores importables y cero
   nombres de credenciales de portal. Ejecutada por stdin y sin escritura en el
@@ -286,6 +287,14 @@ continuar sin rediseñarlo.
   primer 50/50, después se despliegan y sondan consumidores, se exige un
   segundo 50/50 y sólo entonces se eliminan los residuos que ahora enumeran
   las sondas.
+- Se crearon worktrees limpios y reproducibles para el futuro despliegue:
+  `/tmp/swissjob-dt144-cutover-main` en `136116d` y
+  `/tmp/reactportfolio-dt144-cutover-main` en `682a3e5`. Sus modos secos
+  resolvieron exactamente las tres imágenes esperadas sin tocar el NAS. La
+  inspección viva posterior confirma que no hubo autodespliegue: SwissJob sigue
+  en `4017081`, Portfolio en `444f072`, Core en `5b3bf3d`, todos con cero
+  reinicios; `swissjob-worker` continúa detenido y el worker Portfolio conserva
+  `BACKGROUND_SCHEDULERS_ENABLED=false` hasta superar el gate.
 
 ### Checkpoint 2026-10-14 · Fase -1 parcialmente completada
 

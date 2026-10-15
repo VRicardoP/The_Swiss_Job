@@ -41,12 +41,11 @@ Este bloque **prevalece sobre las fotografías anteriores de este documento**
 hasta el siguiente checkpoint:
 
 - Fusiones verificadas: `ReactPortfolioServer/main` =
-  `682a3e589d137fe180c2b905a508250e6f0d1e10`. La PR 2 de preparación del
-  consumidor se fusionó el 2026-10-15 tras dos CI verdes; **no se ha
-  desplegado** porque el gate JSearch sigue en 49/50. `The_Swiss_Job/main` =
-  `7f0c2da6fe3905915b29e0c7282b0b7ab5b1e84e`; la PR 5 de preparación sigue
-  abierta hasta publicar la corrección de formato de su sonda y obtener CI
-  completamente verde.
+  `682a3e589d137fe180c2b905a508250e6f0d1e10` (PR 2, CI de `main`
+  `38742958119` verde) y `The_Swiss_Job/main` =
+  `136116df590e98477a17ac23a20ec6243cc75633` (PR 5, CI de `main`
+  `38744550106` completamente verde). Las dos preparaciones están fusionadas,
+  pero **no se han desplegado** porque el gate JSearch sigue en 49/50.
 - Core productivo: cuatro contenedores en `swissjob-core:point5-5b3bf3d`,
   `/v1/ready` publica `ready`, `authoritative=true`, Alembic `core0055`; los
   cuatro procesos comparten release y el worker de cosecha nuevo no ha
@@ -129,6 +128,15 @@ hasta el siguiente checkpoint:
   23 módulos productores/fallback importables y tres nombres de credencial.
   Las sondas sólo enumeran nombres, nunca valores, y convierten estos residuos
   en condiciones ejecutables del corte final.
+- Despliegue futuro aislado de los cambios ajenos del workspace: worktrees
+  limpios `/tmp/swissjob-dt144-cutover-main` (`136116d`) y
+  `/tmp/reactportfolio-dt144-cutover-main` (`682a3e5`). Los modos secos exactos
+  resuelven `swissjob-backend:point5-136116d`,
+  `swissjob-worker:point5-136116d` y `portfolio-backend:board-682a3e5`, sin
+  construir ni tocar el NAS. Una inspección posterior a las fusiones confirma
+  que producción no se autodesplegó: BFF/worker siguen en `4017081`, Portfolio
+  en `444f072` y Core en `5b3bf3d`; cero reinicios y los productores locales
+  permanecen quiescentes.
 - Punto exacto de reanudación: no contar este ciclo como superado hasta obtener
   50/50 `ok`. Cuando la cuota esté disponible —o se aporte otra credencial
   válida sin coste— reejecutar **sólo JSearch** con la misma clave determinista
