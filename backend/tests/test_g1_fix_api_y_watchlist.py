@@ -9,9 +9,11 @@
 """
 
 import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from config import settings
@@ -85,10 +87,44 @@ class TestP320DigestMarcaDeAgua:
 
 @pytest.mark.asyncio
 class TestP321CooldownSalud:
+    @staticmethod
+    def _core_factory(*, last_complete_at=None):
+        async def handler(request):
+            source = request.url.path.split("/")[-2]
+            return httpx.Response(
+                200,
+                json={
+                    "source": source,
+                    "last_complete_at": last_complete_at,
+                    "enabled_scopes": 1,
+                    "observed_scopes": int(last_complete_at is not None),
+                    "max_consecutive_failures": 0,
+                    "update_in_progress": False,
+                },
+            )
+
+        return lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), base_url="https://core.test/v1"
+        )
+
+    async def test_fuentes_no_dependen_del_registry_local_vacio(self):
+        from tasks.watchlist_tasks import _get_watchlist_sources
+
+        assert set(_get_watchlist_sources()) == {
+            "swiss_schools_ecolint",
+            "swiss_schools_hautlac",
+            "swiss_schools_inspired",
+            "swiss_schools_isb",
+            "swiss_schools_iscs",
+            "swiss_schools_isp",
+            "swiss_schools_nae",
+            "swiss_schools_zis",
+        }
+
     async def test_mismo_problema_no_se_renotifica(self, monkeypatch, db_session):
         from contextlib import asynccontextmanager
 
-        from tasks.watchlist_tasks import _check_health_async
+        from tasks import watchlist_tasks
 
         fake = _FakeRedis()
         monkeypatch.setattr("redis.from_url", lambda *a, **k: fake)
@@ -98,8 +134,8 @@ class TestP321CooldownSalud:
             yield db_session
 
         with patch("database.task_session", new=_session):
-            r1 = await _check_health_async()
-            r2 = await _check_health_async()
+            r1 = await watchlist_tasks._check_health_async(self._core_factory())
+            r2 = await watchlist_tasks._check_health_async(self._core_factory())
 
         if r1.get("status") == "issues":
             assert r1["fresh_issues"] >= 0
@@ -108,9 +144,24 @@ class TestP321CooldownSalud:
                 "el MISMO problema no debe generar otra notificación a las 6h"
             )
         else:
-            # BD de test sin fuentes con problemas: el contrato queda cubierto
-            # por la clave fresh_issues cuando existan.
-            assert r1.get("status") in ("ok", "issues")
+            pytest.fail("las ocho fuentes sin ciclo deben producir incidencias")
+
+    async def test_ciclo_reciente_en_core_es_saludable(self, db_session):
+        from contextlib import asynccontextmanager
+
+        from tasks import watchlist_tasks
+
+        @asynccontextmanager
+        async def _session():
+            yield db_session
+
+        factory = self._core_factory(
+            last_complete_at=datetime.now(timezone.utc).isoformat()
+        )
+        with patch("database.task_session", new=_session):
+            result = await watchlist_tasks._check_health_async(factory)
+
+        assert result == {"status": "ok", "checked": 8, "issues": 0}
 
 
 @pytest.mark.asyncio

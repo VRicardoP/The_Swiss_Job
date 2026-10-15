@@ -40,11 +40,13 @@
 Este bloque **prevalece sobre las fotografías anteriores de este documento**
 hasta el siguiente checkpoint:
 
-- Fusiones verificadas: `ReactPortfolioServer/main` = `8b38ddd5aefb36ca4e07d1ffceded93a04ba593b`
-  (CI `38706379993`, verde) y `The_Swiss_Job/main` =
-  `5b3bf3dad27a8575ab6d8f380d4343ba4f540ae3`. Esta última cabeza incluye la
-  corrección de redacción/despliegue de la PR 2; su run de `main`
-  `38715523686` terminó entero en verde.
+- Fusiones verificadas: `ReactPortfolioServer/main` =
+  `682a3e589d137fe180c2b905a508250e6f0d1e10`. La PR 2 de preparación del
+  consumidor se fusionó el 2026-10-15 tras dos CI verdes; **no se ha
+  desplegado** porque el gate JSearch sigue en 49/50. `The_Swiss_Job/main` =
+  `7f0c2da6fe3905915b29e0c7282b0b7ab5b1e84e`; la PR 5 de preparación sigue
+  abierta hasta publicar la corrección de formato de su sonda y obtener CI
+  completamente verde.
 - Core productivo: cuatro contenedores en `swissjob-core:point5-5b3bf3d`,
   `/v1/ready` publica `ready`, `authoritative=true`, Alembic `core0055`; los
   cuatro procesos comparten release y el worker de cosecha nuevo no ha
@@ -81,11 +83,52 @@ hasta el siguiente checkpoint:
   `scope:{scope_id}:native:{window}:{scope_id}`. El ciclo terminó su trabajo:
   49 scopes están `ok`, ninguno sigue ejecutándose o sin iniciar y sólo JSearch
   falló con `http_429` tras agotar sus reintentos.
-- Diagnóstico seguro de JSearch: una única petición de control desde el Core
-  devolvió 429, límite publicado de 200 peticiones y
-  `x-ratelimit-requests-reset=1544540` (aprox. 17,9 días desde la sonda). No se
-  imprimieron clave, URL, query ni cuerpo. El scope sigue habilitado, acumula
-  dos fallos y todavía no alcanzó el umbral de autoapagado. La cola quedó vacía.
+- Diagnóstico seguro de JSearch: dos peticiones de control desde el Core
+  devolvieron 429. La segunda se hizo sólo para distinguir el límite gratuito:
+  publicó límite 200, restante `-2`, reset en 1.543.221 segundos (aprox. 17,9
+  días) y ningún encabezado separado de *free-plan hard limit*. La
+  [documentación oficial de RapidAPI](https://docs.rapidapi.com/docs/response-headers)
+  confirma que `x-ratelimit-requests-reset` son segundos hasta reiniciar la
+  cuota. No se imprimieron clave, URL, query ni cuerpo y no se harán más sondas
+  antes del reset. El scope sigue habilitado, acumula dos fallos y todavía no
+  alcanzó el umbral de autoapagado. La cola quedó vacía.
+- Preparación de consumidores: se detectó antes del despliegue que
+  `watchlist_tasks._get_watchlist_sources()` derivaba de `_SCRAPER_CLASSES`, ya
+  vacío por el traspaso, de modo que la alerta de salud y el digest escolar
+  habrían filtrado cero fuentes. La rama `feat/dt144-consumer-cutover` fija las
+  ocho fuentes del contrato del consumidor y obtiene su salud del agregado
+  autenticado de Core, sin tabla de compliance ni registry local. Formato y
+  Ruff pasan; prueba focal en Compose: 10/10.
+- ReactPortfolio ya tiene una corrección reproducible en
+  `feat/dt144-consumer-cutover` (`bf91254` + `0c2c9a6`, PR 2): el próximo despliegue fija
+  `BACKGROUND_SCHEDULERS_ENABLED=true` para recuperar mantenimiento, alertas,
+  digest y enriquecimiento, pero fuerza
+  `SCHEDULER_DAILY_HARVEST_ENABLED=false` y conserva las veinte fuentes en
+  `LEGACY_DISABLED_SOURCES`. Así se retira el quiesce global sin reactivar un
+  portal. Además elimina del Compose vivo `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` y
+  `JSEARCH_RAPIDAPI_KEY`. Prueba focal 43/43, `bash -n` y despliegue seco
+  correctos.
+- SwissJob `3af3dc6` prepara el mismo invariante: antes de recrear BFF/worker,
+  el despliegue guarda una copia de recuperación, elimina del `.env.prod` los
+  diez nombres de credenciales de portales conocidos, verifica su ausencia y
+  borra la copia sólo después de la sonda saludable. No imprime nombres con
+  valores ni toca las credenciales `CORE_*` del colector central.
+- `probe_core_final.py` ya exige el censo nuevo (50 observados/habilitados/con
+  estado, cero autoapagados y cero alertas), no los 17 scopes históricos. Su
+  ejecución de sólo lectura contra producción confirma readiness autoritativo,
+  delivery drenado, staging drenado, slot de captura ausente y censo 50/50;
+  falla únicamente por la alerta de JSearch sin ciclo completo. La sonda queda
+  roja por la misma puerta real, no por expectativas obsoletas.
+- Las sondas finales de ambos consumidores ya exigen el objetivo final, no el
+  estado de rollback. La línea base viva de SwissJob confirma autoridades
+  `CoreCatalog`/`CoreMatching`/`LocalProfile`/`CoreSchools`, 2/2 perfiles
+  enlazados y cero snapshots pendientes o erróneos; permanece roja por 12
+  providers, 13 scrapers, 39 módulos productores importables y cinco nombres
+  de credencial local. Portfolio confirma sus seis capacidades exactamente en
+  `core_primary`; permanece rojo por cosecha diaria habilitada, 11 providers,
+  23 módulos productores/fallback importables y tres nombres de credencial.
+  Las sondas sólo enumeran nombres, nunca valores, y convierten estos residuos
+  en condiciones ejecutables del corte final.
 - Punto exacto de reanudación: no contar este ciclo como superado hasta obtener
   50/50 `ok`. Cuando la cuota esté disponible —o se aporte otra credencial
   válida sin coste— reejecutar **sólo JSearch** con la misma clave determinista

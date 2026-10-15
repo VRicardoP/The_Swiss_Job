@@ -182,10 +182,13 @@ continuar sin rediseñarlo.
 - La ventana nativa `2026-10-15T12:00:00+02:00` terminó con 49 scopes `ok`,
   cero en ejecución, cero sin iniciar y un único error: JSearch `http_429`.
   Celery agotó sus reintentos y dejó la cola vacía; no hay otro fallo oculto.
-- Una única sonda segura desde el contenedor Core confirmó 429, límite publicado
-  de 200 peticiones y `x-ratelimit-requests-reset=1544540` (aprox. 17,9 días
-  desde esa lectura). La salida excluyó secreto, URL, query y cuerpo. No se
-  vuelve a consumir cuota con sondeos repetidos.
+- Dos sondas seguras desde el contenedor Core confirmaron 429. La segunda se
+  justificó para distinguir la cuota gratuita y devolvió límite 200, restante
+  `-2`, reset en 1.543.221 segundos (aprox. 17,9 días) y ningún encabezado
+  separado de *free-plan hard limit*. RapidAPI documenta oficialmente que
+  `x-ratelimit-requests-reset` son segundos hasta el reinicio. Las salidas
+  excluyeron secreto, URL, query y cuerpo; no se harán más peticiones antes del
+  reset.
 - El scope JSearch permanece habilitado con dos fallos consecutivos y no ha
   alcanzado el kill-switch. Este ciclo **no satisface** el gate 50/50 y no se
   despliegan aún los consumidores.
@@ -194,6 +197,95 @@ continuar sin rediseñarlo.
   Si queda `ok`, el primer ciclo será 50/50 y continúa el orden ya documentado:
   consumidores y sondas, segundo ciclo 50/50, borrado físico, inventario,
   suites/CI, despliegue y sondas finales.
+
+### Checkpoint 2026-10-15 · Salud y digest escolar preservados antes del corte
+
+- La revisión del consumidor encontró una regresión concreta antes de
+  desplegarlo: `_get_watchlist_sources()` leía `_SCRAPER_CLASSES`; como el
+  registro local está vacío, `check_watchlist_health` comprobaba cero fuentes y
+  el digest filtraba todas las ofertas escolares.
+- Corrección mínima en `feat/dt144-consumer-cutover`: las ocho fuentes escolares
+  son ahora el contrato cerrado del consumidor. La alerta consulta en paralelo
+  su agregado autenticado de Core y valida fuente, fecha de último ciclo,
+  scopes habilitados/observados, fallos y ejecución activa. Se eliminó la
+  lectura de `SourceCompliance`; no se añadió endpoint ni dependencia.
+- Evidencia local: Ruff/formato verdes y
+  `docker compose run --rm --no-deps backend pytest -q
+  tests/test_g1_fix_api_y_watchlist.py` = 10 passed. La primera ejecución fuera
+  de Compose no alcanzó las pruebas porque el host Docker `postgres` no se
+  resuelve desde el host; queda registrada como error de entorno, no como fallo
+  funcional.
+- Esta corrección debe fusionarse y desplegarse junto con el consumidor, pero
+  no altera la puerta vigente: JSearch debe cerrar el primer ciclo 50/50 antes
+  de desplegar BFF/worker.
+
+### Checkpoint 2026-10-15 · Tareas útiles de Portfolio separadas de la cosecha
+
+- El quiesce productivo de Portfolio usa
+  `BACKGROUND_SCHEDULERS_ENABLED=false`, que detiene también purgas, alertas,
+  digest y enriquecimiento. Mantenerlo tras el corte empeoraría funciones y
+  permitiría crecer sin cota tres tablas; no es un estado final válido.
+- ReactPortfolio `bf91254` + `0c2c9a6` (rama
+  `feat/dt144-consumer-cutover`, PR 2) incorpora
+  al manifiesto y a la política convergente de despliegue dos valores en ambos
+  procesos: `BACKGROUND_SCHEDULERS_ENABLED=true` y
+  `SCHEDULER_DAILY_HARVEST_ENABLED=false`. Las veinte fuentes siguen en
+  `LEGACY_DISABLED_SOURCES` y los registros de caché/actualizadores están
+  vacíos, por lo que no reaparece tráfico de portal. El mismo transformador
+  elimina del Compose vivo las tres variables locales de Adzuna/JSearch.
+- SwissJob `3af3dc6` elimina de `.env.prod` los diez nombres de credenciales de
+  providers locales antes de recrear BFF/worker. Conserva una copia sólo
+  durante la maniobra, verifica los nombres sin mostrar valores y la destruye
+  tras la sonda saludable; los secretos `CORE_*` viven en el env aislado del
+  núcleo y no se tocan.
+- Evidencia: `tests/test_source_handover_quiesce.py` 43 passed; `bash -n` y los
+  modos secos de Portfolio, BFF y worker son correctos. La política no se
+  despliega antes de que JSearch complete el primer gate 50/50.
+
+### Checkpoint 2026-10-15 · Sonda final Core actualizada y roja por la causa real
+
+- `probe_core_final.py` deja atrás el supuesto de 17 scopes: exige 50
+  observados, 50 habilitados, 50 con estado, cero scopes autoapagados y cero
+  alertas, además de las invariantes previas de readiness, delivery, staging y
+  retirada del slot de captura.
+- Compila y se ejecutó por stdin dentro de `swissjob-core-api-r5`, sin escritura.
+  Producción devuelve Core autoritativo `5b3bf3d`, Alembic `core0055`, delivery
+  y staging drenados, slot ausente y censo 50/50 con cero autoapagados.
+- Resultado deliberadamente rojo: una única alerta
+  `cosecha_sin_completar` para JSearch, cuyo `last_complete_at` sigue nulo. No
+  apareció ninguna segunda causa. Tras completar ese scope con la misma clave
+  de ventana, esta sonda debe quedar verde antes de avanzar.
+
+### Checkpoint 2026-10-15 · Fusión segura de Portfolio y líneas base de consumidores
+
+- ReactPortfolio PR 2 se fusionó en `main` como
+  `682a3e589d137fe180c2b905a508250e6f0d1e10` después de dos ejecuciones
+  Backend CI completas y verdes. La fusión prepara la política final
+  (`BACKGROUND_SCHEDULERS_ENABLED=true`, cosecha diaria `false` y retirada de
+  tres credenciales del Compose); no se ha desplegado y no altera el gate
+  vigente 49/50.
+- SwissJob PR 5 conserva verdes tests backend/Core/frontend, builds, Compose y
+  ratchet. Los dos jobs `backend-lint` fallaron únicamente porque
+  `probe_core_final.py` no llevaba el formato Ruff esperado. La corrección
+  mecánica ya pasa localmente `ruff check scripts docs` y
+  `ruff format --check scripts docs`; se publica junto con las sondas finales
+  actualizadas antes de considerar fusionable la PR.
+- `probe_swissjob_final.py` ya representa el estado terminado: registros de
+  providers y scrapers vacíos, cero módulos productores importables y cero
+  nombres de credenciales de portal. Ejecutada por stdin y sin escritura en el
+  BFF vivo confirma las cuatro autoridades correctas, 2/2 perfiles enlazados y
+  cero snapshots pendientes/erróneos; falla, como debe, por 12 providers, 13
+  scrapers, 39 módulos locales y cinco nombres de credencial aún presentes.
+- `probe_portfolio_final.py` exige registro local vacío, cosecha diaria apagada,
+  ausencia de módulos productores y de `CompositeCatalog`/`FallbackCatalog`,
+  cero nombres de credenciales de portal y las seis capacidades exactamente
+  en `core_primary`. En el backend vivo verifica el routing 6/6 pero falla por
+  11 providers, 23 módulos locales, cosecha diaria todavía habilitada y tres
+  nombres de credencial. Ninguna sonda imprime valores secretos.
+- Este checkpoint no adelanta la retirada física: JSearch debe completar el
+  primer 50/50, después se despliegan y sondan consumidores, se exige un
+  segundo 50/50 y sólo entonces se eliminan los residuos que ahora enumeran
+  las sondas.
 
 ### Checkpoint 2026-10-14 · Fase -1 parcialmente completada
 
