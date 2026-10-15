@@ -19,7 +19,8 @@
 # 7. El worker BFF usa la misma fuente que la API, pero otra imagen con Chromium.
 #    Se despliega explícitamente para no dejar código Celery antiguo en producción.
 # 8. BFF y worker eliminan del Compose vivo las antiguas variables
-#    LEGACY_DISABLED_*; las fuentes transferidas ya no existen en su imagen.
+#    LEGACY_DISABLED_* y del env compartido las credenciales de portales; las
+#    fuentes transferidas ya no existen en su imagen.
 # 9. El respaldo incluye el servicio: BFF y worker comparten SHA y no deben
 #    sobrescribir el punto de vuelta atrás del otro al desplegarse por separado.
 # 10. El compose transformado se valida como candidato antes de sustituir el vivo.
@@ -235,6 +236,30 @@ $D run --rm --network "container:$API" \
 REMOTE_CORE_MIGRATE
 fi
 
+ENV_PORTAL_BACKUP=""
+if [[ "$SERVICIO" == bff || "$SERVICIO" == worker ]]; then
+  ENV_PORTAL=/share/Public/swissjob/.env.prod
+  ENV_PORTAL_BACKUP="$ENV_PORTAL.before-dt144-$SERVICIO-$SHA"
+  ssh nas bash -s -- "$ENV_PORTAL" "$ENV_PORTAL_BACKUP" <<'REMOTE_SCRUB_PORTAL_ENV'
+set -euo pipefail
+env_file="$1"
+backup="$2"
+tmp="$(mktemp /tmp/swissjob-env.XXXXXX)"
+trap 'rm -f "$tmp"' EXIT
+cp "$env_file" "$backup"
+sed -E '/^(JOBCLOUD_PARTNER_API_KEY|LINKEDIN_PARTNER_TOKEN|INDEED_PARTNER_KEY|GLASSDOOR_PARTNER_KEY|XING_PARTNER_TOKEN|JSEARCH_RAPIDAPI_KEY|ADZUNA_APP_ID|ADZUNA_APP_KEY|JOOBLE_API_KEY|CAREERJET_AFFID)=/d' "$env_file" > "$tmp"
+chmod 600 "$tmp"
+mv "$tmp" "$env_file"
+for key in JOBCLOUD_PARTNER_API_KEY LINKEDIN_PARTNER_TOKEN INDEED_PARTNER_KEY GLASSDOOR_PARTNER_KEY XING_PARTNER_TOKEN JSEARCH_RAPIDAPI_KEY ADZUNA_APP_ID ADZUNA_APP_KEY JOOBLE_API_KEY CAREERJET_AFFID; do
+  if grep -q "^${key}=" "$env_file"; then
+    echo "ABORTA: no se retiró una credencial local de portal" >&2
+    exit 1
+  fi
+done
+echo "credenciales locales de portal retiradas del env de SwissJob"
+REMOTE_SCRUB_PORTAL_ENV
+fi
+
 echo "== recreando ${SERVICIOS[*]} (con el proyecto correcto: trampa 2)"
 ssh nas "cd $E && $C -p $PROYECTO -f $COMPOSE up -d --no-deps ${SERVICIOS[*]}"
 
@@ -264,6 +289,9 @@ if [[ "$SERVICIO" == core ]]; then
     ejecutada="$(ssh nas "$D inspect $contenedor --format '{{.Config.Image}}'")"
     [[ "$ejecutada" == "$IMAGEN" ]] || { echo "ABORTA: $contenedor corre $ejecutada" >&2; exit 1; }
   done
+fi
+if [[ -n "$ENV_PORTAL_BACKUP" ]]; then
+  ssh nas "rm -f '$ENV_PORTAL_BACKUP'"
 fi
 echo "== listo: $IMAGEN"
 echo "   vuelta atrás: ssh nas 'cp $E/$COMPOSE.before-$SERVICIO-$SHA $E/$COMPOSE' && recrear"
