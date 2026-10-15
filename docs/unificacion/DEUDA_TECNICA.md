@@ -160,7 +160,9 @@ continuar sin rediseñarlo.
   settings, plantillas y `deploy/nas/swissjob.configured.yml`; el despliegue
   sanea tanto `.env.prod` como el Compose candidato. Las credenciales
   `CORE_ADZUNA_*`/`CORE_JSEARCH_*` se conservan porque pertenecen al único
-  colector. Validación: `bash -n`, `py_compile`, Ruff y búsqueda nominal verdes.
+  colector. Validación: `bash -n`, `py_compile`, Ruff, búsqueda nominal y
+  ratchet verdes; el manifiesto sólo cambia las siete banderas de registro y
+  mantiene honestamente `16` Core-owned/`24` local-pending hasta el borrado.
 - Punto exacto y metodología de relevo: ver
   `DT144_RELEVO.md` §0.1, checkpoint «despliegue de consumidores y limpieza
   final en curso». Los worktrees y ramas están allí fijados; ningún cambio de

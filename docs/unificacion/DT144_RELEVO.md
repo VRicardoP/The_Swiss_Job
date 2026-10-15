@@ -285,7 +285,10 @@ hasta el siguiente checkpoint:
   SwissJob. El transformador de despliegue elimina ahora esos nombres también
   del Compose candidato de BFF/worker, además del `.env.prod`; las variables
   `CORE_ADZUNA_*` y `CORE_JSEARCH_*` permanecen deliberadamente en Core.
-  `bash -n`, `py_compile`, Ruff y la búsqueda nominal pasan.
+  `bash -n`, `py_compile`, Ruff y la búsqueda nominal pasan. El manifiesto
+  marca ya como falsas las siete banderas de registro retiradas y el ratchet
+  vuelve a verde (`16` Core-owned, `24` local-pending); esas cifras no se
+  elevarán artificialmente hasta el borrado físico y el gate final.
 - Checkpoint `2026-10-15T19:14+02:00`: el PR 13 de relevo quedó completamente
   verde. Su único fallo inicial, `docker-build`, fue un `BrokenPipeError`
   descargando el wheel de PyTorch; se reintentó sólo ese job sobre el mismo SHA

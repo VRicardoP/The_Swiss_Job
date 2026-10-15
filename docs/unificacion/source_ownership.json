@@ -84,7 +84,7 @@
       "target_owner": null,
       "active_publishers": [],
       "swissjob_module": true,
-      "swissjob_registry": true,
+      "swissjob_registry": false,
       "evidence": "Production registration disabled because CAREERJET_AFFID is absent."
     },
     {
@@ -198,7 +198,7 @@
       "target_owner": null,
       "active_publishers": [],
       "swissjob_module": true,
-      "swissjob_registry": true,
+      "swissjob_registry": false,
       "evidence": "Missing partner credential and production compliance explicitly disallows harvesting."
     },
     {
@@ -313,7 +313,7 @@
       "target_owner": null,
       "active_publishers": [],
       "swissjob_module": true,
-      "swissjob_registry": true,
+      "swissjob_registry": false,
       "evidence": "Missing partner credential and production compliance explicitly disallows harvesting."
     },
     {
@@ -351,7 +351,7 @@
       "target_owner": null,
       "active_publishers": [],
       "swissjob_module": true,
-      "swissjob_registry": true,
+      "swissjob_registry": false,
       "evidence": "Missing partner credential and production compliance explicitly disallows harvesting."
     },
     {
@@ -497,7 +497,7 @@
       "target_owner": null,
       "active_publishers": [],
       "swissjob_module": true,
-      "swissjob_registry": true,
+      "swissjob_registry": false,
       "evidence": "Production registration disabled because JOOBLE_API_KEY is absent."
     },
     {
@@ -538,7 +538,7 @@
       "target_owner": null,
       "active_publishers": [],
       "swissjob_module": true,
-      "swissjob_registry": true,
+      "swissjob_registry": false,
       "evidence": "Missing partner credential and production compliance explicitly disallows harvesting."
     },
     {
@@ -1132,7 +1132,7 @@
       "target_owner": null,
       "active_publishers": [],
       "swissjob_module": true,
-      "swissjob_registry": true,
+      "swissjob_registry": false,
       "evidence": "Missing partner credential and production compliance explicitly disallows harvesting."
     },
     {
