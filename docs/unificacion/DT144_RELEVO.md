@@ -88,6 +88,19 @@ hasta el siguiente checkpoint:
   la imagen anterior. La rama `fix/dt144-live-compose-format` amplía únicamente
   el patrón a los dos formatos comprobados. Tras CI y fusión debe reintentarse
   el BFF desde el nuevo SHA de `main`; no reutilizar `8906b89` como release.
+- **Sondas tras desplegar `ae3cb02` y Portfolio `c47b7a3`:** Core pasa con
+  49/49, colas drenadas y la dispensa JSearch intacta; Portfolio pasa con las
+  seis capacidades `core_primary`, cero módulos/credenciales/dependencias
+  locales. SwissJob cumple autoridades, perfiles, registros, credenciales y
+  dependencias, pero falla por `providers`: la imagen contiene únicamente
+  `/app/providers/__pycache__`, arrastrado desde el worktree porque
+  `.dockerignore` sólo excluía bytecode de primer nivel. No hay productor
+  ejecutable ni registro, pero la definición terminal exige que el paquete no
+  sea importable. `fix/dt144-docker-context` añade exclusión recursiva y
+  excluye también `providers/`: Docker conserva el directorio padre vacío aun
+  después de filtrar su bytecode y Python lo reconoce como paquete namespace.
+  El ratchet fija las tres reglas. Tras CI/fusión: redesplegar BFF y worker
+  desde el nuevo `main` y repetir las tres sondas.
 
 ### Checkpoint anterior · retiradas físicas publicadas y verificadas
 
