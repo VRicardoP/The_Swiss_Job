@@ -1,14 +1,9 @@
 """Scraper registry: discover and instantiate all HTML-scraping providers."""
 
 from scrapers.schuljobs import SchulJobsScraper
-from scrapers.swiss_schools_ecolint import SwissSchoolsEcolintScraper
-from scrapers.swiss_schools_hautlac import SwissSchoolsHautLacScraper
 from scrapers.swiss_schools_inspired import SwissSchoolsInspiredScraper
-from scrapers.swiss_schools_isb import SwissSchoolsISBScraper
-from scrapers.swiss_schools_iscs import SwissSchoolsISCSScraper
 from scrapers.swiss_schools_isp import SwissSchoolsISPScraper
 from scrapers.swiss_schools_nae import SwissSchoolsNAEScraper
-from scrapers.swiss_schools_zis import SwissSchoolsZISScraper
 from services.job_service import BaseJobProvider
 
 _SCRAPER_CLASSES: dict[str, type[BaseJobProvider]] = {
@@ -22,15 +17,10 @@ _SCRAPER_CLASSES: dict[str, type[BaseJobProvider]] = {
     "swiss_schools_isp": SwissSchoolsISPScraper,
     "swiss_schools_inspired": SwissSchoolsInspiredScraper,
     # Watchlist Fase 2: Group A propios (ZIS + ISB + Ecolint)
-    "swiss_schools_zis": SwissSchoolsZISScraper,
-    "swiss_schools_isb": SwissSchoolsISBScraper,
-    "swiss_schools_ecolint": SwissSchoolsEcolintScraper,
     # Watchlist Fase 3: HTML propio menores (Haut-Lac + ISCS)
     # Riviera, Verbier, ISR quedan como "manual": Riviera no expone jobs
     # en HTML estático; Verbier solo enlaza a TES (ya cubierto); ISR usa
     # SPA AbaServices que requeriría Playwright para ~1 vacante.
-    "swiss_schools_hautlac": SwissSchoolsHautLacScraper,
-    "swiss_schools_iscs": SwissSchoolsISCSScraper,
 }
 
 

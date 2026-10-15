@@ -1,0 +1,94 @@
+{
+  "source_family": "swiss_schools (five own-HTML boards)",
+  "captured_at_utc": "2026-10-14T23:58:07+00:00",
+  "sources": [
+    "swiss_schools_zis",
+    "swiss_schools_isb",
+    "swiss_schools_ecolint",
+    "swiss_schools_hautlac",
+    "swiss_schools_iscs"
+  ],
+  "method": "Both the retiring scrapers and the new Core adapter were replayed offline against the SAME sealed capture. Because three of the five boards are empty today, those three were ALSO compared on fixtures built from the structure their own selectors declare — 0 == 0 proves nothing.",
+  "capture": {
+    "zis": {
+      "url": "https://www.zis.ch/one-zis-community/employment",
+      "status": 200,
+      "bytes": 84049,
+      "sha256": "c4277aba4b078b02f6730c3b96ba964b771b13697ed6daa8ad2778031f6514d5"
+    },
+    "isb": {
+      "url": "https://www.isbasel.ch/connect/news/?board=employment-public-job-postings",
+      "status": 200,
+      "bytes": 61222,
+      "sha256": "8bf0e8e779401c6a3db318b9368883a47a34fcef510e1560ad8b63bffcb7451f"
+    },
+    "ecolint": {
+      "url": "https://www.ecolint.ch/en/job-opportunities?page=2",
+      "status": 200,
+      "bytes": 66552,
+      "sha256": "b77952f75bd1e0a9e3c3f20448bc370b2ef68c7714218ce091c7271922fbd540"
+    },
+    "hautlac": {
+      "url": "https://info.haut-lac.ch/jobs-and-career",
+      "status": 200,
+      "bytes": 37217,
+      "sha256": "b4f2dfaa29b5405d887c99c40ef20d1cb4b921b36a208d8d700163cd9032c5ce"
+    },
+    "iscs": {
+      "url": "https://iscs-zug.ch/employment/",
+      "status": 200,
+      "bytes": 221511,
+      "sha256": "ca7d09ea10266c90dd7924befcb7b608b176a2c65541894df619410c3b427ef3"
+    },
+    "inspired": {
+      "url": "https://jobs.inspirededu.com/search/",
+      "status": 200,
+      "bytes": 393530,
+      "sha256": "35a10426c43802e772bc98059078cbc7c5f9385f3177a5962bab2e22842f5767"
+    },
+    "nae": {
+      "url": "https://careers.nordangliaeducation.com/search/",
+      "status": 200,
+      "bytes": 344162,
+      "sha256": "28076b84e2f448253f89005fcbad364095f89ad39f0eedd3a94f452025cfb8a6"
+    }
+  },
+  "live_board_state": {
+    "zis": 0,
+    "isb": 0,
+    "ecolint": 0,
+    "hautlac": 1,
+    "iscs": 2,
+    "inspired": 0,
+    "nae": 0
+  },
+  "parity": {
+    "live_rows_compared": 3,
+    "live_differences": 0,
+    "fixture_rows_compared": 6,
+    "fixture_differences": 0,
+    "note": "haut-lac (1) and ISCS (2) carry vacancies today and match field for field; zis, isb and ecolint are empty today and match field for field on fixtures."
+  },
+  "verified_empty_rule": {
+    "why": "A watchlist board publishes a vacancy every few months: six of the eight family boards are empty right now. Every other adapter in Core raises when a sweep finds nothing, which would make most of this family fail every day.",
+    "how": "Recognition first: the page title must name the school's board, and where the portal has a container or an emptiness marker it is honoured too (ISB renders fsElementEmpty, 'No post to display'). Recognised and empty is a COMPLETE sweep with zero listings; unrecognised is a visible failure.",
+    "proved_by": "test_an_empty_board_is_a_verified_empty_not_a_failure, test_the_portal_saying_it_is_empty_is_also_verified, a visible-failure test per board, and an integration test where three empty sweeps in a row leave consecutive_failures=0, consecutive_blocks=0 and a confirmed last_complete_at."
+  },
+  "preserved_quirks": [
+    "haut-lac and ISCS have no per-vacancy link: the synthetic anchor stays part of the URL, because sharing the board URL left only ONE vacancy per school alive against the unique-URL constraint (class VD.1).",
+    "ZIS normalises the non-breaking space its links carry and deduplicates the repeated job id.",
+    "ISB reads both post shapes (article.fsArticle and .fsPost) and trusts the portal's own empty marker.",
+    "ISCS keeps the keyword list and the bold-title requirement that separate a vacancy from navigation.",
+    "haut-lac keeps both templates (highlighted h3 and grey card) and drops the section headings that are not vacancies."
+  ],
+  "deliberate_improvement": {
+    "what": "canton, derived from the school's own city",
+    "evidence": "4 of the 5 cities resolve (ZH, BS, GE, ZG); Saint-Légier-La Chiésaz does not and stays absent",
+    "effect": "the producer knew the city and never used it; absent still means unknown"
+  },
+  "notes": [
+    "No credential exists for any board and none was created.",
+    "The artifact carries no personal data: only byte counts, hashes and counts.",
+    "Three sources of the family are NOT in this commit: inspired and nae sweep several schools per source over third-party ATS portals, and isp does not use the shared base."
+  ]
+}

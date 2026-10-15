@@ -1,0 +1,246 @@
+"""The watched school boards: zero vacancies is a RESULT, not a failure."""
+
+import asyncio
+
+import httpx
+import pytest
+
+from jobhunt_core.harvest.providers.native_swiss_schools import (
+    BOARDS_BY_SOURCE,
+    SwissSchoolProvider,
+    board_rows,
+)
+
+ZIS = """<html><head><title>Employment - Zurich International School | ZIS</title></head>
+<body><main>
+  <a href="https://zurichinternational.schoolspring.com/?jobid=4201">Secondary Maths Teacher</a>
+  <a href="https://zurichinternational.schoolspring.com/?jobid=4202">Learning&nbsp;Support Assistant</a>
+  <a href="https://zurichinternational.schoolspring.com/?jobid=4201">Secondary Maths Teacher</a>
+  <a href="https://www.zis.ch/about">About us</a>
+</main></body></html>"""
+
+ZIS_EMPTY = """<html><head><title>Employment - Zurich International School | ZIS</title>
+</head><body><main><p>There are no current openings.</p></main></body></html>"""
+
+ISB = """<html><head><title>News - International School Basel</title></head><body>
+<div class="fsPostElement">
+  <article class="fsArticle"><div class="fsPostTitle">
+    <a href="/connect/news/post/primary-teacher">Primary Teacher</a></div></article>
+  <div class="fsPost"><h2>
+    <a href="https://www.isbasel.ch/connect/news/post/it-manager">IT Manager</a></h2></div>
+</div></body></html>"""
+
+ISB_EMPTY = """<html><head><title>News - International School Basel</title></head><body>
+<div class="fsPostElement"><div class="fsElementEmpty">No post to display.</div></div>
+</body></html>"""
+
+ECOLINT = """<html><head><title>Job Opportunities | Ecolint</title></head><body>
+<article class="node-job-teaser">
+  <span class="f-n-title">Teacher of Biology</span>
+  <a href="/en/about/careers/teacher-of-biology">Apply</a>
+</article>
+<article class="node-article"><span class="f-n-title">Not a job</span>
+  <a href="/en/news/x">x</a></article>
+</body></html>"""
+
+HAUTLAC = """<html><head><title>Jobs at Haut-Lac</title></head><body>
+<div class="hs_cos_wrapper_type_rich_text">
+  <h3><span style="background-color: #eee">Science Laboratory Technician</span></h3>
+</div>
+<div class="hs_cos_wrapper_type_rich_text">
+  <div style="background-color:#fafafa; padding:20px">
+    <p style="font-size:20px"><strong>Head of Primary</strong></p></div>
+</div>
+<div class="hs_cos_wrapper_type_rich_text">
+  <h3><span style="background-color: #eee">Profile</span></h3>
+</div></body></html>"""
+
+ISCS = """<html><head><title>Employment | ISCS</title></head><body><ul>
+  <li><strong>Primary Teacher</strong> — full time</li>
+  <li><strong>Maths Coordinator</strong></li>
+  <li>Some navigation link</li>
+  <li><strong>Primary Teacher</strong> — duplicate</li>
+</ul></body></html>"""
+
+
+def fetch(source, pages, *, params=None, monkeypatch=None):
+    from jobhunt_core.harvest.providers import native_swiss_schools as module
+
+    if monkeypatch:
+        monkeypatch.setattr(module, "PAGE_PAUSE_S", 0)
+        monkeypatch.setattr(module, "RETRY_BACKOFF_S", 0)
+    provider = SwissSchoolProvider(BOARDS_BY_SOURCE[source])
+    requests = []
+
+    async def run():
+        def transport(request):
+            requests.append(str(request.url))
+            body = (
+                pages[min(len(requests), len(pages)) - 1]
+                if isinstance(pages, list)
+                else pages
+            )
+            if isinstance(body, int):
+                return httpx.Response(body, text="nope")
+            return httpx.Response(200, text=body)
+
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(transport)
+        ) as client:
+            result = await provider.fetch_new(
+                {} if params is None else params, None, client
+            )
+        return result, requests
+
+    return asyncio.run(run())
+
+
+def test_a_board_with_vacancies_keeps_the_producers_shape(monkeypatch):
+    from jobhunt_core.harvest.normalize import normalize_offer
+
+    result, requests = fetch("swiss_schools_zis", ZIS, monkeypatch=monkeypatch)
+
+    assert result.complete and len(result.listings) == 2
+    assert requests == ["https://www.zis.ch/one-zis-community/employment"]
+    listing = result.listings[0]
+    assert listing.external_id == "zis_zurich:4201"
+    assert listing.url == "https://zurichinternational.schoolspring.com/?jobid=4201"
+    assert normalize_offer("swiss_schools_zis", listing.payload) == {
+        "title": "Secondary Maths Teacher",
+        "company": "Zurich International School",
+        "description": None,
+        "location": "Zurich, CH",
+        "remote": False,
+        "tags": ["education", "international school", "zis_zurich"],
+        "salary": None,
+        "language": "en",
+        # Derived from the school's own city, which the producer never used.
+        "canton": "ZH",
+    }
+    # The non-breaking space the board emits is normalised, and the repeated
+    # link is one vacancy.
+    assert result.listings[1].payload["title"] == "Learning Support Assistant"
+
+
+def test_an_empty_board_is_a_verified_empty_not_a_failure(monkeypatch):
+    """MUERDE con la regla de los demás adaptadores: seis de ocho tableros de
+    esta familia están vacíos hoy, y lanzar los haría fallar todos los días."""
+    result, _requests = fetch("swiss_schools_zis", ZIS_EMPTY, monkeypatch=monkeypatch)
+
+    assert result.listings == ()
+    assert result.complete and result.error is None
+    assert result.next_cursor["verified_empty"] is True
+
+
+def test_the_portal_saying_it_is_empty_is_also_verified(monkeypatch):
+    result, _requests = fetch("swiss_schools_isb", ISB_EMPTY, monkeypatch=monkeypatch)
+
+    assert result.listings == () and result.complete
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "swiss_schools_zis",
+        "swiss_schools_isb",
+        "swiss_schools_ecolint",
+        "swiss_schools_hautlac",
+        "swiss_schools_iscs",
+    ],
+)
+def test_a_page_that_is_not_the_board_is_a_visible_failure(source, monkeypatch):
+    from jobhunt_core.harvest.provider import ProviderResponseError
+
+    # A redirect, an error page or a redesign: never "no vacancies".
+    with pytest.raises(ProviderResponseError):
+        fetch(
+            source,
+            "<html><head><title>Page not found</title></head></html>",
+            monkeypatch=monkeypatch,
+        )
+
+
+def test_the_isb_board_container_disappearing_is_a_failure(monkeypatch):
+    from jobhunt_core.harvest.provider import ProviderResponseError
+
+    html = "<html><head><title>News - International School Basel</title></head><body></body></html>"
+    with pytest.raises(ProviderResponseError, match="fsPostElement"):
+        fetch("swiss_schools_isb", html, monkeypatch=monkeypatch)
+
+
+def test_the_hautlac_widgets_disappearing_is_a_failure(monkeypatch):
+    from jobhunt_core.harvest.provider import ProviderResponseError
+
+    html = (
+        "<html><head><title>Jobs at Haut-Lac</title></head><body><p>x</p></body></html>"
+    )
+    with pytest.raises(ProviderResponseError, match="rich-text"):
+        fetch("swiss_schools_hautlac", html, monkeypatch=monkeypatch)
+
+
+def test_isb_reads_both_post_shapes():
+    rows = board_rows(BOARDS_BY_SOURCE["swiss_schools_isb"], ISB)
+
+    assert [r["title"] for r in rows] == ["Primary Teacher", "IT Manager"]
+    assert rows[0]["url"] == "https://www.isbasel.ch/connect/news/post/primary-teacher"
+    assert rows[0]["source_id"] == "primary-teacher"
+
+
+def test_ecolint_only_takes_job_articles():
+    rows = board_rows(BOARDS_BY_SOURCE["swiss_schools_ecolint"], ECOLINT)
+
+    assert [r["title"] for r in rows] == ["Teacher of Biology"]
+    assert (
+        rows[0]["url"] == "https://www.ecolint.ch/en/about/careers/teacher-of-biology"
+    )
+
+
+def test_hautlac_reads_both_templates_and_drops_section_headings():
+    rows = board_rows(BOARDS_BY_SOURCE["swiss_schools_hautlac"], HAUTLAC)
+
+    assert [r["title"] for r in rows] == [
+        "Science Laboratory Technician",
+        "Head of Primary",
+    ]
+    # Synthetic anchor per vacancy: a shared board URL left only one alive.
+    assert rows[0]["url"].endswith("#science-laboratory-technician")
+    assert rows[1]["url"].endswith("#head-of-primary")
+
+
+def test_iscs_needs_a_keyword_and_a_bold_title():
+    rows = board_rows(BOARDS_BY_SOURCE["swiss_schools_iscs"], ISCS)
+
+    assert [r["title"] for r in rows] == ["Primary Teacher", "Maths Coordinator"]
+    assert rows[0]["url"] == "https://iscs-zug.ch/employment/#primary-teacher"
+
+
+def test_ecolint_pagination_stops_when_a_page_adds_nothing(monkeypatch):
+    result, requests = fetch(
+        "swiss_schools_ecolint", [ECOLINT, ECOLINT], monkeypatch=monkeypatch
+    )
+
+    # The second page repeats the first, so the sweep stops there.
+    assert len(requests) == 2
+    assert [url.endswith("page=0") for url in requests][0]
+    assert len(result.listings) == 1
+
+
+def test_an_invalid_scope_fails_before_the_network(monkeypatch):
+    from jobhunt_core.harvest.provider import ProviderConfigError
+
+    with pytest.raises(ProviderConfigError):
+        fetch("swiss_schools_zis", ZIS, params={"school": "x"}, monkeypatch=monkeypatch)
+
+
+def test_every_board_declares_a_title_marker_and_a_school():
+    from jobhunt_core.harvest.providers.native_swiss_schools import (
+        BOARDS,
+        SOURCE_NAMES,
+    )
+
+    # The literal census the ownership ratchet reads must match the boards.
+    assert tuple(board.source for board in BOARDS) == SOURCE_NAMES
+    assert len(BOARDS) == 5
+    for board in BOARDS:
+        assert board.title_marker and board.school_id and board.school_name
+        assert board.listing_url.startswith("https://")
