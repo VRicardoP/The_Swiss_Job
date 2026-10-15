@@ -101,6 +101,16 @@ hasta el siguiente checkpoint:
   después de filtrar su bytecode y Python lo reconoce como paquete namespace.
   El ratchet fija las tres reglas. Tras CI/fusión: redesplegar BFF y worker
   desde el nuevo `main` y repetir las tres sondas.
+- **Checkpoint posterior a `5002445`:** PR 16 y su CI doble, además del CI de
+  `main` `38809368125`, terminaron verdes. BFF y worker se desplegaron como
+  `point5-5002445`; las tres sondas terminales pasan, incluido SwissJob con
+  cero módulos productores importables. El inventario operativo adicional
+  detectó que el Compose vivo todavía suscribía el worker a la cola vacía
+  `scraping`, aunque los manifiestos versionados ya usaban `default,ai`.
+  `fix/dt144-worker-queue` corrige el transformador de despliegue y aborta si
+  no puede verificar la retirada. Punto de reanudación: CI/fusión, aplicar
+  `worker --config-only` (valida un candidato antes de sustituir el Compose),
+  repetir sondas e inventario y cerrar. No ejecutar JSearch.
 
 ### Checkpoint anterior · retiradas físicas publicadas y verificadas
 
