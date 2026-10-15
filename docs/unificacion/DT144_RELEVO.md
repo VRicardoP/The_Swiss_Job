@@ -42,9 +42,11 @@ hasta el siguiente checkpoint:
 
 - Fusiones verificadas: `ReactPortfolioServer/main` =
   `682a3e589d137fe180c2b905a508250e6f0d1e10` (PR 2, CI de `main`
-  `38742958119` verde) y `The_Swiss_Job/main` =
-  `136116df590e98477a17ac23a20ec6243cc75633` (PR 5, CI de `main`
-  `38744550106` completamente verde). Las dos preparaciones están fusionadas,
+  `38742958119` verde). La preparación SwissJob/Core quedó en
+  `136116df590e98477a17ac23a20ec6243cc75633` (PR 5, CI `38744550106` verde) y
+  el relevo documental se fusionó después en `The_Swiss_Job/main` como
+  `205987ac01b88893b2199eeea083ed9f31341a66` (PR 6, CI de `main`
+  `38747081401`, 9/9 trabajos verdes). Las dos preparaciones están fusionadas,
   pero **no se han desplegado** porque el gate JSearch sigue en 49/50.
 - Core productivo: cuatro contenedores en `swissjob-core:point5-5b3bf3d`,
   `/v1/ready` publica `ready`, `authoritative=true`, Alembic `core0055`; los
@@ -118,6 +120,12 @@ hasta el siguiente checkpoint:
   delivery drenado, staging drenado, slot de captura ausente y censo 50/50;
   falla únicamente por la alerta de JSearch sin ciclo completo. La sonda queda
   roja por la misma puerta real, no por expectativas obsoletas.
+- Revalidación posterior a la fusión documental, también de sólo lectura:
+  release `5b3bf3d`, Alembic `core0055`, 50 scopes observados/habilitados/con
+  estado, cero autoapagados, 25.540 entregas, cero pendientes/dead-letter,
+  staging drenado y slot ausente. El único fallo continúa siendo
+  `harvest_not_50_of_50` por JSearch; no se hizo otra petición al proveedor ni
+  se modificó producción.
 - Las sondas finales de ambos consumidores ya exigen el objetivo final, no el
   estado de rollback. La línea base viva de SwissJob confirma autoridades
   `CoreCatalog`/`CoreMatching`/`LocalProfile`/`CoreSchools`, 2/2 perfiles
