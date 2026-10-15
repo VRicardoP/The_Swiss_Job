@@ -1,6 +1,6 @@
 # Memoria del proyecto JobHunting
 
-Última reconciliación documental: **2026-10-13**.
+Última reconciliación documental: **2026-10-16**.
 
 Esta es la memoria vigente del sistema formado por SwissJob, jobhunt-core y
 ReactPortfolio. Resume estado, autoridades y trabajo pendiente. Los contratos y
@@ -17,10 +17,8 @@ sus interfaces, autenticación y responsabilidades propias de BFF.
 - SwissJob conserva localmente el perfil editable y lo sincroniza a Core. Sus
   costuras de catálogo, matching y colegios tienen autoridad fija; ya no existe
   routing runtime ni fallback silencioso de escritura.
-- Portfolio conserva once fuentes propias y tiene nueve fuentes transferidas
-  desactivadas. Seis capacidades resuelven exactamente a core_primary. Esta
-  convivencia es transitoria y queda reabierta como DT-144; no constituye la
-  arquitectura final.
+- Portfolio no conserva productores externos. Sus seis capacidades resuelven
+  exactamente a `core_primary` y consumen el mismo corpus que SwissJob.
 - Un solo proceso Core de concurrencia 1 carga el bi-encoder. Cosecha,
   operaciones/beat y matching usan workers separados.
 - core-capture, su slot de replicación, staging, productores duplicados, el
@@ -29,20 +27,20 @@ sus interfaces, autenticación y responsabilidades propias de BFF.
 
 ## Estado vivo comprobado
 
-Sondas de solo lectura ejecutadas el 2026-10-13:
+Sondas de solo lectura ejecutadas el 2026-10-16:
 
 | Pieza | Release/imagen viva | Resultado |
 |---|---|---|
-| Core API y tres workers | swissjob-core:point5-254e826 | ready, authoritative, Alembic core0054; 17/17 scopes saludables, cero alertas |
-| SwissJob BFF/worker | point5-4017081 | healthy/Celery pong; autoridades fijas, dos perfiles entregados, cero errores pendientes |
+| Core API y tres workers | swissjob-core:point5-5b3bf3d | ready, authoritative, Alembic core0055; 49/49 scopes ejecutables observados, cero alertas |
+| SwissJob BFF/worker | point5-5002445 | healthy/Celery pong; cero productores locales; worker sólo en `default,ai` |
 | SwissJob frontend | point5-254e826 | healthy; categorías canónicas y tarjetas con contenido |
-| Portfolio API/worker | portfolio-backend:board-444f072 | healthy; Alembic uu44v3375x21; 1 GiB y 1 CPU por proceso |
+| Portfolio API/worker | portfolio-backend:board-c47b7a3 | healthy; seis capacidades `core_primary`; cero productores locales |
 | Portfolio frontend público | remoto 5045a28 | cookie-only publicado; login real y 12 ventanas con contenido verificadas por Playwright |
 
-Core registra 25.382 entregas, cero dead/pending/inflight, staging cero y slot de
-captura ausente. SwissJob conserva 12 providers, 13 scrapers —ocho escolares— y
-ningún módulo retirado importable. Portfolio conserva nueve fuentes transferidas
-desactivadas y once propias.
+Core registra 26.193 entregas, cero dead/pending/inflight, staging cero y slot de
+captura ausente. SwissJob y Portfolio tienen cero módulos productores,
+credenciales de portal y conexiones directas. JSearch conserva un único scope
+manualmente deshabilitado y cero ejecuciones desde la dispensa.
 
 ## Optimización cerrada
 
@@ -72,7 +70,7 @@ y su directorio de evidencias.
 
 ## Cierre de deuda y exclusiones
 
-- **DT-144:** abierta. La cosecha todavía no pertenece exclusivamente a Core.
+- **DT-144:** cerrada el 2026-10-16. La cosecha pertenece exclusivamente a Core.
   El [contrato de centralización total](CONTRATO_CENTRALIZACION_TOTAL.md) fija
   el objetivo vinculante, las fases, los controles contra desviaciones y la
   única definición válida de terminado.
@@ -95,6 +93,6 @@ sobre producción. Las comparaciones mantienen protocolo y número de muestras,
 separan frío/caliente y no atribuyen causalidad sin aislar la variable. Cada
 punto se documenta con causa, cambio, pruebas, release, límites y reanudación.
 
-El alcance anterior permanece cerrado, pero DT-144 abre una nueva ejecución con
-punto de reanudación en su Fase -1. No deben incorporarse automáticamente DT-47,
-A19-19 ni A19-20, que continúan excluidos por decisión expresa del propietario.
+El alcance de DT-144 permanece cerrado y protegido por su contrato y ratchets.
+No deben incorporarse automáticamente DT-47, A19-19 ni A19-20, que continúan
+excluidos por decisión expresa del propietario.

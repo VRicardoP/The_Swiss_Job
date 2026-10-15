@@ -1,6 +1,6 @@
 # Deuda técnica — proyecto jobhunting (SwissJob + jobhunt-core)
 
-> **Lectura vigente — 2026-10-09.** Este fichero es un ledger técnico
+> **Lectura vigente — 2026-10-16.** Este fichero es un ledger técnico
 > cronológico. Para estado global y releases manda
 > [MEMORIA_PROYECTO.md](MEMORIA_PROYECTO.md); aquí mandan las marcas
 > **ABIERTO/PARCIAL/COTA** más recientes de cada identificador. Los bloques
@@ -18,15 +18,14 @@
 
 ## DT-144 · Centralización total de cosechadores en Core
 
-**Estado: ABIERTO — objetivo ratificado el 2026-10-13.**
+**Estado: CERRADO — objetivo cumplido y verificado en producción el
+2026-10-16.**
 
-La arquitectura objetivo no está terminada mientras ReactPortfolio o SwissJob
-mantengan productores de ofertas propios. La fotografía vigente confirma once
-fuentes propias en ReactPortfolio, registros de 12 providers y 13 scrapers en
-SwissJob —ocho escolares— y Jobicy cosechado por ambos mientras su adaptador de
-Core carece de scope productivo. Los 17 scopes saludables de Core y los cierres
-anteriores acreditan el alcance que comprobaron, pero no la propiedad exclusiva
-de todas las fuentes.
+La deuda se abrió porque ReactPortfolio y SwissJob mantenían productores de
+ofertas propios. Ese estado inicial —once fuentes de Portfolio, 12 providers y
+13 scrapers de SwissJob— queda conservado en los checkpoints históricos; el
+checkpoint prevalente inferior acredita su retirada y la propiedad exclusiva
+de Core.
 
 El objetivo, las invariantes, las fases -1 a 10, el procedimiento por fuente,
 los controles de cambio y la definición no reinterpretables de terminado están
@@ -36,15 +35,56 @@ contrato es la única fuente de verdad del plan; esta sección funciona como
 ledger de ejecución para que cada agente deje evidencia y el siguiente pueda
 continuar sin rediseñarlo.
 
-### Punto de reanudación
+### Cierre y trazabilidad
 
 > **Lee primero [DT144_RELEVO.md](DT144_RELEVO.md)**: reúne el estado exacto, la
-> receta de migración ya rodada, los comandos que se usan de verdad, las
-> decisiones de diseño tomadas, la condición real de cada fuente pendiente y las
-> trampas ya pisadas. Esta lista es el punto de reanudación; ese fichero es el
-> contexto.
+> receta aplicada, los comandos que se usan de verdad, las decisiones de diseño,
+> la verificación final y las trampas ya pisadas. Es el contexto de auditoría si
+> hubiera una incidencia futura; no quedan pasos de migración por reanudar.
 
-**Checkpoint prevalente 2026-10-15 — fusiones terminadas; corrección de runtime
+**Checkpoint prevalente 2026-10-16 — DT-144 CERRADO:**
+
+- Inventario final: 58 fuentes verificadas = 40 `local_removed` y 18
+  `retired`; cero `local_pending`, cero `core_shadow` y cero publicadores
+  locales. El ratchet queda en 40/0/58 y el inventario está fechado el
+  2026-10-16.
+- Releases vivas: Core `5b3bf3d`/Alembic `core0055`; SwissJob BFF y worker
+  `point5-5002445`; ReactPortfolio backend y worker `board-c47b7a3`. La
+  corrección operacional que transforma y verifica el Compose vivo está en
+  SwissJob `main` `f381979`.
+- CI final: ReactPortfolio `main` `38794582363`; retirada SwissJob
+  `38794769320`; limpieza de runtime `38801340232`; formato vivo
+  `38804569607`; contexto Docker `38809368125`; cola del worker PR/push
+  `38811880988`/`38811859394` y `main` `38813007893`. Todos terminaron en
+  `success`; cada CI SwissJob citado tuvo 9/9 trabajos verdes.
+- Sonda Core final: `ready`, autoritativo, 49/49 scopes ejecutables observados,
+  cero alertas, cero staging pendiente, cero delivery muerto y cero cola
+  pendiente. JSearch continúa con un scope manualmente deshabilitado, cero
+  habilitados y **cero ejecuciones desde la dispensa**; no se reintentó.
+- Sonda SwissJob final: `CoreCatalog`, `CoreMatching` y `CoreSchools`; cero
+  módulos productores, providers/scrapers/colegios registrados, credenciales
+  de portal, dependencias prohibidas, snapshots pendientes o errores activos.
+  El perfil sigue siendo local por diseño de producto, no por cosecha.
+- Sonda ReactPortfolio final: las seis capacidades (`applications`, `catalog`,
+  `documents`, `matching`, `saved_searches`, `schools`) están en
+  `core_primary`; cero módulos, credenciales o dependencias locales
+  prohibidas.
+- Inventario operativo: el worker SwissJob ejecuta `-Q default,ai` y Celery
+  confirma sólo esas dos colas; ambos Compose vivos tienen cero marcadores de
+  caché, credenciales o cosecha local. Los productores locales retirados no
+  son importables en las imágenes.
+- Retirada física autorizada y completada: 60 módulos y 58 pruebas puramente
+  locales de SwissJob; 40 módulos y 29 pruebas puramente locales de
+  ReactPortfolio, además de dependencias, fallback y configuración obsoletos.
+  Suites de referencia: SwissJob 783 passed/4 warnings; ReactPortfolio 1740
+  passed/1 skipped.
+- No queda acción de migración ni portal pendiente. `proz` y `remoteco`
+  permanecen retirados por decisión explícita. Cualquier productor local futuro
+  requiere el procedimiento de incidencia/ADR del contrato; no reabre una vía
+  ordinaria de cosecha. Recibo final:
+  [`2026-10-16-dt144-final-cutover.json`](../audits/2026-10-16-dt144-final-cutover.json).
+
+**Checkpoint histórico 2026-10-15 — fusiones terminadas; corrección de runtime
 pendiente de publicar:** ReactPortfolio PR 4 está fusionada en `main` como
 `c47b7a3` y SwissJob PR 13 como `f50c0f1`; sus CI de `main` son verdes
 (`38794582363` y `38794769320`, nueve trabajos SwissJob). La sonda Core previa

@@ -1,16 +1,22 @@
 # Contrato de centralización total de la cosecha
 
-Estado: **RATIFICADO — ejecución abierta**
+Estado: **RATIFICADO — ejecución cerrada el 2026-10-16**
 Fecha de ratificación: **2026-10-13**
-Última revisión: **2026-10-14**
+Última revisión: **2026-10-16**
 Deuda asociada: **DT-144**
+
+El cierre está acreditado en `DT144_RELEVO.md` §0.1/§3 y en el checkpoint
+final de DT-144 en `DEUDA_TECNICA.md`: inventario 40 `local_removed` y 18
+`retired`, cero publicadores locales, tres sondas productivas verdes y releases
+Core `5b3bf3d`, SwissJob `5002445` y ReactPortfolio `c47b7a3`. La corrección de
+Compose que deja el worker en `default,ai` está fusionada en `f381979`.
 
 ## 1. Propósito
 
-Este documento es la fuente canónica para completar la arquitectura originalmente
-acordada entre `jobhunt-core`, SwissJob y ReactPortfolio. Resuelve la desviación
-por la que Core es autoridad de parte del corpus mientras los dos productos aún
-conservan cosechadores propios.
+Este documento es la fuente canónica de la arquitectura originalmente acordada
+entre `jobhunt-core`, SwissJob y ReactPortfolio. Resolvió la desviación por la
+que Core era autoridad de parte del corpus mientras los dos productos aún
+conservaban cosechadores propios.
 
 El objetivo contractual es:
 
