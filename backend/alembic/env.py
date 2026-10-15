@@ -26,14 +26,22 @@ target_metadata = Base.metadata
 
 
 def _include_object(_object, name, type_, reflected, compare_to):
-    # The routing runtime was retired after every capability became Core-owned,
-    # but production retains its six core_primary rows as rollback evidence.
-    # Preserve only that historical table; every other schema drift stays gated.
+    # These local runtimes were retired after Core became authoritative, but
+    # their migrations remain part of the immutable schema history. Preserve
+    # the orphaned tables until a dedicated data-retention migration removes
+    # them; otherwise ``alembic check`` proposes destructive drops merely
+    # because their application models no longer exist.
+    retired_runtime_tables = {
+        "jobhunt_routing",
+        "source_compliance",
+        "source_cursors",
+        "source_health",
+    }
     return not (
         type_ == "table"
         and reflected
         and compare_to is None
-        and name == "jobhunt_routing"
+        and name in retired_runtime_tables
     )
 
 
