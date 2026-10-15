@@ -93,6 +93,13 @@ hasta el siguiente checkpoint:
   ocho fuentes del contrato del consumidor y obtiene su salud del agregado
   autenticado de Core, sin tabla de compliance ni registry local. Formato y
   Ruff pasan; prueba focal en Compose: 10/10.
+- ReactPortfolio ya tiene una corrección reproducible en
+  `feat/dt144-consumer-cutover` (`bf91254`, PR 2): el próximo despliegue fija
+  `BACKGROUND_SCHEDULERS_ENABLED=true` para recuperar mantenimiento, alertas,
+  digest y enriquecimiento, pero fuerza
+  `SCHEDULER_DAILY_HARVEST_ENABLED=false` y conserva las veinte fuentes en
+  `LEGACY_DISABLED_SOURCES`. Así se retira el quiesce global sin reactivar un
+  portal. Prueba focal 42/42, `bash -n` y despliegue seco correctos.
 - Punto exacto de reanudación: no contar este ciclo como superado hasta obtener
   50/50 `ok`. Cuando la cuota esté disponible —o se aporte otra credencial
   válida sin coste— reejecutar **sólo JSearch** con la misma clave determinista

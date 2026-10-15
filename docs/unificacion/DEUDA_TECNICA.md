@@ -216,6 +216,22 @@ continuar sin rediseñarlo.
   no altera la puerta vigente: JSearch debe cerrar el primer ciclo 50/50 antes
   de desplegar BFF/worker.
 
+### Checkpoint 2026-10-15 · Tareas útiles de Portfolio separadas de la cosecha
+
+- El quiesce productivo de Portfolio usa
+  `BACKGROUND_SCHEDULERS_ENABLED=false`, que detiene también purgas, alertas,
+  digest y enriquecimiento. Mantenerlo tras el corte empeoraría funciones y
+  permitiría crecer sin cota tres tablas; no es un estado final válido.
+- ReactPortfolio `bf91254` (rama `feat/dt144-consumer-cutover`, PR 2) incorpora
+  al manifiesto y a la política convergente de despliegue dos valores en ambos
+  procesos: `BACKGROUND_SCHEDULERS_ENABLED=true` y
+  `SCHEDULER_DAILY_HARVEST_ENABLED=false`. Las veinte fuentes siguen en
+  `LEGACY_DISABLED_SOURCES` y los registros de caché/actualizadores están
+  vacíos, por lo que no reaparece tráfico de portal.
+- Evidencia: `tests/test_source_handover_quiesce.py` 42 passed, `bash -n` verde
+  y `scripts/deploy_nas.sh --dry-run` correcto. La política no se despliega
+  antes de que JSearch complete el primer gate 50/50.
+
 ### Checkpoint 2026-10-14 · Fase -1 parcialmente completada
 
 - Inventario reconciliado: 58 fuentes, 16 `local_removed`, 26
