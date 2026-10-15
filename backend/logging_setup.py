@@ -1,8 +1,8 @@
 """Configuración central de logging.
 
 La app no fijaba nivel de logging, así que los loggers propios (`services.*`,
-`providers`, `tasks.*`, `apscheduler`) heredaban WARNING y sus mensajes INFO —el
-scheduler, la cosecha diaria, etc.— no aparecían en los logs. `configure_logging`
+`tasks.*`, `apscheduler`) heredaban WARNING y sus mensajes INFO no aparecían
+en los logs. `configure_logging`
 fija el nivel del root desde `settings.LOG_LEVEL` de forma idempotente y robusta
 (funciona aunque gunicorn/uvicorn ya hayan añadido handlers al root).
 
@@ -39,10 +39,10 @@ from utils.redact import has_placeholder_credential, redact_credentials
 
 # Loggers de la app que deben emitir al nivel configurado aunque otro proceso
 # (gunicorn/uvicorn) haya tocado el root con un nivel distinto.
-_APP_LOGGERS = ("services", "providers", "tasks", "apscheduler")
+_APP_LOGGERS = ("services", "tasks", "apscheduler")
 
-# Librerías cuyo INFO es una línea por petición con la URL entera (credenciales
-# en la query incluidas). No aportan nada que no diga ya `utils.http`.
+# Librerías cuyo INFO es una línea por petición con la URL entera, incluidas
+# posibles credenciales en la query. No aporta señal operativa útil.
 _NOISY_HTTP_LOGGERS = ("httpx", "httpcore")
 
 

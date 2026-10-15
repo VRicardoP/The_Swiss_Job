@@ -22,10 +22,7 @@ from models.match_result import MatchResult
 from models.notification import Notification
 from models.refresh_token import RefreshToken
 from models.saved_search import SavedSearch
-from models.source_compliance import SourceCompliance
-from models.source_cursor import SourceCursor
 from models.title_language import JobTitleLanguage
-from models.source_health import SourceHealth
 from models.user import User
 from models.user_profile import UserProfile
 
@@ -52,10 +49,7 @@ __all__ = [
     "SalaryPeriod",
     "SavedSearch",
     "Seniority",
-    "SourceCompliance",
-    "SourceCursor",
     "JobTitleLanguage",
-    "SourceHealth",
     "User",
     "UserPlan",
     "UserProfile",

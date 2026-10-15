@@ -53,11 +53,7 @@ python-multipart==0.0.32
 
 # HTTP client
 httpx==0.28.1
-
-# Scraping
-beautifulsoup4==4.15.0
 lxml==5.4.0
-playwright==1.63.0
 
 # Dev / Testing
 pytest==8.4.2

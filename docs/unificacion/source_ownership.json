@@ -3,52 +3,111 @@
   "objective": "Core is the sole external job-offer publisher; SwissJob and ReactPortfolio are consumers.",
   "verified_at": "2026-10-15",
   "ratchet": {
-    "min_core_owned_sources": 16,
+    "min_core_owned_sources": 40,
     "min_inventory_verified_sources": 58,
-    "max_local_pending_sources": 24,
-    "max_active_local_publishers": 25
+    "max_local_pending_sources": 0,
+    "max_active_local_publishers": 0
   },
   "sources": [
     {
       "name": "adzuna",
       "aliases": [],
-      "current_harvesters": [{"product": "reactportfolio", "module": "services/adzuna_provider_impl.py", "triggers": ["worker startup sweep", "daily circadian sweep at 12:00 container local time with +/-4h jitter", "public stale-cache reads and authenticated manual refresh"]}],
-      "credentials": [{"name": "ADZUNA_APP_ID", "present_in_production": true}, {"name": "ADZUNA_APP_KEY", "present_in_production": true}],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_adzuna.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
+      "credentials": [
+        {
+          "name": "CORE_ADZUNA_APP_ID",
+          "present_in_production": true
+        },
+        {
+          "name": "CORE_ADZUNA_APP_KEY",
+          "present_in_production": true
+        }
+      ],
       "transport": "credentialed paginated Adzuna JSON API over HTTPS",
       "external_identity": "Adzuna upstream id plus the canonical redirect URL exposed by the API",
       "deduplication": "ReactPortfolio uses normalized URL as its stable seen key, falling back to MD5(title|company); exact collection dedupe uses MD5(lowercase title|lowercase company), with a separate normalized title/company fuzzy key for board display.",
-      "last_success": [{"product": "reactportfolio", "at": "2026-10-13T16:22:38.918879+00:00", "evidence": "successful persisted snapshot with 6 cached entries and zero normalization errors"}],
-      "production_metrics": {"cached_entries": 6, "reported_total": 7, "normalization_errors": 0, "duplicate_stable_keys": 0, "duplicate_exact_hashes": 1, "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/adzuna/field_presence"},
-      "core_scope_ids": [],
-      "blocker": "The branch adapter and both consumer handovers are validated and published, but production has no Adzuna source, scopes or Core credentials until the final owner-approved merge and coordinated cutover.",
-      "inventory_verified": true,
-      "state": "local_pending",
-      "target_owner": "core",
-      "active_publishers": ["reactportfolio"],
-      "swissjob_module": true,
-      "swissjob_registry": false,
-      "core_adapter": true,
-      "reactportfolio_source_name": "adzuna",
-      "evidence": "Portfolio production cache healthy; the feature branches move its verified gb/us/de search to Core and remove both local registries and deployment credentials."
-    },
-    {
-      "name": "arbeitnow",
-      "aliases": [],
-      "current_harvesters": [{"product": "core", "module": "jobhunt_core/harvest/providers/arbeitnow.py", "triggers": ["jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"]}],
-      "credentials": [],
-      "transport": "public paginated JSON API over HTTPS",
-      "external_identity": "upstream slug, with validated offer URL as fallback",
-      "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
-      "last_success": [{"product": "core", "window_utc": ["2026-10-13T22:10:14.781030+00:00", "2026-10-13T22:39:08.969058+00:00"], "evidence": "enabled scope completed with zero consecutive failures"}],
-      "core_scope_ids": ["8a299ac7-700a-4637-8e55-577f21b68f0c"],
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T17:40:06.591791+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "cached_entries": 6,
+        "reported_total": 7,
+        "normalization_errors": 0,
+        "duplicate_stable_keys": 0,
+        "duplicate_exact_hashes": 1,
+        "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/adzuna/field_presence"
+      },
+      "core_scope_ids": [
+        "f356b6cc-76c2-528b-aa3c-8432bab6c8e3",
+        "7d6f16bb-3615-537c-a1a2-d9cf4354ba9d",
+        "16b645ac-bc31-5222-9112-2625cdf09183"
+      ],
       "blocker": null,
       "inventory_verified": true,
       "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["core"],
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
+      "swissjob_registry": false,
+      "core_adapter": true,
+      "reactportfolio_source_name": "adzuna",
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle."
+    },
+    {
+      "name": "arbeitnow",
+      "aliases": [],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/arbeitnow.py",
+          "triggers": [
+            "jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"
+          ]
+        }
+      ],
+      "credentials": [],
+      "transport": "public paginated JSON API over HTTPS",
+      "external_identity": "upstream slug, with validated offer URL as fallback",
+      "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
+      "last_success": [
+        {
+          "product": "core",
+          "window_utc": [
+            "2026-10-13T22:10:14.781030+00:00",
+            "2026-10-13T22:39:08.969058+00:00"
+          ],
+          "evidence": "enabled scope completed with zero consecutive failures"
+        }
+      ],
+      "core_scope_ids": [
+        "8a299ac7-700a-4637-8e55-577f21b68f0c"
+      ],
+      "blocker": null,
+      "inventory_verified": true,
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": [
+        "core"
+      ],
       "core_adapter": true,
       "reactportfolio_source_name": "arbeitnow",
-      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry."
+      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry.",
+      "swissjob_module": false,
+      "swissjob_registry": false
     },
     {
       "name": "authenticjobs",
@@ -58,33 +117,52 @@
       "transport": "public RSS XML feed over HTTPS",
       "external_identity": "legacy module computes MD5 of normalized title, company and offer URL, falling back to the RSS GUID when the URL is absent",
       "deduplication": "SwissJob first upserts the legacy MD5 identity, then applies its normalized title/company fuzzy deduplication across sources.",
-      "last_success": [{"product": "swissjob", "at": null, "evidence": "production health recorded 17 errors and no successful run before the module was removed from the registry"}],
+      "last_success": [
+        {
+          "product": "swissjob",
+          "at": null,
+          "evidence": "production health recorded 17 errors and no successful run before the module was removed from the registry"
+        }
+      ],
       "core_scope_ids": [],
       "blocker": "The module is not registered and has no successful production run; the source is retired rather than migrated.",
       "inventory_verified": true,
       "state": "retired",
       "target_owner": null,
       "active_publishers": [],
-      "swissjob_module": true,
-      "evidence": "Not registered; production health records 17 errors and no successful run."
+      "swissjob_module": false,
+      "evidence": "Not registered; production health records 17 errors and no successful run.",
+      "swissjob_registry": false
     },
     {
       "name": "careerjet",
       "aliases": [],
       "current_harvesters": [],
-      "credentials": [{"name": "CAREERJET_AFFID", "present_in_production": false}],
+      "credentials": [
+        {
+          "name": "CAREERJET_AFFID",
+          "present_in_production": false
+        }
+      ],
       "transport": "credential-gated Careerjet JSON API over HTTPS",
       "external_identity": "legacy module computes MD5 of normalized title, company and offer URL",
       "deduplication": "SwissJob first upserts the legacy MD5 identity, then applies its normalized title/company fuzzy deduplication across sources.",
-      "last_success": [{"product": "swissjob", "at": null, "observed_at": "2026-10-14T01:14:18+02:00", "evidence": "production registry disabled the provider because CAREERJET_AFFID was absent"}],
+      "last_success": [
+        {
+          "product": "swissjob",
+          "at": null,
+          "observed_at": "2026-10-14T01:14:18+02:00",
+          "evidence": "production registry disabled the provider because CAREERJET_AFFID was absent"
+        }
+      ],
       "core_scope_ids": [],
       "blocker": "The required production credential is absent, so no active harvester exists; the source is retired.",
       "inventory_verified": true,
       "state": "retired",
       "target_owner": null,
       "active_publishers": [],
-      "swissjob_module": true,
-      "swissjob_registry": true,
+      "swissjob_module": false,
+      "swissjob_registry": false,
       "evidence": "Production registration disabled because CAREERJET_AFFID is absent."
     },
     {
@@ -95,171 +173,371 @@
       "transport": "public RSS XML feed over HTTPS",
       "external_identity": "legacy module computes MD5 of normalized title, company and offer URL, falling back to the RSS GUID when the URL is absent",
       "deduplication": "SwissJob first upserts the legacy MD5 identity, then applies its normalized title/company fuzzy deduplication across sources.",
-      "last_success": [{"product": "swissjob", "at": null, "evidence": "production health recorded 17 errors and no successful run before the module was removed from the registry"}],
+      "last_success": [
+        {
+          "product": "swissjob",
+          "at": null,
+          "evidence": "production health recorded 17 errors and no successful run before the module was removed from the registry"
+        }
+      ],
       "core_scope_ids": [],
       "blocker": "The module is not registered and has no successful production run; the source is retired rather than migrated.",
       "inventory_verified": true,
       "state": "retired",
       "target_owner": null,
       "active_publishers": [],
-      "swissjob_module": true,
-      "evidence": "Not registered; production health records 17 errors and no successful run."
+      "swissjob_module": false,
+      "evidence": "Not registered; production health records 17 errors and no successful run.",
+      "swissjob_registry": false
     },
     {
       "name": "dynamitejobs",
       "aliases": [],
-      "current_harvesters": [{"product": "reactportfolio", "module": "services/dynamitejobs_provider_impl.py", "triggers": ["worker startup sweep", "daily circadian sweep at 12:00 container local time with +/-4h jitter", "public stale-cache reads and authenticated manual refresh"]}],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_dynamitejobs.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public SSR HTML category pages with embedded Pinia JSON plus public HTML detail pages over HTTPS",
       "external_identity": "upstream job id, with a canonical URL built from the company username and offer slug",
       "deduplication": "ReactPortfolio uses normalized URL as its stable seen key, falling back to MD5(title|company); exact collection dedupe uses MD5(lowercase title|lowercase company), with a separate normalized title/company fuzzy key for board display.",
-      "last_success": [{"product": "reactportfolio", "at": "2026-10-14T11:39:36+00:00", "evidence": "production worker completed all 20 category requests; 321 live rows processed and 300 retained"}],
-      "production_metrics": {"cached_entries": 300, "reported_total": 321, "descriptions": 119, "locations_tracked": 39, "tags_tracked": 587, "normalization_errors": 0, "duplicate_stable_keys": 0, "duplicate_exact_hashes": 3, "baseline_ref": "../audits/2026-10-14-dt144-dynamitejobs-baseline.json", "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/dynamitejobs/field_presence"},
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T17:28:25.477320+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "cached_entries": 300,
+        "reported_total": 321,
+        "descriptions": 119,
+        "locations_tracked": 39,
+        "tags_tracked": 587,
+        "normalization_errors": 0,
+        "duplicate_stable_keys": 0,
+        "duplicate_exact_hashes": 3,
+        "baseline_ref": "../audits/2026-10-14-dt144-dynamitejobs-baseline.json",
+        "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/dynamitejobs/field_presence"
+      },
       "core_adapter": true,
-      "core_scope_ids": [],
-      "blocker": "The branch adapter, disabled scope definition and ReactPortfolio consumer handover are implemented and under validation, but production still has no DynamiteJobs Core source or scope until the final owner-approved merge and coordinated cutover.",
+      "core_scope_ids": [
+        "b2e0b4a1-24e6-5b29-adfe-cf7a941cc70f"
+      ],
+      "blocker": null,
       "inventory_verified": true,
-      "state": "local_pending",
+      "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["reactportfolio"],
+      "active_publishers": [
+        "core"
+      ],
       "reactportfolio_source_name": "dynamitejobs",
-      "evidence": "Portfolio production cache is healthy with 300 current entries. Public category capture found 322 unique live identities; the legacy producer drops one otherwise valid row because locationSlugs contains null, a defect the Core adapter must fix explicitly."
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle.",
+      "swissjob_module": false,
+      "swissjob_registry": false
     },
     {
       "name": "euremotejobs",
       "aliases": [],
-      "current_harvesters": [{"product": "core", "module": "jobhunt_core/harvest/providers/native_rss.py", "triggers": ["jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"]}],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_rss.py",
+          "triggers": [
+            "jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public RSS XML feed over HTTPS",
       "external_identity": "SHA-256 of the upstream GUID when present, otherwise SHA-256 of the validated offer URL",
       "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
-      "last_success": [{"product": "core", "window_utc": ["2026-10-13T22:10:14.781030+00:00", "2026-10-13T22:39:08.969058+00:00"], "evidence": "enabled scope completed with zero consecutive failures"}],
-      "core_scope_ids": ["d4ce8e1d-71d6-4ab3-ad4b-d8e3a69fc46a"],
+      "last_success": [
+        {
+          "product": "core",
+          "window_utc": [
+            "2026-10-13T22:10:14.781030+00:00",
+            "2026-10-13T22:39:08.969058+00:00"
+          ],
+          "evidence": "enabled scope completed with zero consecutive failures"
+        }
+      ],
+      "core_scope_ids": [
+        "d4ce8e1d-71d6-4ab3-ad4b-d8e3a69fc46a"
+      ],
       "blocker": null,
       "inventory_verified": true,
       "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["core"],
+      "active_publishers": [
+        "core"
+      ],
       "core_adapter": true,
-      "evidence": "Enabled and healthy Core scope."
+      "evidence": "Enabled and healthy Core scope.",
+      "swissjob_module": false,
+      "swissjob_registry": false
     },
     {
       "name": "financejobs",
       "aliases": [],
-      "current_harvesters": [{"product": "core", "module": "jobhunt_core/harvest/providers/native_financejobs.py", "triggers": ["jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"]}],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_financejobs.py",
+          "triggers": [
+            "jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public HTML page with embedded Next.js JSON over HTTPS",
       "external_identity": "canonical decimal jobId or canonical lowercase jcJobId UUID",
       "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
-      "last_success": [{"product": "core", "window_utc": ["2026-10-13T22:10:14.781030+00:00", "2026-10-13T22:39:08.969058+00:00"], "evidence": "enabled scope completed with zero consecutive failures"}],
-      "core_scope_ids": ["7eac32f6-5a9e-4a9a-a19c-0642b1d51558"],
+      "last_success": [
+        {
+          "product": "core",
+          "window_utc": [
+            "2026-10-13T22:10:14.781030+00:00",
+            "2026-10-13T22:39:08.969058+00:00"
+          ],
+          "evidence": "enabled scope completed with zero consecutive failures"
+        }
+      ],
+      "core_scope_ids": [
+        "7eac32f6-5a9e-4a9a-a19c-0642b1d51558"
+      ],
       "blocker": null,
       "inventory_verified": true,
       "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["core"],
+      "active_publishers": [
+        "core"
+      ],
       "core_adapter": true,
-      "evidence": "Enabled and healthy Core scope; historical local producer disabled."
+      "evidence": "Enabled and healthy Core scope; historical local producer disabled.",
+      "swissjob_module": false,
+      "swissjob_registry": false
     },
     {
       "name": "gastrojob",
-      "aliases": ["gastrojob.ch"],
-      "current_harvesters": [{"product": "swissjob", "module": "backend/scrapers/gastrojob.py", "triggers": ["tasks.pipeline.daily_harvest at 12:00 Europe/Zurich with +/-4h jitter"]}],
+      "aliases": [
+        "gastrojob.ch"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_gastrojob.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public HTML listing with AJAX pagination plus public HTML detail pages over HTTPS",
       "external_identity": "canonical detail URL; the persisted identity is MD5(title|company|URL) and the incremental cursor stores the URL",
       "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
-      "last_success": [{"product": "swissjob", "at": "2026-10-11T13:41:27.083866+00:00", "evidence": "outcome ok, 10 fetched, 9 stored, zero error/empty/unstored streaks"}],
-      "production_metrics": {"stored_entries": 73, "active_entries": 73, "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0, "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/gastrojob/field_presence", "baseline_ref": "../audits/2026-10-14-dt144-gastrojob-baseline.json"},
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T17:25:19.207490+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "stored_entries": 73,
+        "active_entries": 73,
+        "marked_duplicate": 0,
+        "duplicate_fuzzy_hashes": 0,
+        "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/gastrojob/field_presence",
+        "baseline_ref": "../audits/2026-10-14-dt144-gastrojob-baseline.json"
+      },
       "core_adapter": true,
-      "core_scope_ids": [],
-      "blocker": "The branch adapter, disabled scope definition and SwissJob registry handover are implemented and under validation, but production still has no gastrojob Core source or scope until the final owner-approved merge and coordinated cutover.",
+      "core_scope_ids": [
+        "ad295c8a-ac7c-51ed-8a8c-e81e70ff251a"
+      ],
+      "blocker": null,
       "inventory_verified": true,
-      "state": "local_pending",
+      "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["swissjob"],
-      "swissjob_module": true,
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
       "swissjob_registry": false,
-      "evidence": "SwissJob production run succeeded with persisted offers on 2026-10-11."
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle."
     },
     {
       "name": "glassdoor_partner",
       "aliases": [],
       "current_harvesters": [],
-      "credentials": [{"name": "GLASSDOOR_PARTNER_KEY", "present_in_production": false}],
+      "credentials": [
+        {
+          "name": "GLASSDOOR_PARTNER_KEY",
+          "present_in_production": false
+        }
+      ],
       "transport": "authorized partner API only; the local connector is deliberately unimplemented and performs no request",
       "external_identity": "the dormant connector would compute MD5 of normalized title, company and authorized-feed URL",
       "deduplication": "If an authorized feed were implemented, SwissJob would first upsert the legacy MD5 identity and then apply normalized title/company fuzzy deduplication across sources.",
-      "last_success": [{"product": "swissjob", "at": null, "observed_at": "2026-10-14T01:14:18+02:00", "evidence": "production credential absent; registry gate does not instantiate the connector and public scraping is forbidden"}],
+      "last_success": [
+        {
+          "product": "swissjob",
+          "at": null,
+          "observed_at": "2026-10-14T01:14:18+02:00",
+          "evidence": "production credential absent; registry gate does not instantiate the connector and public scraping is forbidden"
+        }
+      ],
       "core_scope_ids": [],
       "blocker": "No production partner credential or implemented authorized transport exists; public scraping is explicitly forbidden.",
       "inventory_verified": true,
       "state": "retired",
       "target_owner": null,
       "active_publishers": [],
-      "swissjob_module": true,
-      "swissjob_registry": true,
+      "swissjob_module": false,
+      "swissjob_registry": false,
       "evidence": "Missing partner credential and production compliance explicitly disallows harvesting."
     },
     {
       "name": "globaljobs",
       "aliases": [],
-      "current_harvesters": [{"product": "core", "module": "jobhunt_core/harvest/providers/native_rss.py", "triggers": ["jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"]}],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_rss.py",
+          "triggers": [
+            "jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public RSS XML feed over HTTPS",
       "external_identity": "SHA-256 of the upstream GUID when present, otherwise SHA-256 of the validated offer URL",
       "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
-      "last_success": [{"product": "core", "window_utc": ["2026-10-13T22:10:14.781030+00:00", "2026-10-13T22:39:08.969058+00:00"], "evidence": "enabled scope completed with zero consecutive failures"}],
-      "core_scope_ids": ["4316fa1e-cd53-4122-9510-b10759767225"],
+      "last_success": [
+        {
+          "product": "core",
+          "window_utc": [
+            "2026-10-13T22:10:14.781030+00:00",
+            "2026-10-13T22:39:08.969058+00:00"
+          ],
+          "evidence": "enabled scope completed with zero consecutive failures"
+        }
+      ],
+      "core_scope_ids": [
+        "4316fa1e-cd53-4122-9510-b10759767225"
+      ],
       "blocker": null,
       "inventory_verified": true,
       "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["core"],
+      "active_publishers": [
+        "core"
+      ],
       "core_adapter": true,
-      "evidence": "Enabled and healthy Core scope."
+      "evidence": "Enabled and healthy Core scope.",
+      "swissjob_module": false,
+      "swissjob_registry": false
     },
     {
       "name": "himalayas",
       "aliases": [],
-      "current_harvesters": [{"product": "reactportfolio", "module": "routers/himalayas_jobs.py", "triggers": ["worker startup sweep", "daily circadian sweep at 12:00 container local time with +/-4h jitter", "public stale-cache reads and authenticated manual refresh"]}],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_json.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public paginated Himalayas JSON API over HTTPS",
       "external_identity": "upstream GUID, with the public application URL retained as the stable seen key",
       "deduplication": "ReactPortfolio uses normalized URL as its stable seen key, falling back to MD5(title|company); exact collection dedupe uses MD5(lowercase title|lowercase company), with a separate normalized title/company fuzzy key for board display.",
-      "last_success": [{"product": "reactportfolio", "at": "2026-10-13T16:22:03.064238+00:00", "evidence": "successful persisted snapshot with 60 cached entries and zero normalization errors"}],
-      "production_metrics": {"cached_entries": 60, "reported_total": 60, "normalization_errors": 0, "duplicate_stable_keys": 0, "duplicate_exact_hashes": 0, "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/himalayas/field_presence"},
-      "core_scope_ids": [],
-      "blocker": "The branch adapter and one-scope three-page shadow are validated, but production has no Himalayas source or scope until the final owner-approved merge and coordinated cutover.",
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T17:32:26.853468+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "cached_entries": 60,
+        "reported_total": 60,
+        "normalization_errors": 0,
+        "duplicate_stable_keys": 0,
+        "duplicate_exact_hashes": 0,
+        "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/himalayas/field_presence"
+      },
+      "core_scope_ids": [
+        "deecf905-c39b-5b2c-9731-818b23b02f13"
+      ],
+      "blocker": null,
       "inventory_verified": true,
       "core_adapter": true,
-      "state": "local_pending",
+      "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["reactportfolio"],
-      "swissjob_module": true,
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
       "reactportfolio_source_name": "himalayas",
-      "evidence": "Portfolio production remains the sole live publisher with 60 audited rows; the branch shadow preserved all fields, collapsed three exact page-shift duplicates to 57 stable GUIDs, and the SwissJob module remains dormant."
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle.",
+      "swissjob_registry": false
     },
     {
       "name": "ictjobs",
-      "aliases": ["ictjobs.ch"],
-      "current_harvesters": [{"product": "reactportfolio", "module": "routers/ictjobs_jobs.py", "triggers": ["worker startup sweep", "daily circadian sweep at 12:00 container local time with +/-4h jitter", "public stale-cache reads and authenticated manual refresh"]}],
+      "aliases": [
+        "ictjobs.ch"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_json.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public WordPress REST JSON API with embedded ACF data over HTTPS",
       "external_identity": "WordPress post id plus the canonical public post URL",
       "deduplication": "ReactPortfolio uses normalized URL as its stable seen key, falling back to MD5(title|company); exact collection dedupe uses MD5(lowercase title|lowercase company), with a separate normalized title/company fuzzy key for board display.",
-      "last_success": [{"product": "reactportfolio", "at": "2026-10-13T16:22:58.038316+00:00", "evidence": "successful persisted snapshot with 100 cached entries and zero normalization errors"}],
-      "production_metrics": {"cached_entries": 100, "reported_total": 100, "normalization_errors": 0, "duplicate_stable_keys": 0, "duplicate_exact_hashes": 1, "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/ictjobs/field_presence"},
-      "core_scope_ids": [],
-      "blocker": "The branch adapter and one-scope five-page shadow are validated, but production has no ICTJobs source or scope until the final owner-approved merge and coordinated cutover.",
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T17:26:32.032858+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "cached_entries": 100,
+        "reported_total": 100,
+        "normalization_errors": 0,
+        "duplicate_stable_keys": 0,
+        "duplicate_exact_hashes": 1,
+        "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/ictjobs/field_presence"
+      },
+      "core_scope_ids": [
+        "aed5641b-c127-5d69-ab4c-734d155ecf22"
+      ],
+      "blocker": null,
       "inventory_verified": true,
       "core_adapter": true,
-      "state": "local_pending",
+      "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["reactportfolio"],
-      "swissjob_module": true,
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
       "reactportfolio_source_name": "ictjobs",
-      "evidence": "Portfolio production remains the sole live publisher with 100 audited rows; the branch shadow stored the same 100 WordPress ids across five pages and preserved locations, tags and professional groups. SwissJob's module remains dormant."
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle.",
+      "swissjob_registry": false
     },
     {
       "name": "ilojobs",
@@ -269,15 +547,22 @@
       "transport": "public RSS XML feed over HTTPS",
       "external_identity": "legacy module computes MD5 of normalized title, company and offer URL, falling back to the RSS GUID when the URL is absent",
       "deduplication": "SwissJob first upserts the legacy MD5 identity, then applies its normalized title/company fuzzy deduplication across sources.",
-      "last_success": [{"product": "swissjob", "at": null, "evidence": "module exists but is absent from the production provider registry, so no production run is scheduled"}],
+      "last_success": [
+        {
+          "product": "swissjob",
+          "at": null,
+          "evidence": "module exists but is absent from the production provider registry, so no production run is scheduled"
+        }
+      ],
       "core_scope_ids": [],
       "blocker": "The module is dormant and absent from the production registry; the source is retired rather than migrated.",
       "inventory_verified": true,
       "state": "retired",
       "target_owner": null,
       "active_publishers": [],
-      "swissjob_module": true,
-      "evidence": "Module exists but is absent from the production registry."
+      "swissjob_module": false,
+      "evidence": "Module exists but is absent from the production registry.",
+      "swissjob_registry": false
     },
     {
       "name": "impactpool",
@@ -287,113 +572,188 @@
       "transport": "public RSS XML feed over HTTPS",
       "external_identity": "legacy module computes MD5 of normalized title, company and offer URL, falling back to the RSS GUID when the URL is absent",
       "deduplication": "SwissJob first upserts the legacy MD5 identity, then applies its normalized title/company fuzzy deduplication across sources.",
-      "last_success": [{"product": "swissjob", "at": null, "evidence": "module exists but is absent from the production provider registry, so no production run is scheduled"}],
+      "last_success": [
+        {
+          "product": "swissjob",
+          "at": null,
+          "evidence": "module exists but is absent from the production provider registry, so no production run is scheduled"
+        }
+      ],
       "core_scope_ids": [],
       "blocker": "The module is dormant and absent from the production registry; the source is retired rather than migrated.",
       "inventory_verified": true,
       "state": "retired",
       "target_owner": null,
       "active_publishers": [],
-      "swissjob_module": true,
-      "evidence": "Module exists but is absent from the production registry."
+      "swissjob_module": false,
+      "evidence": "Module exists but is absent from the production registry.",
+      "swissjob_registry": false
     },
     {
       "name": "indeed_partner",
       "aliases": [],
       "current_harvesters": [],
-      "credentials": [{"name": "INDEED_PARTNER_KEY", "present_in_production": false}],
+      "credentials": [
+        {
+          "name": "INDEED_PARTNER_KEY",
+          "present_in_production": false
+        }
+      ],
       "transport": "authorized partner API or approved feed only; the local connector is deliberately unimplemented and performs no request",
       "external_identity": "the dormant connector would compute MD5 of normalized title, company and authorized-feed URL",
       "deduplication": "If an authorized feed were implemented, SwissJob would first upsert the legacy MD5 identity and then apply normalized title/company fuzzy deduplication across sources.",
-      "last_success": [{"product": "swissjob", "at": null, "observed_at": "2026-10-14T01:14:18+02:00", "evidence": "production credential absent; registry gate does not instantiate the connector and public scraping is forbidden"}],
+      "last_success": [
+        {
+          "product": "swissjob",
+          "at": null,
+          "observed_at": "2026-10-14T01:14:18+02:00",
+          "evidence": "production credential absent; registry gate does not instantiate the connector and public scraping is forbidden"
+        }
+      ],
       "core_scope_ids": [],
       "blocker": "No production partner credential or implemented authorized transport exists; public scraping is explicitly forbidden.",
       "inventory_verified": true,
       "state": "retired",
       "target_owner": null,
       "active_publishers": [],
-      "swissjob_module": true,
-      "swissjob_registry": true,
+      "swissjob_module": false,
+      "swissjob_registry": false,
       "evidence": "Missing partner credential and production compliance explicitly disallows harvesting."
     },
     {
       "name": "irishjobs",
-      "aliases": ["jobs.ie"],
-      "current_harvesters": [{"product": "core", "module": "jobhunt_core/harvest/providers/native_irishjobs.py", "triggers": ["jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"]}],
+      "aliases": [
+        "jobs.ie"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_irishjobs.py",
+          "triggers": [
+            "jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public StepStone JSON result-list API over HTTPS",
       "external_identity": "canonical StepStone platform job id extracted from the validated offer URL",
       "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
-      "last_success": [{"product": "core", "window_utc": ["2026-10-13T22:10:14.781030+00:00", "2026-10-13T22:39:08.969058+00:00"], "evidence": "enabled scope completed with zero consecutive failures"}],
-      "core_scope_ids": ["4af2f10e-259d-49d4-8f8d-f9d56cd178ef"],
+      "last_success": [
+        {
+          "product": "core",
+          "window_utc": [
+            "2026-10-13T22:10:14.781030+00:00",
+            "2026-10-13T22:39:08.969058+00:00"
+          ],
+          "evidence": "enabled scope completed with zero consecutive failures"
+        }
+      ],
+      "core_scope_ids": [
+        "4af2f10e-259d-49d4-8f8d-f9d56cd178ef"
+      ],
       "blocker": null,
       "inventory_verified": true,
       "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["core"],
+      "active_publishers": [
+        "core"
+      ],
       "core_adapter": true,
       "reactportfolio_source_name": "irishjobs",
-      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry."
+      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry.",
+      "swissjob_module": false,
+      "swissjob_registry": false
     },
     {
       "name": "jobcloud_partner",
-      "aliases": ["jobs.ch", "jobup.ch"],
+      "aliases": [
+        "jobs.ch",
+        "jobup.ch"
+      ],
       "current_harvesters": [],
-      "credentials": [{"name": "JOBCLOUD_PARTNER_API_KEY", "present_in_production": false}],
+      "credentials": [
+        {
+          "name": "JOBCLOUD_PARTNER_API_KEY",
+          "present_in_production": false
+        }
+      ],
       "transport": "authorized JobCloud partner API or official XML feed only; the local connector is deliberately unimplemented and performs no request",
       "external_identity": "the dormant connector would compute MD5 of normalized title, company and authorized-feed URL",
       "deduplication": "If an authorized feed were implemented, SwissJob would first upsert the legacy MD5 identity and then apply normalized title/company fuzzy deduplication across sources.",
-      "last_success": [{"product": "swissjob", "at": null, "observed_at": "2026-10-14T01:14:18+02:00", "evidence": "production credential absent; registry gate does not instantiate the connector and public scraping is forbidden"}],
+      "last_success": [
+        {
+          "product": "swissjob",
+          "at": null,
+          "observed_at": "2026-10-14T01:14:18+02:00",
+          "evidence": "production credential absent; registry gate does not instantiate the connector and public scraping is forbidden"
+        }
+      ],
       "core_scope_ids": [],
       "blocker": "No production partner credential or implemented authorized transport exists; public scraping is explicitly forbidden.",
       "inventory_verified": true,
       "state": "retired",
       "target_owner": null,
       "active_publishers": [],
-      "swissjob_module": true,
-      "swissjob_registry": true,
+      "swissjob_module": false,
+      "swissjob_registry": false,
       "evidence": "Missing partner credential and production compliance explicitly disallows harvesting."
     },
     {
       "name": "jobgether",
       "aliases": [],
-      "current_harvesters": [{"product": "core", "module": "jobhunt_core/harvest/providers/native_jobgether.py", "triggers": ["jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"]}],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_jobgether.py",
+          "triggers": [
+            "jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public JSON search API over HTTPS",
       "external_identity": "MD5 of normalized title, company and canonical offer slug after removing the volatile ObjectId prefix",
       "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
-      "last_success": [{"product": "core", "window_utc": ["2026-10-13T22:10:14.781030+00:00", "2026-10-13T22:39:08.969058+00:00"], "evidence": "enabled scope completed with zero consecutive failures"}],
-      "core_scope_ids": ["32c9fa21-bf17-4bc0-bafd-58c174f1608f"],
+      "last_success": [
+        {
+          "product": "core",
+          "window_utc": [
+            "2026-10-13T22:10:14.781030+00:00",
+            "2026-10-13T22:39:08.969058+00:00"
+          ],
+          "evidence": "enabled scope completed with zero consecutive failures"
+        }
+      ],
+      "core_scope_ids": [
+        "32c9fa21-bf17-4bc0-bafd-58c174f1608f"
+      ],
       "blocker": null,
       "inventory_verified": true,
       "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["core"],
+      "active_publishers": [
+        "core"
+      ],
       "core_adapter": true,
       "reactportfolio_source_name": "jobgether",
-      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry."
+      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry.",
+      "swissjob_module": false,
+      "swissjob_registry": false
     },
     {
       "name": "jobicy",
       "aliases": [],
-      "state": "local_pending",
+      "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["reactportfolio", "swissjob"],
+      "active_publishers": [
+        "core"
+      ],
       "current_harvesters": [
         {
-          "product": "reactportfolio",
-          "module": "services/jobicy_provider_impl.py",
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_json.py",
           "triggers": [
-            "worker startup sweep",
-            "daily circadian sweep at 12:00 container local time with +/-4h jitter",
-            "stale-cache and authenticated manual refresh routes"
-          ]
-        },
-        {
-          "product": "swissjob",
-          "module": "backend/providers/jobicy.py",
-          "triggers": [
-            "tasks.pipeline.daily_harvest at 12:00 Europe/Zurich with +/-4h jitter"
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
           ]
         }
       ],
@@ -403,258 +763,514 @@
       "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
       "last_success": [
         {
-          "product": "reactportfolio",
-          "at": null,
-          "observed_at": "2026-10-14T01:14:18+02:00",
-          "evidence": "healthy cache with 40 entries and an observed age of 6 hours; the exact completion timestamp was not exposed"
-        },
-        {
-          "product": "swissjob",
-          "at": "2026-10-13T10:25:16.951307+00:00",
-          "evidence": "outcome ok, 69 fetched, 0 stored, 17 consecutive runs without persistence"
+          "product": "core",
+          "at": "2026-10-15T17:31:00.155808+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
         }
       ],
-      "core_scope_ids": [],
-      "blocker": "The branch adapter and eight-scope shadow are validated, but production has no Jobicy source or scope until the final owner-approved merge and coordinated cutover.",
+      "core_scope_ids": [
+        "d6864227-4c5b-5cf5-aaa0-1b362d5c9e6c",
+        "5d482922-eb0b-5d2b-a653-0a8270134bf9",
+        "7220f5aa-da3d-5063-943d-bf0531b39b54",
+        "5a599f11-52d2-5f35-98cb-79a000b3d5bd",
+        "0e401572-c834-583d-98aa-88453bb77a52",
+        "65125f24-421d-5ff5-a32f-b3385ba0fa48",
+        "670a6150-d621-5f74-b1a6-43c1f6043add",
+        "dabdda8e-3ab6-5505-aeaf-874d88e75a87"
+      ],
+      "blocker": null,
       "inventory_verified": true,
       "core_adapter": true,
-      "swissjob_module": true,
+      "swissjob_module": false,
       "swissjob_registry": false,
       "reactportfolio_source_name": "jobicy",
-      "evidence": "Both local schedulers are active; Core adapter exists but production has no Jobicy scope."
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle."
     },
     {
       "name": "jobroom",
-      "aliases": ["job-room", "arbeit.swiss"],
-      "current_harvesters": [{"product": "reactportfolio", "module": "services/jobroom_provider_impl.py", "triggers": ["worker startup sweep", "daily circadian sweep at 12:00 container local time with +/-4h jitter", "public stale-cache reads and authenticated manual refresh"]}],
+      "aliases": [
+        "job-room",
+        "arbeit.swiss"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_jobroom.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public unauthenticated Job-Room JSON search API over HTTPS",
       "external_identity": "jobAdvertisement upstream id plus its canonical public Job-Room URL",
       "deduplication": "ReactPortfolio uses normalized URL as its stable seen key, falling back to MD5(title|company); exact collection dedupe uses MD5(lowercase title|lowercase company), with a separate normalized title/company fuzzy key for board display.",
-      "last_success": [{"product": "reactportfolio", "at": "2026-10-13T16:22:30.193723+00:00", "evidence": "successful persisted snapshot with 300 cached entries and zero normalization errors"}],
-      "production_metrics": {"cached_entries": 300, "reported_total": 300, "normalization_errors": 0, "duplicate_stable_keys": 0, "duplicate_exact_hashes": 32, "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/jobroom/field_presence"},
-      "core_scope_ids": [],
-      "blocker": "The branch adapter and consumer handover are validated, but production has no Job-Room source or scope until the final owner-approved merge and coordinated cutover.",
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T17:21:16.433650+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "cached_entries": 300,
+        "reported_total": 300,
+        "normalization_errors": 0,
+        "duplicate_stable_keys": 0,
+        "duplicate_exact_hashes": 32,
+        "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/jobroom/field_presence"
+      },
+      "core_scope_ids": [
+        "92cf0da7-4831-58d2-9193-5125518b4440"
+      ],
+      "blocker": null,
       "inventory_verified": true,
       "core_adapter": true,
-      "state": "local_pending",
+      "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["reactportfolio"],
+      "active_publishers": [
+        "core"
+      ],
       "reactportfolio_source_name": "jobroom",
-      "evidence": "Portfolio production cache healthy with 300 current entries."
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle.",
+      "swissjob_module": false,
+      "swissjob_registry": false
     },
     {
       "name": "jobscout24",
-      "aliases": ["jobscout24.ch"],
-      "current_harvesters": [{"product": "reactportfolio", "module": "services/jobscout24_provider_impl.py", "triggers": ["worker startup sweep", "daily circadian sweep at 12:00 container local time with +/-4h jitter", "public stale-cache reads and authenticated manual refresh"]}],
+      "aliases": [
+        "jobscout24.ch"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_jobscout24.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public paginated HTML listings plus public HTML detail pages over HTTPS",
       "external_identity": "data-job-id from the listing plus its canonical detail URL",
       "deduplication": "ReactPortfolio uses normalized URL as its stable seen key, falling back to MD5(title|company); exact collection dedupe uses MD5(lowercase title|lowercase company), with a separate normalized title/company fuzzy key for board display.",
-      "last_success": [{"product": "reactportfolio", "at": "2026-10-13T16:23:24.937717+00:00", "evidence": "successful persisted snapshot with 187 cached entries and zero normalization errors"}],
-      "production_metrics": {"cached_entries": 187, "reported_total": 187, "normalization_errors": 0, "duplicate_stable_keys": 0, "duplicate_exact_hashes": 3, "baseline_ref": "../audits/2026-10-14-dt144-jobscout24-baseline.json", "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/jobscout24/field_presence"},
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T16:12:39.549272+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "cached_entries": 187,
+        "reported_total": 187,
+        "normalization_errors": 0,
+        "duplicate_stable_keys": 0,
+        "duplicate_exact_hashes": 3,
+        "baseline_ref": "../audits/2026-10-14-dt144-jobscout24-baseline.json",
+        "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/jobscout24/field_presence"
+      },
       "core_adapter": true,
-      "core_scope_ids": [],
-      "blocker": "The branch adapter, disabled scope definition and ReactPortfolio consumer handover are implemented and under validation, but production still has no JobScout24 Core source or scope until the final owner-approved merge and coordinated cutover.",
-      "inventory_verified": true,
-      "state": "local_pending",
-      "target_owner": "core",
-      "active_publishers": ["reactportfolio"],
-      "reactportfolio_source_name": "jobscout24",
-      "evidence": "Portfolio production cache healthy with 187 current entries."
-    },
-    {
-      "name": "jobspresso",
-      "aliases": [],
-      "current_harvesters": [{"product": "core", "module": "jobhunt_core/harvest/providers/native_rss.py", "triggers": ["jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"]}],
-      "credentials": [],
-      "transport": "public RSS XML feed over HTTPS",
-      "external_identity": "SHA-256 of the upstream GUID when present, otherwise SHA-256 of the validated offer URL",
-      "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
-      "last_success": [{"product": "core", "window_utc": ["2026-10-13T22:10:14.781030+00:00", "2026-10-13T22:39:08.969058+00:00"], "evidence": "enabled scope completed with zero consecutive failures"}],
-      "core_scope_ids": ["62984bfa-9241-4349-84bf-fc439d054f26"],
+      "core_scope_ids": [
+        "2c3e24eb-7aab-517c-bf48-2f584ec5b682"
+      ],
       "blocker": null,
       "inventory_verified": true,
       "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["core"],
+      "active_publishers": [
+        "core"
+      ],
+      "reactportfolio_source_name": "jobscout24",
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle.",
+      "swissjob_module": false,
+      "swissjob_registry": false
+    },
+    {
+      "name": "jobspresso",
+      "aliases": [],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_rss.py",
+          "triggers": [
+            "jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"
+          ]
+        }
+      ],
+      "credentials": [],
+      "transport": "public RSS XML feed over HTTPS",
+      "external_identity": "SHA-256 of the upstream GUID when present, otherwise SHA-256 of the validated offer URL",
+      "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
+      "last_success": [
+        {
+          "product": "core",
+          "window_utc": [
+            "2026-10-13T22:10:14.781030+00:00",
+            "2026-10-13T22:39:08.969058+00:00"
+          ],
+          "evidence": "enabled scope completed with zero consecutive failures"
+        }
+      ],
+      "core_scope_ids": [
+        "62984bfa-9241-4349-84bf-fc439d054f26"
+      ],
+      "blocker": null,
+      "inventory_verified": true,
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": [
+        "core"
+      ],
       "core_adapter": true,
-      "evidence": "Enabled and healthy Core scope."
+      "evidence": "Enabled and healthy Core scope.",
+      "swissjob_module": false,
+      "swissjob_registry": false
     },
     {
       "name": "jooble",
       "aliases": [],
       "current_harvesters": [],
-      "credentials": [{"name": "JOOBLE_API_KEY", "present_in_production": false}],
+      "credentials": [
+        {
+          "name": "JOOBLE_API_KEY",
+          "present_in_production": false
+        }
+      ],
       "transport": "credential-gated Jooble JSON API over HTTPS",
       "external_identity": "legacy module computes MD5 of normalized title, company and offer URL",
       "deduplication": "SwissJob first upserts the legacy MD5 identity, then applies its normalized title/company fuzzy deduplication across sources.",
-      "last_success": [{"product": "swissjob", "at": null, "observed_at": "2026-10-14T01:14:18+02:00", "evidence": "production registry disabled the provider because JOOBLE_API_KEY was absent"}],
+      "last_success": [
+        {
+          "product": "swissjob",
+          "at": null,
+          "observed_at": "2026-10-14T01:14:18+02:00",
+          "evidence": "production registry disabled the provider because JOOBLE_API_KEY was absent"
+        }
+      ],
       "core_scope_ids": [],
       "blocker": "The required production credential is absent, so no active harvester exists; the source is retired.",
       "inventory_verified": true,
       "state": "retired",
       "target_owner": null,
       "active_publishers": [],
-      "swissjob_module": true,
-      "swissjob_registry": true,
+      "swissjob_module": false,
+      "swissjob_registry": false,
       "evidence": "Production registration disabled because JOOBLE_API_KEY is absent."
     },
     {
       "name": "jsearch",
       "aliases": [],
-      "current_harvesters": [{"product": "reactportfolio", "module": "services/jsearch_provider_impl.py and routers/jsearch_jobs.py", "triggers": ["worker startup sweep", "daily circadian sweep at 12:00 container local time with +/-4h jitter", "public stale-cache reads and authenticated manual refresh", "rate-limited live search from the visible JobSearchWindow tab"]}],
-      "credentials": [{"name": "JSEARCH_RAPIDAPI_KEY", "present_in_production": true}],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_jsearch.py",
+          "triggers": [
+            "manually disabled by owner waiver; no DT-144 retry"
+          ]
+        }
+      ],
+      "credentials": [
+        {
+          "name": "CORE_JSEARCH_RAPIDAPI_KEY",
+          "present_in_production": true
+        }
+      ],
       "transport": "credentialed JSearch RapidAPI JSON endpoint over HTTPS",
       "external_identity": "JSearch job_id plus the upstream apply link",
       "deduplication": "ReactPortfolio uses normalized URL as its stable seen key, falling back to MD5(title|company); exact collection dedupe uses MD5(lowercase title|lowercase company), with a separate normalized title/company fuzzy key for board display.",
-      "last_success": [{"product": "reactportfolio", "at": "2026-10-13T09:46:36.895599+00:00", "evidence": "successful persisted snapshot with 95 cached entries and zero normalization errors"}],
-      "production_metrics": {"cached_entries": 95, "reported_total": 95, "normalization_errors": 0, "duplicate_stable_keys": 1, "duplicate_exact_hashes": 3, "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/jsearch/field_presence"},
-      "core_scope_ids": [],
-      "blocker": "The Core adapter, disabled scope, authenticated live-search seam and both consumer handovers are validated in the feature branches, but production still has no JSearch Core scope or credential until the final owner-approved merge and coordinated cutover.",
+      "last_success": [],
+      "production_metrics": {
+        "cached_entries": 95,
+        "reported_total": 95,
+        "normalization_errors": 0,
+        "duplicate_stable_keys": 1,
+        "duplicate_exact_hashes": 3,
+        "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/jsearch/field_presence"
+      },
+      "core_scope_ids": [
+        "961cddf9-8c74-5a5e-8039-a1d244f86096"
+      ],
+      "blocker": null,
       "inventory_verified": true,
-      "state": "local_pending",
+      "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["reactportfolio"],
-      "swissjob_module": true,
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
       "swissjob_registry": false,
       "core_adapter": true,
       "reactportfolio_source_name": "jsearch",
-      "evidence": "Portfolio production remains the active publisher until cutover. The branches move the exact 95-row daily corpus, custom manual refreshes and rate-limited live searches to one Core transport, while removing both local registries and BFF credentials."
+      "evidence": "Core is the sole owner; its only scope is configured and manually disabled under the owner-approved no-retry waiver, with zero runs since the waiver."
     },
     {
       "name": "linkedin_authorized",
       "aliases": [],
       "current_harvesters": [],
-      "credentials": [{"name": "LINKEDIN_PARTNER_TOKEN", "present_in_production": false}],
+      "credentials": [
+        {
+          "name": "LINKEDIN_PARTNER_TOKEN",
+          "present_in_production": false
+        }
+      ],
       "transport": "authorized LinkedIn Talent Solutions API or user import only; the local connector is deliberately unimplemented and performs no request",
       "external_identity": "the dormant connector would compute MD5 of normalized title, company and authorized-feed URL",
       "deduplication": "If an authorized feed were implemented, SwissJob would first upsert the legacy MD5 identity and then apply normalized title/company fuzzy deduplication across sources.",
-      "last_success": [{"product": "swissjob", "at": null, "observed_at": "2026-10-14T01:14:18+02:00", "evidence": "production credential absent; registry gate does not instantiate the connector and public scraping is forbidden"}],
+      "last_success": [
+        {
+          "product": "swissjob",
+          "at": null,
+          "observed_at": "2026-10-14T01:14:18+02:00",
+          "evidence": "production credential absent; registry gate does not instantiate the connector and public scraping is forbidden"
+        }
+      ],
       "core_scope_ids": [],
       "blocker": "No production partner credential or implemented authorized transport exists; public scraping is explicitly forbidden.",
       "inventory_verified": true,
       "state": "retired",
       "target_owner": null,
       "active_publishers": [],
-      "swissjob_module": true,
-      "swissjob_registry": true,
+      "swissjob_module": false,
+      "swissjob_registry": false,
       "evidence": "Missing partner credential and production compliance explicitly disallows harvesting."
     },
     {
       "name": "medjobs",
-      "aliases": ["med-jobs.com"],
+      "aliases": [
+        "med-jobs.com"
+      ],
       "current_harvesters": [],
       "credentials": [],
       "transport": "public HTML over HTTPS requiring browser rendering, blocked by a Cloudflare challenge",
       "external_identity": "legacy scraper computes MD5 of normalized title, company and detail URL",
       "deduplication": "SwissJob first upserts the legacy MD5 identity, then applies its normalized title/company fuzzy deduplication across sources.",
-      "last_success": [{"product": "swissjob", "at": null, "evidence": "the scraper is explicitly absent from the registry because the supported browser cannot pass the site's Cloudflare challenge"}],
+      "last_success": [
+        {
+          "product": "swissjob",
+          "at": null,
+          "evidence": "the scraper is explicitly absent from the registry because the supported browser cannot pass the site's Cloudflare challenge"
+        }
+      ],
       "core_scope_ids": [],
       "blocker": "The required browser path is unsupported and no compliant production harvester exists; the source is retired.",
       "inventory_verified": true,
       "state": "retired",
       "target_owner": null,
       "active_publishers": [],
-      "swissjob_module": true,
-      "evidence": "Explicitly absent from the registry because its Cloudflare challenge is not supported."
+      "swissjob_module": false,
+      "evidence": "Explicitly absent from the registry because its Cloudflare challenge is not supported.",
+      "swissjob_registry": false
     },
     {
       "name": "myscience",
-      "aliases": ["myscience.ch"],
-      "current_harvesters": [{"product": "swissjob", "module": "backend/scrapers/myscience.py", "triggers": ["tasks.pipeline.daily_harvest at 12:00 Europe/Zurich with +/-4h jitter"]}],
+      "aliases": [
+        "myscience.ch"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_myscience.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public paginated HTML listings plus public HTML detail pages over HTTPS",
       "external_identity": "canonical detail URL; the persisted identity is MD5(title|company|URL) and the incremental cursor stores the URL",
       "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
-      "last_success": [{"product": "swissjob", "at": "2026-10-11T13:42:22.477021+00:00", "evidence": "outcome ok, 8 fetched and 8 stored with zero error/empty/unstored streaks"}],
-      "production_metrics": {"stored_entries": 115, "active_entries": 97, "marked_duplicate": 0, "duplicate_fuzzy_hashes": 5, "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/myscience/field_presence", "baseline_ref": "../audits/2026-10-14-dt144-myscience-baseline.json"},
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T17:37:36.202878+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "stored_entries": 115,
+        "active_entries": 97,
+        "marked_duplicate": 0,
+        "duplicate_fuzzy_hashes": 5,
+        "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/myscience/field_presence",
+        "baseline_ref": "../audits/2026-10-14-dt144-myscience-baseline.json"
+      },
       "core_adapter": true,
-      "core_scope_ids": [],
-      "blocker": "The branch adapter, disabled scope definition and SwissJob registry handover are implemented and under validation, but production still has no myScience Core source or scope until the final owner-approved merge and coordinated cutover.",
+      "core_scope_ids": [
+        "ef2ca806-9e29-5175-9231-d80a2295502e"
+      ],
+      "blocker": null,
       "inventory_verified": true,
-      "state": "local_pending",
+      "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["swissjob"],
-      "swissjob_module": true,
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
       "swissjob_registry": false,
-      "evidence": "SwissJob production run succeeded with persisted offers on 2026-10-11."
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle."
     },
     {
       "name": "nav_arbeidsplassen",
-      "aliases": ["nav"],
-      "current_harvesters": [{"product": "core", "module": "jobhunt_core/harvest/providers/native_nav.py", "triggers": ["jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"]}],
+      "aliases": [
+        "nav"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_nav.py",
+          "triggers": [
+            "jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public Elasticsearch-style JSON search API over HTTPS",
       "external_identity": "canonical upstream UUID from the search hit _id",
       "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
-      "last_success": [{"product": "core", "window_utc": ["2026-10-13T22:10:14.781030+00:00", "2026-10-13T22:39:08.969058+00:00"], "evidence": "both enabled scopes completed with zero consecutive failures"}],
-      "core_scope_ids": ["48601911-65e2-4357-83a1-dada1ad68237", "6aea217a-a379-49c3-8e8a-5b9a0034d421"],
+      "last_success": [
+        {
+          "product": "core",
+          "window_utc": [
+            "2026-10-13T22:10:14.781030+00:00",
+            "2026-10-13T22:39:08.969058+00:00"
+          ],
+          "evidence": "both enabled scopes completed with zero consecutive failures"
+        }
+      ],
+      "core_scope_ids": [
+        "48601911-65e2-4357-83a1-dada1ad68237",
+        "6aea217a-a379-49c3-8e8a-5b9a0034d421"
+      ],
       "blocker": null,
       "inventory_verified": true,
       "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["core"],
+      "active_publishers": [
+        "core"
+      ],
       "core_adapter": true,
       "reactportfolio_source_name": "nav",
-      "evidence": "Two enabled healthy Core scopes; Portfolio producer removed from its active registry."
+      "evidence": "Two enabled healthy Core scopes; Portfolio producer removed from its active registry.",
+      "swissjob_module": false,
+      "swissjob_registry": false
     },
     {
       "name": "ostjob",
       "aliases": [],
-      "current_harvesters": [{"product": "core", "module": "jobhunt_core/harvest/providers/native_chmedia.py", "triggers": ["jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"]}],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_chmedia.py",
+          "triggers": [
+            "jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public paginated CH Media JSON API over HTTPS",
       "external_identity": "validated portal numeric id",
       "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
-      "last_success": [{"product": "core", "window_utc": ["2026-10-13T22:10:14.781030+00:00", "2026-10-13T22:39:08.969058+00:00"], "evidence": "enabled scope completed with zero consecutive failures"}],
-      "core_scope_ids": ["39bedcdc-886a-4690-a82f-7ee8aab5302b"],
+      "last_success": [
+        {
+          "product": "core",
+          "window_utc": [
+            "2026-10-13T22:10:14.781030+00:00",
+            "2026-10-13T22:39:08.969058+00:00"
+          ],
+          "evidence": "enabled scope completed with zero consecutive failures"
+        }
+      ],
+      "core_scope_ids": [
+        "39bedcdc-886a-4690-a82f-7ee8aab5302b"
+      ],
       "blocker": null,
       "inventory_verified": true,
       "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["core"],
+      "active_publishers": [
+        "core"
+      ],
       "core_adapter": true,
       "reactportfolio_source_name": "ostjob",
-      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry."
+      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry.",
+      "swissjob_module": false,
+      "swissjob_registry": false
     },
     {
       "name": "proz",
-      "aliases": ["proz.com"],
+      "aliases": [
+        "proz.com"
+      ],
       "current_harvesters": [],
       "credentials": [],
       "transport": "public RSS XML feed over HTTPS",
       "external_identity": "RSS offer URL, falling back to GUID; the dormant normalizer computes MD5(title|company|URL-or-GUID)",
       "deduplication": "SwissJob would upsert the per-offer MD5 identity and then apply normalized title/company fuzzy deduplication, but no production item has reached persistence.",
-      "last_success": [{"product": "swissjob", "at": null, "evidence": "latest attempt 2026-10-13T10:25:07.962809+00:00 failed; 46 consecutive errors and no stored row or successful run"}],
-      "production_metrics": {"stored_entries": 0, "active_entries": 0, "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0, "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/proz/field_presence"},
+      "last_success": [
+        {
+          "product": "swissjob",
+          "at": null,
+          "evidence": "latest attempt 2026-10-13T10:25:07.962809+00:00 failed; 46 consecutive errors and no stored row or successful run"
+        }
+      ],
+      "production_metrics": {
+        "stored_entries": 0,
+        "active_entries": 0,
+        "marked_duplicate": 0,
+        "duplicate_fuzzy_hashes": 0,
+        "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/proz/field_presence"
+      },
       "core_scope_ids": [],
       "blocker": "Retired by explicit owner decision on 2026-10-15 after 46 consecutive production errors, zero stored rows, and confirmation that no compliant transport is currently available.",
       "inventory_verified": true,
       "state": "retired",
       "target_owner": null,
       "active_publishers": [],
-      "swissjob_module": true,
+      "swissjob_module": false,
       "swissjob_registry": false,
       "evidence": "Owner approved definitive retirement on 2026-10-15; removed from the SwissJob provider registry before the grouped cutover."
     },
     {
       "name": "publicjobs",
       "aliases": [],
-      "current_harvesters": [{"product": "core", "module": "jobhunt_core/harvest/providers/native_publicjobs.py", "triggers": ["jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"]}],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_publicjobs.py",
+          "triggers": [
+            "jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public SvelteKit JSON data feed over HTTPS",
       "external_identity": "SHA-256 of the validated relative offer path",
       "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
-      "last_success": [{"product": "core", "window_utc": ["2026-10-13T22:10:14.781030+00:00", "2026-10-13T22:39:08.969058+00:00"], "evidence": "enabled scope completed with zero consecutive failures"}],
-      "core_scope_ids": ["f15394b1-7e9a-4f5c-85a9-85d02957e208"],
+      "last_success": [
+        {
+          "product": "core",
+          "window_utc": [
+            "2026-10-13T22:10:14.781030+00:00",
+            "2026-10-13T22:39:08.969058+00:00"
+          ],
+          "evidence": "enabled scope completed with zero consecutive failures"
+        }
+      ],
+      "core_scope_ids": [
+        "f15394b1-7e9a-4f5c-85a9-85d02957e208"
+      ],
       "blocker": null,
       "inventory_verified": true,
       "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["core"],
+      "active_publishers": [
+        "core"
+      ],
       "core_adapter": true,
-      "evidence": "Enabled and healthy Core scope."
+      "evidence": "Enabled and healthy Core scope.",
+      "swissjob_module": false,
+      "swissjob_registry": false
     },
     {
       "name": "reliefweb",
@@ -664,366 +1280,815 @@
       "transport": "public ReliefWeb JSON API over HTTPS",
       "external_identity": "legacy module computes MD5 of normalized title, company and offer URL",
       "deduplication": "SwissJob first upserts the legacy MD5 identity, then applies its normalized title/company fuzzy deduplication across sources.",
-      "last_success": [{"product": "swissjob", "at": null, "evidence": "module exists but is absent from the production provider registry, so no production run is scheduled"}],
+      "last_success": [
+        {
+          "product": "swissjob",
+          "at": null,
+          "evidence": "module exists but is absent from the production provider registry, so no production run is scheduled"
+        }
+      ],
       "core_scope_ids": [],
       "blocker": "The module is dormant and absent from the production registry; the source is retired rather than migrated.",
       "inventory_verified": true,
       "state": "retired",
       "target_owner": null,
       "active_publishers": [],
-      "swissjob_module": true,
-      "evidence": "Module exists but is absent from the production registry."
+      "swissjob_module": false,
+      "evidence": "Module exists but is absent from the production registry.",
+      "swissjob_registry": false
     },
     {
       "name": "remoteco",
-      "aliases": ["remote.co"],
+      "aliases": [
+        "remote.co"
+      ],
       "current_harvesters": [],
       "credentials": [],
       "transport": "public RSS XML feed over HTTPS",
       "external_identity": "RSS offer URL, falling back to GUID; the dormant normalizer computes MD5(title|company|URL-or-GUID)",
       "deduplication": "SwissJob would upsert the per-offer MD5 identity and then apply normalized title/company fuzzy deduplication, but no production item has reached persistence.",
-      "last_success": [{"product": "swissjob", "at": null, "evidence": "latest attempt 2026-10-13T10:26:53.928274+00:00 failed; 54 consecutive errors and no stored row or successful run"}],
-      "production_metrics": {"stored_entries": 0, "active_entries": 0, "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0, "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/remoteco/field_presence"},
+      "last_success": [
+        {
+          "product": "swissjob",
+          "at": null,
+          "evidence": "latest attempt 2026-10-13T10:26:53.928274+00:00 failed; 54 consecutive errors and no stored row or successful run"
+        }
+      ],
+      "production_metrics": {
+        "stored_entries": 0,
+        "active_entries": 0,
+        "marked_duplicate": 0,
+        "duplicate_fuzzy_hashes": 0,
+        "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/remoteco/field_presence"
+      },
       "core_scope_ids": [],
       "blocker": "Retired by explicit owner decision on 2026-10-15 after 54 consecutive production errors, zero stored rows, a dead upstream feed, and confirmation that no compliant transport is currently available.",
       "inventory_verified": true,
       "state": "retired",
       "target_owner": null,
       "active_publishers": [],
-      "swissjob_module": true,
+      "swissjob_module": false,
       "swissjob_registry": false,
       "evidence": "Owner approved definitive retirement on 2026-10-15; removed from the SwissJob provider registry before the grouped cutover."
     },
     {
       "name": "remoteok",
-      "aliases": ["remoteok.com"],
-      "current_harvesters": [{"product": "reactportfolio", "module": "services/remoteok_provider_impl.py", "triggers": ["worker startup sweep", "daily circadian sweep at 12:00 container local time with +/-4h jitter", "public stale-cache reads and authenticated manual refresh"]}],
+      "aliases": [
+        "remoteok.com"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_json.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public RemoteOK JSON API over HTTPS",
       "external_identity": "RemoteOK upstream id plus apply URL, falling back to the canonical URL built from the offer slug",
       "deduplication": "ReactPortfolio uses normalized URL as its stable seen key, falling back to MD5(title|company); exact collection dedupe uses MD5(lowercase title|lowercase company), with a separate normalized title/company fuzzy key for board display.",
-      "last_success": [{"product": "reactportfolio", "at": "2026-10-13T16:22:00.221190+00:00", "evidence": "successful persisted snapshot with 97 cached entries and zero normalization errors"}],
-      "production_metrics": {"cached_entries": 97, "reported_total": 99, "normalization_errors": 0, "duplicate_stable_keys": 0, "duplicate_exact_hashes": 0, "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/remoteok/field_presence"},
-      "core_scope_ids": [],
-      "blocker": "The branch adapter and one-scope shadow are validated, but production has no RemoteOK source or scope until the final owner-approved merge and coordinated cutover.",
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T17:29:09.559504+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "cached_entries": 97,
+        "reported_total": 99,
+        "normalization_errors": 0,
+        "duplicate_stable_keys": 0,
+        "duplicate_exact_hashes": 0,
+        "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/remoteok/field_presence"
+      },
+      "core_scope_ids": [
+        "d2d5b74e-56ea-5745-8ecb-8bac403b9613"
+      ],
+      "blocker": null,
       "inventory_verified": true,
       "core_adapter": true,
-      "state": "local_pending",
+      "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["reactportfolio"],
-      "swissjob_module": true,
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
       "reactportfolio_source_name": "remoteok",
-      "evidence": "Portfolio production cache remains the sole live publisher with 97 audited entries; branch shadow matched all 99 current upstream rows and the SwissJob module remains dormant."
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle.",
+      "swissjob_registry": false
     },
     {
       "name": "remotive",
       "aliases": [],
-      "current_harvesters": [{"product": "core", "module": "jobhunt_core/harvest/providers/native_json.py", "triggers": ["jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"]}],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_json.py",
+          "triggers": [
+            "jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public JSON API over HTTPS",
       "external_identity": "upstream id, with validated offer URL as fallback",
       "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
-      "last_success": [{"product": "core", "window_utc": ["2026-10-13T22:10:14.781030+00:00", "2026-10-13T22:39:08.969058+00:00"], "evidence": "enabled scope completed with zero consecutive failures"}],
-      "core_scope_ids": ["f7d08bd3-7654-463d-abd6-4a0e26101caf"],
+      "last_success": [
+        {
+          "product": "core",
+          "window_utc": [
+            "2026-10-13T22:10:14.781030+00:00",
+            "2026-10-13T22:39:08.969058+00:00"
+          ],
+          "evidence": "enabled scope completed with zero consecutive failures"
+        }
+      ],
+      "core_scope_ids": [
+        "f7d08bd3-7654-463d-abd6-4a0e26101caf"
+      ],
       "blocker": null,
       "inventory_verified": true,
       "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["core"],
+      "active_publishers": [
+        "core"
+      ],
       "core_adapter": true,
       "reactportfolio_source_name": "remotive",
-      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry."
+      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry.",
+      "swissjob_module": false,
+      "swissjob_registry": false
     },
     {
       "name": "schuljobs",
-      "aliases": ["schuljobs.ch"],
-      "current_harvesters": [{"product": "swissjob", "module": "backend/scrapers/schuljobs.py", "triggers": ["tasks.pipeline.daily_harvest at 12:00 Europe/Zurich with +/-4h jitter"]}],
+      "aliases": [
+        "schuljobs.ch"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_schuljobs.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public HTML bootstrap, paginated scroll endpoint and public HTML detail pages over HTTPS",
       "external_identity": "canonical detail URL; the persisted identity is MD5(title|company|URL) and the incremental cursor stores the URL",
       "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
-      "last_success": [{"product": "swissjob", "at": "2026-08-29T13:44:14.594729+00:00", "evidence": "latest recorded success; the 2026-10-13 attempt reports 520 fetched and 27 stored but has no terminal outcome and the cursor is not bootstrap-complete"}],
-      "production_metrics": {"stored_entries": 160, "active_entries": 19, "marked_duplicate": 9, "duplicate_fuzzy_hashes": 2, "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/schuljobs/field_presence", "baseline_ref": "../audits/2026-10-15-dt144-schuljobs-baseline.json"},
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T16:21:34.253049+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "stored_entries": 160,
+        "active_entries": 19,
+        "marked_duplicate": 9,
+        "duplicate_fuzzy_hashes": 2,
+        "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/schuljobs/field_presence",
+        "baseline_ref": "../audits/2026-10-15-dt144-schuljobs-baseline.json"
+      },
       "core_adapter": true,
-      "core_scope_ids": [],
-      "blocker": "The branch adapter, disabled scope definition and SwissJob registry handover are implemented and under validation, but production still has no schuljobs Core source or scope until the final owner-approved merge and coordinated cutover. The parity the inventory asked for is measured: 83 offers over the sealed capture with an identical SHA-256, and the scope DECLARES its four-page budget instead of inheriting a dynamic one.",
-      "inventory_verified": true,
-      "state": "local_pending",
-      "target_owner": "core",
-      "active_publishers": ["swissjob"],
-      "swissjob_module": true,
-      "swissjob_registry": false,
-      "evidence": "SwissJob scheduler is active; latest production attempt remains unfinished and needs parity investigation."
-    },
-    {
-      "name": "stelle_admin",
-      "aliases": ["jobs.admin.ch"],
-      "current_harvesters": [{"product": "swissjob", "module": "backend/scrapers/stelle_admin.py", "triggers": ["tasks.pipeline.daily_harvest at 12:00 Europe/Zurich with +/-4h jitter"]}],
-      "credentials": [],
-      "transport": "public paginated HTML listings over HTTPS",
-      "external_identity": "resolved canonical offer URL; the persisted identity is MD5(title|company|URL) and the incremental cursor stores the URL",
-      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
-      "last_success": [{"product": "swissjob", "at": "2026-10-11T13:41:49.030942+00:00", "evidence": "outcome ok, 7 fetched and 7 stored with zero error/empty/unstored streaks"}],
-      "production_metrics": {"stored_entries": 43, "active_entries": 30, "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0, "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/stelle_admin/field_presence", "baseline_ref": "../audits/2026-10-15-dt144-stelle-admin-baseline.json"},
-      "core_adapter": true,
-      "core_scope_ids": [],
-      "blocker": "The branch adapter, disabled scope definition and SwissJob registry handover are implemented and under validation, but production still has no stelle_admin Core source or scope until the final owner-approved merge and coordinated cutover. Reimplemented WITHOUT a browser: the portal is a React app over the public JSON API its own bundle declares, so Core needs no Chromium.",
-      "inventory_verified": true,
-      "state": "local_pending",
-      "target_owner": "core",
-      "active_publishers": ["swissjob"],
-      "swissjob_module": true,
-      "swissjob_registry": false,
-      "evidence": "SwissJob production run succeeded with persisted offers on 2026-10-11."
-    },
-    {
-      "name": "swiss_schools_ecolint",
-      "aliases": ["ecolint"],
-      "current_harvesters": [{"product": "swissjob", "module": "backend/scrapers/swiss_schools_ecolint.py", "triggers": ["tasks.pipeline.daily_harvest at 12:00 Europe/Zurich with +/-4h jitter"]}],
-      "credentials": [],
-      "transport": "public paginated Drupal HTML listings over HTTPS",
-      "external_identity": "career slug and canonical detail URL; the persisted identity is MD5(title|school|URL) and the cursor stores the URL",
-      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
-      "last_success": [{"product": "swissjob", "at": "2026-10-13T10:28:31.974395+00:00", "evidence": "outcome ok, one fetched and one stored with zero consecutive errors"}],
-      "production_metrics": {"stored_entries": 21, "active_entries": 14, "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0, "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/swiss_schools_ecolint/field_presence", "baseline_ref": "../audits/2026-10-15-dt144-swiss-schools-boards-baseline.json"},
-      "core_adapter": true,
-      "core_scope_ids": [],
-      "blocker": "The branch adapter, disabled scope definition and SwissJob registry handover are implemented and under validation, but production still has no Core source or scope for this board until the final owner-approved merge and coordinated cutover. The adapter preserves the verified-empty rule: the board is recognised by its own page title (and its empty marker where the portal has one) before zero is reported as healthy.",
-      "inventory_verified": true,
-      "state": "local_pending",
-      "target_owner": "core",
-      "active_publishers": ["swissjob"],
-      "swissjob_module": true,
-      "swissjob_registry": false,
-      "evidence": "SwissJob production run succeeded with one offer on 2026-10-13."
-    },
-    {
-      "name": "swiss_schools_hautlac",
-      "aliases": ["haut-lac"],
-      "current_harvesters": [{"product": "swissjob", "module": "backend/scrapers/swiss_schools_hautlac.py", "triggers": ["tasks.pipeline.daily_harvest at 12:00 Europe/Zurich with +/-4h jitter"]}],
-      "credentials": [],
-      "transport": "public school HTML page over HTTPS",
-      "external_identity": "title-derived source_id and a stable synthetic fragment URL; the persisted identity is MD5(title|school|synthetic URL)",
-      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
-      "last_success": [{"product": "swissjob", "at": "2026-10-13T10:28:37.121594+00:00", "evidence": "outcome ok, one fetched and one stored with zero consecutive errors"}],
-      "production_metrics": {"stored_entries": 2, "active_entries": 2, "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0, "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/swiss_schools_hautlac/field_presence", "baseline_ref": "../audits/2026-10-15-dt144-swiss-schools-boards-baseline.json"},
-      "core_adapter": true,
-      "core_scope_ids": [],
-      "blocker": "The branch adapter, disabled scope definition and SwissJob registry handover are implemented and under validation, but production still has no Core source or scope for this board until the final owner-approved merge and coordinated cutover. The adapter preserves the verified-empty rule: the board is recognised by its own page title (and its empty marker where the portal has one) before zero is reported as healthy.",
-      "inventory_verified": true,
-      "state": "local_pending",
-      "target_owner": "core",
-      "active_publishers": ["swissjob"],
-      "swissjob_module": true,
-      "swissjob_registry": false,
-      "evidence": "SwissJob production run succeeded with one offer on 2026-10-13."
-    },
-    {
-      "name": "swiss_schools_inspired",
-      "aliases": ["inspired-education"],
-      "current_harvesters": [{"product": "swissjob", "module": "backend/scrapers/swiss_schools_inspired.py", "triggers": ["tasks.pipeline.daily_harvest at 12:00 Europe/Zurich with +/-4h jitter"]}],
-      "credentials": [],
-      "transport": "public SuccessFactors-style HTML search over HTTPS",
-      "external_identity": "canonical job URL filtered by exact school; the persisted identity is MD5(title|school|URL) and the cursor stores the URL",
-      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
-      "last_success": [{"product": "swissjob", "at": "2026-10-13T10:28:16.330013+00:00", "evidence": "cursor and compliance completed successfully; the board was legitimately empty, with zero errors and 36 consecutive empty runs"}],
-      "production_metrics": {"stored_entries": 5, "active_entries": 0, "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0, "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/swiss_schools_inspired/field_presence", "baseline_ref": "../audits/2026-10-15-dt144-swiss-schools-boards-baseline.json"},
-      "core_adapter": true,
-      "core_scope_ids": [],
-      "blocker": "The branch adapter, disabled scope definition and SwissJob registry handover are implemented and under validation, but production still has no Core source or scope for these schools until the final owner-approved merge and coordinated cutover. The source sweeps several schools on a shared career portal, each with its own query and its own tile filter, and keeps the verified-empty rule.",
-      "inventory_verified": true,
-      "state": "local_pending",
-      "target_owner": "core",
-      "active_publishers": ["swissjob"],
-      "swissjob_module": true,
-      "swissjob_registry": false,
-      "evidence": "SwissJob production verified a legitimate empty board on 2026-10-13."
-    },
-    {
-      "name": "swiss_schools_isb",
-      "aliases": ["international-school-basel"],
-      "current_harvesters": [{"product": "swissjob", "module": "backend/scrapers/swiss_schools_isb.py", "triggers": ["tasks.pipeline.daily_harvest at 12:00 Europe/Zurich with +/-4h jitter"]}],
-      "credentials": [],
-      "transport": "public school job-board HTML over HTTPS",
-      "external_identity": "canonical posting URL; the persisted identity is MD5(title|school|URL) and the cursor stores the URL",
-      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
-      "last_success": [{"product": "swissjob", "at": "2026-10-13T10:28:27.968195+00:00", "evidence": "cursor and compliance completed successfully; the board was legitimately empty, with zero errors and 36 consecutive empty runs"}],
-      "production_metrics": {"stored_entries": 0, "active_entries": 0, "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0, "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/swiss_schools_isb/field_presence", "baseline_ref": "../audits/2026-10-15-dt144-swiss-schools-boards-baseline.json"},
-      "core_adapter": true,
-      "core_scope_ids": [],
-      "blocker": "The branch adapter, disabled scope definition and SwissJob registry handover are implemented and under validation, but production still has no Core source or scope for this board until the final owner-approved merge and coordinated cutover. The adapter preserves the verified-empty rule: the board is recognised by its own page title (and its empty marker where the portal has one) before zero is reported as healthy.",
-      "inventory_verified": true,
-      "state": "local_pending",
-      "target_owner": "core",
-      "active_publishers": ["swissjob"],
-      "swissjob_module": true,
-      "swissjob_registry": false,
-      "evidence": "SwissJob production verified a legitimate empty board on 2026-10-13."
-    },
-    {
-      "name": "swiss_schools_iscs",
-      "aliases": ["iscs-zug"],
-      "current_harvesters": [{"product": "swissjob", "module": "backend/scrapers/swiss_schools_iscs.py", "triggers": ["tasks.pipeline.daily_harvest at 12:00 Europe/Zurich with +/-4h jitter"]}],
-      "credentials": [],
-      "transport": "public school HTML page over HTTPS",
-      "external_identity": "title-derived source_id and a stable synthetic fragment URL; the persisted identity is MD5(title|school|synthetic URL)",
-      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
-      "last_success": [{"product": "swissjob", "at": "2026-10-13T10:28:41.866280+00:00", "evidence": "outcome ok, two fetched and two stored with zero consecutive errors"}],
-      "production_metrics": {"stored_entries": 3, "active_entries": 3, "marked_duplicate": 0, "duplicate_fuzzy_hashes": 1, "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/swiss_schools_iscs/field_presence", "baseline_ref": "../audits/2026-10-15-dt144-swiss-schools-boards-baseline.json"},
-      "core_adapter": true,
-      "core_scope_ids": [],
-      "blocker": "The branch adapter, disabled scope definition and SwissJob registry handover are implemented and under validation, but production still has no Core source or scope for this board until the final owner-approved merge and coordinated cutover. The adapter preserves the verified-empty rule: the board is recognised by its own page title (and its empty marker where the portal has one) before zero is reported as healthy.",
-      "inventory_verified": true,
-      "state": "local_pending",
-      "target_owner": "core",
-      "active_publishers": ["swissjob"],
-      "swissjob_module": true,
-      "swissjob_registry": false,
-      "evidence": "SwissJob production run succeeded with two offers on 2026-10-13."
-    },
-    {
-      "name": "swiss_schools_isp",
-      "aliases": ["isp-workday"],
-      "current_harvesters": [{"product": "swissjob", "module": "backend/scrapers/swiss_schools_isp.py", "triggers": ["tasks.pipeline.daily_harvest at 12:00 Europe/Zurich with +/-4h jitter"]}],
-      "credentials": [],
-      "transport": "public Workday CXS JSON search API over HTTPS",
-      "external_identity": "Workday externalPath resolved to the canonical public URL; the persisted identity is MD5(title|school|URL)",
-      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
-      "last_success": [{"product": "swissjob", "at": "2026-10-13T10:28:01.814194+00:00", "evidence": "outcome ok, three fetched and three stored with zero consecutive errors"}],
-      "production_metrics": {"stored_entries": 10, "active_entries": 10, "marked_duplicate": 0, "duplicate_fuzzy_hashes": 1, "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/swiss_schools_isp/field_presence", "baseline_ref": "../audits/2026-10-15-dt144-swiss-schools-boards-baseline.json"},
-      "core_adapter": true,
-      "core_scope_ids": [],
-      "blocker": "The branch adapter, disabled scope definition and SwissJob registry handover are implemented and under validation, but production still has no Core source or scope for this school until the final owner-approved merge and coordinated cutover. The whole externalPath guard chain is ported verbatim, and published_at stays absent because Workday publishes a relative bucket, never a date.",
-      "inventory_verified": true,
-      "state": "local_pending",
-      "target_owner": "core",
-      "active_publishers": ["swissjob"],
-      "swissjob_module": true,
-      "swissjob_registry": false,
-      "evidence": "SwissJob production run succeeded with three offers on 2026-10-13."
-    },
-    {
-      "name": "swiss_schools_nae",
-      "aliases": ["nord-anglia-education"],
-      "current_harvesters": [{"product": "swissjob", "module": "backend/scrapers/swiss_schools_nae.py", "triggers": ["tasks.pipeline.daily_harvest at 12:00 Europe/Zurich with +/-4h jitter"]}],
-      "credentials": [],
-      "transport": "public SuccessFactors-style HTML search over HTTPS",
-      "external_identity": "canonical job URL filtered by exact school; the persisted identity is MD5(title|school|URL) and the cursor stores the URL",
-      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
-      "last_success": [{"product": "swissjob", "at": "2026-10-13T10:27:16.778380+00:00", "evidence": "outcome ok, 13 fetched and 13 stored with zero consecutive errors"}],
-      "production_metrics": {"stored_entries": 22, "active_entries": 21, "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0, "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/swiss_schools_nae/field_presence", "baseline_ref": "../audits/2026-10-15-dt144-swiss-schools-boards-baseline.json"},
-      "core_adapter": true,
-      "core_scope_ids": [],
-      "blocker": "The branch adapter, disabled scope definition and SwissJob registry handover are implemented and under validation, but production still has no Core source or scope for these schools until the final owner-approved merge and coordinated cutover. The source sweeps several schools on a shared career portal, each with its own query and its own tile filter, and keeps the verified-empty rule.",
-      "inventory_verified": true,
-      "state": "local_pending",
-      "target_owner": "core",
-      "active_publishers": ["swissjob"],
-      "swissjob_module": true,
-      "swissjob_registry": false,
-      "evidence": "SwissJob production run succeeded with thirteen offers on 2026-10-13."
-    },
-    {
-      "name": "swiss_schools_zis",
-      "aliases": ["zurich-international-school"],
-      "current_harvesters": [{"product": "swissjob", "module": "backend/scrapers/swiss_schools_zis.py", "triggers": ["tasks.pipeline.daily_harvest at 12:00 Europe/Zurich with +/-4h jitter"]}],
-      "credentials": [],
-      "transport": "public school HTML page linking canonical SchoolSpring postings over HTTPS",
-      "external_identity": "canonical SchoolSpring posting URL; the persisted identity is MD5(title|school|URL) and the cursor stores the URL",
-      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
-      "last_success": [{"product": "swissjob", "at": "2026-10-13T10:28:22.121046+00:00", "evidence": "cursor and compliance completed successfully; the board was legitimately empty, with zero errors and 36 consecutive empty runs"}],
-      "production_metrics": {"stored_entries": 1, "active_entries": 0, "marked_duplicate": 0, "duplicate_fuzzy_hashes": 0, "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/swiss_schools_zis/field_presence", "baseline_ref": "../audits/2026-10-15-dt144-swiss-schools-boards-baseline.json"},
-      "core_adapter": true,
-      "core_scope_ids": [],
-      "blocker": "The branch adapter, disabled scope definition and SwissJob registry handover are implemented and under validation, but production still has no Core source or scope for this board until the final owner-approved merge and coordinated cutover. The adapter preserves the verified-empty rule: the board is recognised by its own page title (and its empty marker where the portal has one) before zero is reported as healthy.",
-      "inventory_verified": true,
-      "state": "local_pending",
-      "target_owner": "core",
-      "active_publishers": ["swissjob"],
-      "swissjob_module": true,
-      "swissjob_registry": false,
-      "evidence": "SwissJob production verified a legitimate empty board on 2026-10-13."
-    },
-    {
-      "name": "swissdevjobs",
-      "aliases": ["swissdevjobs.ch"],
-      "current_harvesters": [{"product": "reactportfolio", "module": "services/swissdevjobs_provider_impl.py", "triggers": ["worker startup sweep", "daily circadian sweep at 12:00 container local time with +/-4h jitter", "public stale-cache reads and authenticated manual refresh"]}],
-      "credentials": [],
-      "transport": "public SwissDevJobs JSON API plus public HTML detail pages over HTTPS",
-      "external_identity": "jobUrl slug, falling back to the upstream _id, plus the canonical public offer URL",
-      "deduplication": "ReactPortfolio uses normalized URL as its stable seen key, falling back to MD5(title|company); exact collection dedupe uses MD5(lowercase title|lowercase company), with a separate normalized title/company fuzzy key for board display.",
-      "last_success": [{"product": "reactportfolio", "at": "2026-10-13T16:22:57.056090+00:00", "evidence": "successful persisted snapshot with 155 cached entries and zero normalization errors"}],
-      "production_metrics": {"cached_entries": 155, "reported_total": 207, "normalization_errors": 0, "duplicate_stable_keys": 0, "duplicate_exact_hashes": 0, "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/swissdevjobs/field_presence"},
-      "core_scope_ids": [],
-      "blocker": "The branch adapter is under validation, but production has no SwissDevJobs source or scope until the final owner-approved merge and coordinated cutover.",
-      "inventory_verified": true,
-      "core_adapter": true,
-      "state": "local_pending",
-      "target_owner": "core",
-      "active_publishers": ["reactportfolio"],
-      "reactportfolio_source_name": "swissdevjobs",
-      "evidence": "Portfolio production cache healthy with 155 current entries."
-    },
-    {
-      "name": "swisstechjobs",
-      "aliases": ["swisstechjobs.com"],
-      "current_harvesters": [{"product": "reactportfolio", "module": "routers/swisstechjobs_jobs.py", "triggers": ["worker startup sweep", "daily circadian sweep at 12:00 container local time with +/-4h jitter", "public stale-cache reads and authenticated manual refresh"]}],
-      "credentials": [],
-      "transport": "public WordPress REST JSON API over HTTPS",
-      "external_identity": "WordPress job-listing id plus the canonical public offer URL",
-      "deduplication": "ReactPortfolio uses normalized URL as its stable seen key, falling back to MD5(title|company); exact collection dedupe uses MD5(lowercase title|lowercase company), with a separate normalized title/company fuzzy key for board display.",
-      "last_success": [{"product": "reactportfolio", "at": "2026-10-13T16:22:03.018648+00:00", "evidence": "successful persisted snapshot with 11 cached entries and zero normalization errors"}],
-      "production_metrics": {"cached_entries": 11, "reported_total": 11, "normalization_errors": 0, "duplicate_stable_keys": 0, "duplicate_exact_hashes": 0, "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/swisstechjobs/field_presence"},
-      "core_scope_ids": [],
-      "blocker": "The branch adapter is under validation, but production has no SwissTechJobs source or scope until the final owner-approved merge and coordinated cutover.",
-      "inventory_verified": true,
-      "core_adapter": true,
-      "state": "local_pending",
-      "target_owner": "core",
-      "active_publishers": ["reactportfolio"],
-      "swissjob_module": true,
-      "reactportfolio_source_name": "swisstechjobs",
-      "evidence": "Portfolio production cache healthy with 11 current entries; SwissJob module is dormant."
-    },
-    {
-      "name": "tes",
-      "aliases": ["tes.com"],
-      "current_harvesters": [{"product": "swissjob", "module": "backend/scrapers/tes.py", "triggers": ["tasks.pipeline.daily_harvest at 12:00 Europe/Zurich with +/-4h jitter"]}],
-      "credentials": [],
-      "transport": "public paginated HTML listings over HTTPS",
-      "external_identity": "canonical job URL; the persisted identity is MD5(title|company|URL) and the incremental cursor stores the URL",
-      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
-      "last_success": [{"product": "swissjob", "at": "2026-10-11T13:41:51.344486+00:00", "evidence": "latest successful non-empty run; the 2026-10-13 attempt was a legitimate empty result with zero errors"}],
-      "production_metrics": {"stored_entries": 43, "active_entries": 43, "marked_duplicate": 0, "duplicate_fuzzy_hashes": 1, "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/tes/field_presence", "baseline_ref": "../audits/2026-10-15-dt144-tes-baseline.json"},
-      "core_adapter": true,
-      "core_scope_ids": [],
-      "blocker": "The branch adapter, disabled scope definition and SwissJob registry handover are implemented and under validation, but production still has no tes Core source or scope until the final owner-approved merge and coordinated cutover. Portal ceiling recorded: ?page=N is ignored server-side, so eight of the 28 announced offers are unreachable from the rendered payload and the adapter counts the shortfall instead of losing it in silence.",
-      "inventory_verified": true,
-      "state": "local_pending",
-      "target_owner": "core",
-      "active_publishers": ["swissjob"],
-      "swissjob_module": true,
-      "swissjob_registry": false,
-      "evidence": "SwissJob production most recently returned empty after a successful run on 2026-10-11."
-    },
-    {
-      "name": "thehub",
-      "aliases": [],
-      "current_harvesters": [{"product": "core", "module": "jobhunt_core/harvest/providers/native_thehub.py", "triggers": ["jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"]}],
-      "credentials": [],
-      "transport": "public paginated JSON API plus per-offer JSON detail over HTTPS",
-      "external_identity": "validated 24-character hexadecimal upstream object id",
-      "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
-      "last_success": [{"product": "core", "window_utc": ["2026-10-13T22:10:14.781030+00:00", "2026-10-13T22:39:08.969058+00:00"], "evidence": "enabled scope completed with zero consecutive failures"}],
-      "core_scope_ids": ["4edcf6e7-e5b1-46f7-a244-5c99fa11b759"],
+      "core_scope_ids": [
+        "3688c75e-7b19-51b7-9318-456d5a3547a2"
+      ],
       "blocker": null,
       "inventory_verified": true,
       "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["core"],
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
+      "swissjob_registry": false,
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle."
+    },
+    {
+      "name": "stelle_admin",
+      "aliases": [
+        "jobs.admin.ch"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_stelle_admin.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
+      "credentials": [],
+      "transport": "public paginated HTML listings over HTTPS",
+      "external_identity": "resolved canonical offer URL; the persisted identity is MD5(title|company|URL) and the incremental cursor stores the URL",
+      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T17:31:40.625809+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "stored_entries": 43,
+        "active_entries": 30,
+        "marked_duplicate": 0,
+        "duplicate_fuzzy_hashes": 0,
+        "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/stelle_admin/field_presence",
+        "baseline_ref": "../audits/2026-10-15-dt144-stelle-admin-baseline.json"
+      },
+      "core_adapter": true,
+      "core_scope_ids": [
+        "de5bef71-21ab-59fc-ad01-ecdd91be1d5b"
+      ],
+      "blocker": null,
+      "inventory_verified": true,
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
+      "swissjob_registry": false,
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle."
+    },
+    {
+      "name": "swiss_schools_ecolint",
+      "aliases": [
+        "ecolint"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_swiss_schools.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
+      "credentials": [],
+      "transport": "public paginated Drupal HTML listings over HTTPS",
+      "external_identity": "career slug and canonical detail URL; the persisted identity is MD5(title|school|URL) and the cursor stores the URL",
+      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T17:25:46.298842+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "stored_entries": 21,
+        "active_entries": 14,
+        "marked_duplicate": 0,
+        "duplicate_fuzzy_hashes": 0,
+        "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/swiss_schools_ecolint/field_presence",
+        "baseline_ref": "../audits/2026-10-15-dt144-swiss-schools-boards-baseline.json"
+      },
+      "core_adapter": true,
+      "core_scope_ids": [
+        "ad77c6aa-807b-5e05-a5ea-3633e98ee984"
+      ],
+      "blocker": null,
+      "inventory_verified": true,
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
+      "swissjob_registry": false,
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle."
+    },
+    {
+      "name": "swiss_schools_hautlac",
+      "aliases": [
+        "haut-lac"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_swiss_schools.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
+      "credentials": [],
+      "transport": "public school HTML page over HTTPS",
+      "external_identity": "title-derived source_id and a stable synthetic fragment URL; the persisted identity is MD5(title|school|synthetic URL)",
+      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T17:29:49.846781+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "stored_entries": 2,
+        "active_entries": 2,
+        "marked_duplicate": 0,
+        "duplicate_fuzzy_hashes": 0,
+        "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/swiss_schools_hautlac/field_presence",
+        "baseline_ref": "../audits/2026-10-15-dt144-swiss-schools-boards-baseline.json"
+      },
+      "core_adapter": true,
+      "core_scope_ids": [
+        "d5bb8ded-1fa8-5673-967e-10e38ddc8a91"
+      ],
+      "blocker": null,
+      "inventory_verified": true,
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
+      "swissjob_registry": false,
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle."
+    },
+    {
+      "name": "swiss_schools_inspired",
+      "aliases": [
+        "inspired-education"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_swiss_schools.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
+      "credentials": [],
+      "transport": "public SuccessFactors-style HTML search over HTTPS",
+      "external_identity": "canonical job URL filtered by exact school; the persisted identity is MD5(title|school|URL) and the cursor stores the URL",
+      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T16:42:32.221137+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "stored_entries": 5,
+        "active_entries": 0,
+        "marked_duplicate": 0,
+        "duplicate_fuzzy_hashes": 0,
+        "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/swiss_schools_inspired/field_presence",
+        "baseline_ref": "../audits/2026-10-15-dt144-swiss-schools-boards-baseline.json"
+      },
+      "core_adapter": true,
+      "core_scope_ids": [
+        "3ba57391-6de9-598f-aec6-6889c4d7ddb7"
+      ],
+      "blocker": null,
+      "inventory_verified": true,
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
+      "swissjob_registry": false,
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle."
+    },
+    {
+      "name": "swiss_schools_isb",
+      "aliases": [
+        "international-school-basel"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_swiss_schools.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
+      "credentials": [],
+      "transport": "public school job-board HTML over HTTPS",
+      "external_identity": "canonical posting URL; the persisted identity is MD5(title|school|URL) and the cursor stores the URL",
+      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T17:28:53.867465+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "stored_entries": 0,
+        "active_entries": 0,
+        "marked_duplicate": 0,
+        "duplicate_fuzzy_hashes": 0,
+        "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/swiss_schools_isb/field_presence",
+        "baseline_ref": "../audits/2026-10-15-dt144-swiss-schools-boards-baseline.json"
+      },
+      "core_adapter": true,
+      "core_scope_ids": [
+        "bd6f7b61-e7c8-5b90-98ee-f8dd28096076"
+      ],
+      "blocker": null,
+      "inventory_verified": true,
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
+      "swissjob_registry": false,
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle."
+    },
+    {
+      "name": "swiss_schools_iscs",
+      "aliases": [
+        "iscs-zug"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_swiss_schools.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
+      "credentials": [],
+      "transport": "public school HTML page over HTTPS",
+      "external_identity": "title-derived source_id and a stable synthetic fragment URL; the persisted identity is MD5(title|school|synthetic URL)",
+      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T17:28:59.257211+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "stored_entries": 3,
+        "active_entries": 3,
+        "marked_duplicate": 0,
+        "duplicate_fuzzy_hashes": 1,
+        "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/swiss_schools_iscs/field_presence",
+        "baseline_ref": "../audits/2026-10-15-dt144-swiss-schools-boards-baseline.json"
+      },
+      "core_adapter": true,
+      "core_scope_ids": [
+        "d2cefe41-2486-538e-8656-71ec66a42684"
+      ],
+      "blocker": null,
+      "inventory_verified": true,
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
+      "swissjob_registry": false,
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle."
+    },
+    {
+      "name": "swiss_schools_isp",
+      "aliases": [
+        "isp-workday"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_isp_workday.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
+      "credentials": [],
+      "transport": "public Workday CXS JSON search API over HTTPS",
+      "external_identity": "Workday externalPath resolved to the canonical public URL; the persisted identity is MD5(title|school|URL)",
+      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T16:55:57.010957+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "stored_entries": 10,
+        "active_entries": 10,
+        "marked_duplicate": 0,
+        "duplicate_fuzzy_hashes": 1,
+        "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/swiss_schools_isp/field_presence",
+        "baseline_ref": "../audits/2026-10-15-dt144-swiss-schools-boards-baseline.json"
+      },
+      "core_adapter": true,
+      "core_scope_ids": [
+        "8068b567-459f-5c37-ba52-a192b69a5da5"
+      ],
+      "blocker": null,
+      "inventory_verified": true,
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
+      "swissjob_registry": false,
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle."
+    },
+    {
+      "name": "swiss_schools_nae",
+      "aliases": [
+        "nord-anglia-education"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_swiss_schools.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
+      "credentials": [],
+      "transport": "public SuccessFactors-style HTML search over HTTPS",
+      "external_identity": "canonical job URL filtered by exact school; the persisted identity is MD5(title|school|URL) and the cursor stores the URL",
+      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T16:50:26.956411+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "stored_entries": 22,
+        "active_entries": 21,
+        "marked_duplicate": 0,
+        "duplicate_fuzzy_hashes": 0,
+        "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/swiss_schools_nae/field_presence",
+        "baseline_ref": "../audits/2026-10-15-dt144-swiss-schools-boards-baseline.json"
+      },
+      "core_adapter": true,
+      "core_scope_ids": [
+        "5fc4dafe-e8b5-5dee-a3d8-fd1e62765b65"
+      ],
+      "blocker": null,
+      "inventory_verified": true,
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
+      "swissjob_registry": false,
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle."
+    },
+    {
+      "name": "swiss_schools_zis",
+      "aliases": [
+        "zurich-international-school"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_swiss_schools.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
+      "credentials": [],
+      "transport": "public school HTML page linking canonical SchoolSpring postings over HTTPS",
+      "external_identity": "canonical SchoolSpring posting URL; the persisted identity is MD5(title|school|URL) and the cursor stores the URL",
+      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T17:27:15.554997+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "stored_entries": 1,
+        "active_entries": 0,
+        "marked_duplicate": 0,
+        "duplicate_fuzzy_hashes": 0,
+        "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/swiss_schools_zis/field_presence",
+        "baseline_ref": "../audits/2026-10-15-dt144-swiss-schools-boards-baseline.json"
+      },
+      "core_adapter": true,
+      "core_scope_ids": [
+        "b04cea73-6afd-52dc-a5d7-1fdb86c32e1b"
+      ],
+      "blocker": null,
+      "inventory_verified": true,
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
+      "swissjob_registry": false,
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle."
+    },
+    {
+      "name": "swissdevjobs",
+      "aliases": [
+        "swissdevjobs.ch"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_swissdevjobs.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
+      "credentials": [],
+      "transport": "public SwissDevJobs JSON API plus public HTML detail pages over HTTPS",
+      "external_identity": "jobUrl slug, falling back to the upstream _id, plus the canonical public offer URL",
+      "deduplication": "ReactPortfolio uses normalized URL as its stable seen key, falling back to MD5(title|company); exact collection dedupe uses MD5(lowercase title|lowercase company), with a separate normalized title/company fuzzy key for board display.",
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T17:40:29.462779+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "cached_entries": 155,
+        "reported_total": 207,
+        "normalization_errors": 0,
+        "duplicate_stable_keys": 0,
+        "duplicate_exact_hashes": 0,
+        "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/swissdevjobs/field_presence"
+      },
+      "core_scope_ids": [
+        "f3eaf26a-b488-5dc0-83cd-40e04d2b00b6"
+      ],
+      "blocker": null,
+      "inventory_verified": true,
+      "core_adapter": true,
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": [
+        "core"
+      ],
+      "reactportfolio_source_name": "swissdevjobs",
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle.",
+      "swissjob_module": false,
+      "swissjob_registry": false
+    },
+    {
+      "name": "swisstechjobs",
+      "aliases": [
+        "swisstechjobs.com"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_json.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
+      "credentials": [],
+      "transport": "public WordPress REST JSON API over HTTPS",
+      "external_identity": "WordPress job-listing id plus the canonical public offer URL",
+      "deduplication": "ReactPortfolio uses normalized URL as its stable seen key, falling back to MD5(title|company); exact collection dedupe uses MD5(lowercase title|lowercase company), with a separate normalized title/company fuzzy key for board display.",
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T17:37:49.256789+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "cached_entries": 11,
+        "reported_total": 11,
+        "normalization_errors": 0,
+        "duplicate_stable_keys": 0,
+        "duplicate_exact_hashes": 0,
+        "field_presence_ref": "../audits/2026-10-14-dt144-reactportfolio-metrics.json#/sources/swisstechjobs/field_presence"
+      },
+      "core_scope_ids": [
+        "f0f1105b-7d56-5d1d-8027-0bf1875882fd"
+      ],
+      "blocker": null,
+      "inventory_verified": true,
+      "core_adapter": true,
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
+      "reactportfolio_source_name": "swisstechjobs",
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle.",
+      "swissjob_registry": false
+    },
+    {
+      "name": "tes",
+      "aliases": [
+        "tes.com"
+      ],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_tes.py",
+          "triggers": [
+            "Core native daily dispatcher; verified in the second production cycle on 2026-10-15"
+          ]
+        }
+      ],
+      "credentials": [],
+      "transport": "public paginated HTML listings over HTTPS",
+      "external_identity": "canonical job URL; the persisted identity is MD5(title|company|URL) and the incremental cursor stores the URL",
+      "deduplication": "SwissJob upserts the per-offer MD5 identity, rejects conflicting unique URLs, applies normalized title/company fuzzy deduplication across sources and records duplicate_of links.",
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-15T17:22:25.215831+00:00",
+          "evidence": "all source scopes completed ok in the DT-144 second native production cycle"
+        }
+      ],
+      "production_metrics": {
+        "stored_entries": 43,
+        "active_entries": 43,
+        "marked_duplicate": 0,
+        "duplicate_fuzzy_hashes": 1,
+        "field_presence_ref": "../audits/2026-10-14-dt144-swissjob-metrics.json#/sources/tes/field_presence",
+        "baseline_ref": "../audits/2026-10-15-dt144-tes-baseline.json"
+      },
+      "core_adapter": true,
+      "core_scope_ids": [
+        "aac43162-1747-56bb-9269-2445694f628e"
+      ],
+      "blocker": null,
+      "inventory_verified": true,
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": [
+        "core"
+      ],
+      "swissjob_module": false,
+      "swissjob_registry": false,
+      "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle."
+    },
+    {
+      "name": "thehub",
+      "aliases": [],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_thehub.py",
+          "triggers": [
+            "jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"
+          ]
+        }
+      ],
+      "credentials": [],
+      "transport": "public paginated JSON API plus per-offer JSON detail over HTTPS",
+      "external_identity": "validated 24-character hexadecimal upstream object id",
+      "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
+      "last_success": [
+        {
+          "product": "core",
+          "window_utc": [
+            "2026-10-13T22:10:14.781030+00:00",
+            "2026-10-13T22:39:08.969058+00:00"
+          ],
+          "evidence": "enabled scope completed with zero consecutive failures"
+        }
+      ],
+      "core_scope_ids": [
+        "4edcf6e7-e5b1-46f7-a244-5c99fa11b759"
+      ],
+      "blocker": null,
+      "inventory_verified": true,
+      "state": "local_removed",
+      "target_owner": "core",
+      "active_publishers": [
+        "core"
+      ],
       "core_adapter": true,
       "reactportfolio_source_name": "thehub",
-      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry."
+      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry.",
+      "swissjob_module": false,
+      "swissjob_registry": false
     },
     {
       "name": "translatorscafe",
@@ -1033,15 +2098,22 @@
       "transport": "public RSS XML feed over HTTPS",
       "external_identity": "legacy module computes MD5 of normalized title, company and offer URL, falling back to the RSS GUID when the URL is absent",
       "deduplication": "SwissJob first upserts the legacy MD5 identity, then applies its normalized title/company fuzzy deduplication across sources.",
-      "last_success": [{"product": "swissjob", "at": null, "evidence": "production health recorded 13 errors and no successful run before the module was removed from the registry"}],
+      "last_success": [
+        {
+          "product": "swissjob",
+          "at": null,
+          "evidence": "production health recorded 13 errors and no successful run before the module was removed from the registry"
+        }
+      ],
       "core_scope_ids": [],
       "blocker": "The module is not registered and has no successful production run; the source is retired rather than migrated.",
       "inventory_verified": true,
       "state": "retired",
       "target_owner": null,
       "active_publishers": [],
-      "swissjob_module": true,
-      "evidence": "Not registered; production health records 13 errors and no successful run."
+      "swissjob_module": false,
+      "evidence": "Not registered; production health records 13 errors and no successful run.",
+      "swissjob_registry": false
     },
     {
       "name": "undpjobs",
@@ -1051,15 +2123,22 @@
       "transport": "public RSS XML feed over HTTPS",
       "external_identity": "legacy module computes MD5 of normalized title, company and offer URL, falling back to the RSS GUID when the URL is absent",
       "deduplication": "SwissJob first upserts the legacy MD5 identity, then applies its normalized title/company fuzzy deduplication across sources.",
-      "last_success": [{"product": "swissjob", "at": null, "evidence": "module exists but is absent from the production provider registry, so no production run is scheduled"}],
+      "last_success": [
+        {
+          "product": "swissjob",
+          "at": null,
+          "evidence": "module exists but is absent from the production provider registry, so no production run is scheduled"
+        }
+      ],
       "core_scope_ids": [],
       "blocker": "The module is dormant and absent from the production registry; the source is retired rather than migrated.",
       "inventory_verified": true,
       "state": "retired",
       "target_owner": null,
       "active_publishers": [],
-      "swissjob_module": true,
-      "evidence": "Module exists but is absent from the production registry."
+      "swissjob_module": false,
+      "evidence": "Module exists but is absent from the production registry.",
+      "swissjob_registry": false
     },
     {
       "name": "untalent",
@@ -1069,108 +2148,219 @@
       "transport": "public UN Talent JSON API over HTTPS",
       "external_identity": "legacy module computes MD5 of normalized title, company and offer URL",
       "deduplication": "SwissJob first upserts the legacy MD5 identity, then applies its normalized title/company fuzzy deduplication across sources.",
-      "last_success": [{"product": "swissjob", "at": null, "evidence": "module exists but is absent from the production provider registry, so no production run is scheduled"}],
+      "last_success": [
+        {
+          "product": "swissjob",
+          "at": null,
+          "evidence": "module exists but is absent from the production provider registry, so no production run is scheduled"
+        }
+      ],
       "core_scope_ids": [],
       "blocker": "The module is dormant and absent from the production registry; the source is retired rather than migrated.",
       "inventory_verified": true,
       "state": "retired",
       "target_owner": null,
       "active_publishers": [],
-      "swissjob_module": true,
-      "evidence": "Module exists but is absent from the production registry."
+      "swissjob_module": false,
+      "evidence": "Module exists but is absent from the production registry.",
+      "swissjob_registry": false
     },
     {
       "name": "weworkremotely",
       "aliases": [],
-      "current_harvesters": [{"product": "core", "module": "jobhunt_core/harvest/providers/native_rss.py", "triggers": ["jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"]}],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_rss.py",
+          "triggers": [
+            "jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public RSS XML feed over HTTPS",
       "external_identity": "SHA-256 of the upstream GUID when present, otherwise SHA-256 of the validated offer URL",
       "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
-      "last_success": [{"product": "core", "window_utc": ["2026-10-13T22:10:14.781030+00:00", "2026-10-13T22:39:08.969058+00:00"], "evidence": "enabled scope completed with zero consecutive failures"}],
-      "core_scope_ids": ["faccefaa-37f4-4647-9dec-3a1f7b26bf5d"],
+      "last_success": [
+        {
+          "product": "core",
+          "window_utc": [
+            "2026-10-13T22:10:14.781030+00:00",
+            "2026-10-13T22:39:08.969058+00:00"
+          ],
+          "evidence": "enabled scope completed with zero consecutive failures"
+        }
+      ],
+      "core_scope_ids": [
+        "faccefaa-37f4-4647-9dec-3a1f7b26bf5d"
+      ],
       "blocker": null,
       "inventory_verified": true,
       "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["core"],
+      "active_publishers": [
+        "core"
+      ],
       "core_adapter": true,
       "reactportfolio_source_name": "weworkremotely",
-      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry."
+      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry.",
+      "swissjob_module": false,
+      "swissjob_registry": false
     },
     {
       "name": "workingnomads",
       "aliases": [],
-      "current_harvesters": [{"product": "core", "module": "jobhunt_core/harvest/providers/native_json.py", "triggers": ["jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"]}],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_json.py",
+          "triggers": [
+            "jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public JSON API over HTTPS",
       "external_identity": "upstream id, with validated offer URL as fallback",
       "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
-      "last_success": [{"product": "core", "window_utc": ["2026-10-13T22:10:14.781030+00:00", "2026-10-13T22:39:08.969058+00:00"], "evidence": "enabled scope completed with zero consecutive failures"}],
-      "core_scope_ids": ["49232928-5e43-4c3a-bb65-c1d1c4fa0e24"],
+      "last_success": [
+        {
+          "product": "core",
+          "window_utc": [
+            "2026-10-13T22:10:14.781030+00:00",
+            "2026-10-13T22:39:08.969058+00:00"
+          ],
+          "evidence": "enabled scope completed with zero consecutive failures"
+        }
+      ],
+      "core_scope_ids": [
+        "49232928-5e43-4c3a-bb65-c1d1c4fa0e24"
+      ],
       "blocker": null,
       "inventory_verified": true,
       "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["core"],
+      "active_publishers": [
+        "core"
+      ],
       "core_adapter": true,
-      "evidence": "Enabled and healthy Core scope."
+      "evidence": "Enabled and healthy Core scope.",
+      "swissjob_module": false,
+      "swissjob_registry": false
     },
     {
       "name": "xing_partner",
       "aliases": [],
       "current_harvesters": [],
-      "credentials": [{"name": "XING_PARTNER_TOKEN", "present_in_production": false}],
+      "credentials": [
+        {
+          "name": "XING_PARTNER_TOKEN",
+          "present_in_production": false
+        }
+      ],
       "transport": "authorized XING e-recruiting feed or API only; the local connector is deliberately unimplemented and performs no request",
       "external_identity": "the dormant connector would compute MD5 of normalized title, company and authorized-feed URL",
       "deduplication": "If an authorized feed were implemented, SwissJob would first upsert the legacy MD5 identity and then apply normalized title/company fuzzy deduplication across sources.",
-      "last_success": [{"product": "swissjob", "at": null, "observed_at": "2026-10-14T01:14:18+02:00", "evidence": "production credential absent; registry gate does not instantiate the connector and public scraping is forbidden"}],
+      "last_success": [
+        {
+          "product": "swissjob",
+          "at": null,
+          "observed_at": "2026-10-14T01:14:18+02:00",
+          "evidence": "production credential absent; registry gate does not instantiate the connector and public scraping is forbidden"
+        }
+      ],
       "core_scope_ids": [],
       "blocker": "No production partner credential or implemented authorized transport exists; public scraping is explicitly forbidden.",
       "inventory_verified": true,
       "state": "retired",
       "target_owner": null,
       "active_publishers": [],
-      "swissjob_module": true,
-      "swissjob_registry": true,
+      "swissjob_module": false,
+      "swissjob_registry": false,
       "evidence": "Missing partner credential and production compliance explicitly disallows harvesting."
     },
     {
       "name": "zebis",
       "aliases": [],
-      "current_harvesters": [{"product": "core", "module": "jobhunt_core/harvest/providers/native_rss.py", "triggers": ["jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"]}],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_rss.py",
+          "triggers": [
+            "jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public RSS XML feed over HTTPS",
       "external_identity": "SHA-256 of the repaired canonical offer URL",
       "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
-      "last_success": [{"product": "core", "window_utc": ["2026-10-13T22:10:14.781030+00:00", "2026-10-13T22:39:08.969058+00:00"], "evidence": "enabled scope completed with zero consecutive failures"}],
-      "core_scope_ids": ["704c4780-7c09-4ae7-be78-c6078d4b1c63"],
+      "last_success": [
+        {
+          "product": "core",
+          "window_utc": [
+            "2026-10-13T22:10:14.781030+00:00",
+            "2026-10-13T22:39:08.969058+00:00"
+          ],
+          "evidence": "enabled scope completed with zero consecutive failures"
+        }
+      ],
+      "core_scope_ids": [
+        "704c4780-7c09-4ae7-be78-c6078d4b1c63"
+      ],
       "blocker": null,
       "inventory_verified": true,
       "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["core"],
+      "active_publishers": [
+        "core"
+      ],
       "core_adapter": true,
-      "evidence": "Enabled and healthy Core scope."
+      "evidence": "Enabled and healthy Core scope.",
+      "swissjob_module": false,
+      "swissjob_registry": false
     },
     {
       "name": "zentraljob",
       "aliases": [],
-      "current_harvesters": [{"product": "core", "module": "jobhunt_core/harvest/providers/native_chmedia.py", "triggers": ["jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"]}],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_chmedia.py",
+          "triggers": [
+            "jobhunt.harvest.dispatch_native at 00:10, 06:10, 12:10 and 18:10 Europe/Zurich"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public paginated CH Media JSON API over HTTPS",
       "external_identity": "validated portal numeric id",
       "deduplication": "Core deduplicates per source by external_id, links identical normalized URLs across sources, and records unresolved fuzzy title/company matches as candidates.",
-      "last_success": [{"product": "core", "window_utc": ["2026-10-13T22:10:14.781030+00:00", "2026-10-13T22:39:08.969058+00:00"], "evidence": "enabled scope completed with zero consecutive failures"}],
-      "core_scope_ids": ["ed4339b9-bb52-422c-98bc-594f6d3ae135"],
+      "last_success": [
+        {
+          "product": "core",
+          "window_utc": [
+            "2026-10-13T22:10:14.781030+00:00",
+            "2026-10-13T22:39:08.969058+00:00"
+          ],
+          "evidence": "enabled scope completed with zero consecutive failures"
+        }
+      ],
+      "core_scope_ids": [
+        "ed4339b9-bb52-422c-98bc-594f6d3ae135"
+      ],
       "blocker": null,
       "inventory_verified": true,
       "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": ["core"],
+      "active_publishers": [
+        "core"
+      ],
       "core_adapter": true,
       "reactportfolio_source_name": "zentraljob",
-      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry."
+      "evidence": "Enabled and healthy Core scope; Portfolio producer removed from its active registry.",
+      "swissjob_module": false,
+      "swissjob_registry": false
     }
   ]
 }

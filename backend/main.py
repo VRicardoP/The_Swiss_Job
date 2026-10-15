@@ -16,7 +16,6 @@ from slowapi.errors import RateLimitExceeded
 from config import settings
 from core.rate_limit import LimiteGlobalMiddleware, limiter
 from logging_setup import configure_logging
-from providers import log_provider_status
 from services.scheduler import run_scheduler_with_leader_lock
 from services.exclusions_sync import run_exclusion_delivery
 from services.sse_manager import SSEManager
@@ -111,8 +110,6 @@ def _validate_database_credentials(*, en_pruebas: bool | None = None) -> None:
 async def lifespan(app: FastAPI):
     _validate_security_config()
     _validate_database_credentials()
-    log_provider_status()
-
     # Startup — SSE Manager (Redis pub/sub)
     redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=False)
     sse = SSEManager(redis_client, queue_maxsize=settings.SSE_QUEUE_MAXSIZE)

@@ -4,13 +4,9 @@ Antes: `Limiter(default_limits=["100/minute"])` estaba puesto pero **no se
 aplicaba a nada**, porque slowapi sólo lo honra con su middleware y éste no
 estaba instalado. Configuración muerta que se leía como protección.
 
-Y el middleware de slowapi tampoco servía: busca el handler con
-`hasattr(route, "endpoint")`, y desde FastAPI 0.141 los routers incluidos viven
-en `app.routes` como `_IncludedRouter`, sin ese atributo. Devuelve `None`,
-`_should_exempt(None)` es True y **exime todas las rutas de la API**. Medido en
-este árbol antes de escribir el middleware propio: 260 peticiones seguidas a
-`/api/v1/jobs/stats` salieron las 260 con 200 y no dejaron ni una clave en Redis.
-La última prueba de abajo es la que impide volver a ese estado.
+El middleware propio aplica el bucket por cliente y camino sin depender de los
+internos de SlowAPI. Las pruebas de comportamiento fijan que también cubre las
+rutas incluidas sin decorador.
 """
 
 import pytest
@@ -79,25 +75,3 @@ async def test_con_el_limitador_apagado_no_estorba(limitador_activo):
             (await c.get("/api/v1/prueba/sin-decorador")).status_code for _ in range(4)
         ]
     assert codigos == [200] * 4
-
-
-@pytest.mark.asyncio
-async def test_slowapi_no_resuelve_el_router_incluido():
-    """Keep the reason for the URL-based middleware executable.
-
-    FastAPI 0.141.1 still wraps included routes without an ``endpoint``
-    attribute. SlowAPI therefore exempts them; the three behavior tests above
-    prove that the project middleware closes that gap.
-    """
-    from slowapi.middleware import _find_route_handler
-
-    app = _app_con_router("10/minute")
-    scope = {
-        "type": "http",
-        "method": "GET",
-        "path": "/api/v1/prueba/sin-decorador",
-        "headers": [],
-        "root_path": "",
-    }
-    handler = _find_route_handler(app.routes, scope)
-    assert handler is None

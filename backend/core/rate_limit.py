@@ -41,16 +41,8 @@ limiter = Limiter(
 class LimiteGlobalMiddleware(BaseHTTPMiddleware):
     """Límite por defecto para TODA la API, no sólo para las rutas decoradas.
 
-    Por qué no `SlowAPIMiddleware`: busca el handler con
-    `_find_route_handler`, que exige `hasattr(route, "endpoint")`. Desde
-    FastAPI 0.141 los routers incluidos viven en `app.routes` como
-    `_IncludedRouter`, que NO tiene ese atributo, así que devuelve `None` y
-    `_should_exempt(None)` es True. Comprobado en este árbol: con su
-    middleware instalado, 260 peticiones seguidas a `/api/v1/jobs/stats`
-    salieron las 260 con 200 y no dejaron ni una clave en Redis. Habría sido
-    cambiar una configuración muerta por otra.
-
-    Éste no necesita saber qué función atiende la ruta: le basta el par
+    No necesita saber qué función atiende la ruta ni acoplarse a los internos
+    de SlowAPI: le basta el par
     (cliente, camino), que es justamente el bucket que se quiere.
     """
 

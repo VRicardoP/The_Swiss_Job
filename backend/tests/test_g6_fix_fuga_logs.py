@@ -14,12 +14,9 @@ ahora en `fetch_diagnostics.record()`, que sí es la raíz.
 
 import logging
 
-import httpx
 import pytest
 
 from logging_setup import CredentialRedactingFilter, install_credential_redaction
-from utils import fetch_diagnostics as diag
-from utils.http import fetch_rss
 from utils.redact import redact_credentials
 
 _KEY_GEMINI = "AIzaSyF4K3-CL4V3-D3-G00GL3-D3-39-CH4R5"
@@ -105,34 +102,3 @@ class TestElLoggerDeHttpxYaNoPublicaLaClave:
         for señal in (after_setup_logger, after_setup_task_logger):
             receptores = [receptor for _clave, receptor in señal.receivers]
             assert install_credential_redaction in receptores
-
-
-class TestFetchRssNoPublicaElTokenDeLaQuery:
-    """P3-6 — sin `diag_url`, y sin que nadie tenga que acordarse."""
-
-    @pytest.mark.asyncio
-    async def test_el_403_de_un_feed_con_token_llega_redactado_a_la_columna(self):
-        url = f"https://feed.example/rss?token={_TOKEN_RSS}"
-        transport = httpx.MockTransport(lambda req: httpx.Response(403, text="nope"))
-
-        diag.begin()
-        async with httpx.AsyncClient(transport=transport) as client:
-            resultado = await fetch_rss(client, url, max_retries=0, backoff_factor=0.0)
-
-        assert resultado is None
-        registrados = diag.issues()
-        assert len(registrados) == 1
-        assert _TOKEN_RSS not in registrados[0].url
-        assert _TOKEN_RSS not in registrados[0].describe()
-        assert "token=<redacted>" in registrados[0].url
-
-    def test_record_redacta_tambien_el_detalle(self):
-        diag.begin()
-        diag.record(
-            diag.KIND_NETWORK,
-            f"https://feed.example/rss?api_key={_TOKEN_RSS}",
-            detail=f"ReadTimeout: https://feed.example/rss?api_key={_TOKEN_RSS}",
-        )
-        (issue,) = diag.issues()
-        assert _TOKEN_RSS not in issue.url
-        assert _TOKEN_RSS not in issue.detail

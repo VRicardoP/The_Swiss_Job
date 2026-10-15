@@ -9,14 +9,12 @@
 > ha hecho, cómo, en qué estado está respecto al objetivo final y qué queda**,
 > para que no haya que reconstruirlo leyendo veinte checkpoints.
 >
-> Última actualización: **2026-10-15, corte en curso**. Las dos ramas iniciales
-> y la corrección de redacción están fusionadas; Core `5b3bf3d` está desplegado.
-> Los 33 scopes DT-144 están habilitados, SwissJob local está detenido y
-> Portfolio local está verificablemente quiescente. El primer ciclo válido es
-> el ciclo nativo de las 12:10 Europe/Zurich: 49 de 50 scopes terminaron `ok` y
-> JSearch quedó pendiente por agotamiento comprobado de su cuota externa. El
-> propietario ordenó continuar sin esperar al reset ni reintentar JSearch; la
-> excepción y sus límites están al comienzo de §0.1.
+> Última actualización: **2026-10-15, limpieza final publicada**. Core `5b3bf3d`
+> está desplegado y el segundo ciclo terminó con **49/49 scopes ejecutables
+> `ok`**, delivery drenado y cero filas de JSearch. Las retiradas físicas de
+> SwissJob y ReactPortfolio están publicadas en sus PR finales; ReactPortfolio
+> tiene CI verde y SwissJob está verificando en CI el ajuste Alembic descrito en
+> §0.1. JSearch continúa deshabilitado y no se ha reintentado.
 
 ---
 
@@ -41,6 +39,84 @@
 Este bloque **prevalece sobre las fotografías anteriores de este documento**
 hasta el siguiente checkpoint:
 
+### Checkpoint más reciente · retiradas físicas publicadas y verificadas
+
+- **SwissJob:** `7441e0e` retiró exactamente 60 módulos locales, 58 ficheros de
+  pruebas exclusivamente locales y las dependencias/configuración obsoletas;
+  `20355b1` preserva en Alembic cuatro tablas históricas cuyos runtimes ya no
+  existen. El primer CI reveló que eliminar los modelos ORM hacía que
+  `alembic check` propusiera destruir `source_compliance`, `source_cursors` y
+  `source_health`; se corrigió excluyéndolas del autogenerado igual que
+  `jobhunt_routing`, sin restaurar código productivo. Rama
+  `feat/dt144-final-cleanup`, PR 13. Ratchet: 40 Core-owned, 0 local pending,
+  58 fuentes. Los dos trabajos `backend-test` de `20355b1` pasan, incluido
+  `alembic upgrade head && alembic check` (`38792413497`, `38792421864`).
+- **ReactPortfolio:** `c0c87fb` retiró los 40 módulos nominales, 29 ficheros de
+  pruebas puramente locales, los caminos de fallback y las dependencias
+  directas del matcher local. Resultado neto: 22.111 líneas eliminadas y 792
+  añadidas (contratos y ratchet). Suite local: **1740 passed, 1 skipped**;
+  ratchet: **40/40 módulos ausentes**. PR 4, dos ejecuciones Backend CI verdes
+  (`38791663711` y `38791703790`). `935ed56` retiró además del manifiesto y del
+  transformador de despliegue los dos ajustes locales obsoletos y los montajes
+  de caché Hugging Face; el despliegue exige eliminar exactamente dos montajes
+  antes de sustituir el Compose vivo.
+- La suite completa descubrió y cerró una regresión independiente: la
+  normalización PostgreSQL dejaba pasar `NaN`/infinitos y podía convertir un
+  422 en 500. `pg_safe_tree` los transforma ahora en `None`; la prueba de
+  frontera está verde.
+- `numpy` ya no es dependencia directa de Portfolio, pero sigue llegando de
+  forma transitiva por `folium`, que sí respalda analítica activa. La sonda
+  final exige que `numpy` no figure en `requirements.txt`; sólo exige ausencia
+  instalada para `sentence-transformers`, `scikit-learn` y `torch`. Así mide la
+  retirada del matcher sin romper una función ajena.
+- **Punto exacto de reanudación:** esperar que la CI de SwissJob cierre verde;
+  fusionar PR 13 y ReactPortfolio PR 4; verificar/desplegar primero el Core ya
+  autoritativo y después las dos imágenes limpias desde los SHA exactos de
+  `main`; arrancar las tareas de producto sin cosecha local; ejecutar las tres
+  sondas finales y cerrar DT-144. No ejecutar ni programar JSearch.
+
+### Checkpoint anterior · retirada física de SwissJob validada
+
+- El propietario autorizó expresamente retirar los 60 módulos locales de
+  SwissJob, los 40 de ReactPortfolio, sus pruebas exclusivamente locales y las
+  dependencias obsoletas documentadas. Esta autorización ya se aplicó en el
+  worktree SwissJob `/tmp/swissjob-dt144-deploy-a2ba944`, rama
+  `feat/dt144-final-cleanup`, todavía sin commit en este checkpoint; su base
+  publicada es `3856482`.
+- Se eliminaron exactamente **60 módulos** del productor local, **58 ficheros
+  de pruebas exclusivamente locales** y el auxiliar obsoleto
+  `backend/scripts/g6_backfill_fuzzy_hash.py`. Las pruebas mixtas conservaron
+  los casos de producto (SSE, mantenimiento, consumo escolar de Core y
+  redacción genérica) y perdieron sólo los casos de los componentes retirados.
+  La cobertura sensible de transporte/credenciales no se abandonó: sus
+  invariantes equivalentes están fijados en las suites nativas de Adzuna,
+  JSearch, TES, PublicJobs, salud y kill-switch de Core.
+- También se retiraron `beautifulsoup4`, `playwright`, la instalación de
+  Chromium, sus variables de entorno y el último ajuste sin consumidor
+  `FETCH_CONCURRENCY`. Se conservaron `lxml`, `models.Job`,
+  `scrapers.swiss_schools_config`, `utils.text`, el scheduler de producto y las
+  tareas de mantenimiento porque el trazado confirmó consumidores reales.
+- El inventario se actualizó con evidencia de sólo lectura de la base Core:
+  UUID y `last_complete_at` reales de cada scope. Resultado del ratchet:
+  **58 fuentes = 40 `local_removed` + 18 `retired`; 0 `local_pending`; 0
+  publicadores locales**. Los 23 portales ejecutables tienen scopes habilitados
+  y finalización `ok`; JSearch conserva su único scope configurado,
+  manualmente deshabilitado, sin ejecución nueva y sin reintento.
+- Validación local completada: `check_source_ownership` devuelve
+  `{"core_owned":40,"local_pending":0,"sources":58}`;
+  `check_no_secrets` devuelve 0 hallazgos; compilación, Ruff y formato pasan;
+  pytest descubre 891 casos y termina **891 passed**. Quedan dos avisos
+  `RuntimeWarning` de cancelación async ya presentes, sin fallo. Los tres rojos
+  de la primera pasada se cerraron: dos eran el `alembic` global fuera del venv
+  y uno una aserción obsoleta a un helper privado de SlowAPI; las pruebas
+  funcionales de rate-limit permanecen.
+- **Punto exacto de reanudación:** revisar el diff, crear y publicar el commit
+  SwissJob, esperar su CI; después completar la retirada autorizada de los 40
+  módulos de ReactPortfolio y sus dependencias, ejecutar su suite/ratchet,
+  publicar y esperar CI. Sólo con ambas ramas verdes: fusionar, desplegar las
+  imágenes limpias, arrancar el worker SwissJob sin cosecha y ejecutar las tres
+  sondas finales. No ejecutar ni programar JSearch.
+
 - **Decisión operativa prevalente del propietario:** continuar el corte sin
   esperar al `2026-11-02` y sin volver a llamar a JSearch. Quedan supersedidas
   únicamente las instrucciones anteriores que exigían reintentar JSearch y
@@ -49,10 +125,10 @@ hasta el siguiente checkpoint:
   aceptado como **49/49 scopes ejecutables `ok` + JSearch configurado en Core
   con un único fallo externo conocido `http_429`**. No se acepta ningún otro
   error, scope ausente, ejecución pendiente, autoapagado, cola pendiente o
-  tráfico local. Para impedir que el beat contradiga la orden y lo reintente en
-  la siguiente ventana, JSearch se deshabilita temporalmente hasta el reset de
-  cuota; no se elimina y su validación positiva queda diferida, sin bloquear el
-  cierre de DT-144.
+  tráfico local. Para impedir que el beat contradiga la orden, JSearch permanece
+  deshabilitado manualmente. DT-144 no programa ni espera ningún reintento: una
+  futura reactivación será una actuación separada, deliberada y no condiciona
+  este cierre.
 - El segundo gate se ejecutará sobre los mismos 49 scopes habilitados, mediante
   el dispatcher nativo y una ventana nueva. Debe producir 49/49 `ok`; JSearch
   debe constar como el único scope deshabilitado, por decisión del propietario
@@ -75,8 +151,9 @@ hasta el siguiente checkpoint:
   cambian código operativo: la autoridad para la cabeza documental es siempre
   `github/main`, que debe actualizarse con `git fetch github main` al reanudar;
   ningún SHA documental de este párrafo es un objetivo de despliegue. Las dos
-  preparaciones están fusionadas, pero **no se han desplegado** porque el gate
-  JSearch sigue en 49/50.
+  preparaciones se fusionaron y sus consumidores fueron desplegados después;
+  la fotografía viva y los SHAs actuales se detallan en el checkpoint de
+  limpieza final de esta misma sección.
 - Core productivo: cuatro contenedores en `swissjob-core:point5-5b3bf3d`,
   `/v1/ready` publica `ready`, `authoritative=true`, Alembic `core0055`; los
   cuatro procesos comparten release y el worker de cosecha nuevo no ha
@@ -215,6 +292,166 @@ hasta el siguiente checkpoint:
   `FallbackCatalog`, actualizar el inventario y repetir suites, CI, despliegues
   y sondas finales. No efectuar una llamada de prueba a JSearch durante este
   corte.
+
+### Checkpoint de relevo · despliegue de consumidores y limpieza final en curso
+
+- SwissJob documental llegó a `github/main`
+  `a2ba94485a263a9ecffdd9eb4eb0df84018d3fd0` (PR 12, CI exacta de `main`
+  `38765988901` verde). Su BFF se desplegó como
+  `swissjob-backend:point5-a2ba944`: saludable, cero reinicios y `.env.prod`
+  saneado. El worker local sigue detenido deliberadamente; no arrancarlo hasta
+  que la imagen carezca de tareas/productores locales.
+- El primer despliegue de Portfolio desde `682a3e5` abortó antes de promover el
+  Compose: el transformador suponía que `environment` aparecía antes de
+  `restart`. La corrección mínima soporta el orden vivo y exige ambos servicios,
+  seis políticas únicas y cero credenciales de portal. Se fusionó como
+  `b587c3e3e0a762df6208fe8607a24e1bfdbc0854` (PR 3, CI `38767084445`
+  verde) y se desplegó como `portfolio-backend:board-b587c3e`; backend y worker
+  están levantados, sin reinicios. La sonda confirma seis modos
+  `core_primary`, registro vacío y cero credenciales; su único fallo es la
+  presencia física del código local/fallback.
+- La sonda SwissJob sobre el BFF nuevo confirma autoridades
+  `CoreCatalog`/`CoreMatching`/`LocalProfile`/`CoreSchools`, 2/2 perfiles
+  enlazados y cero snapshots pendientes/erróneos. Permanece roja por siete
+  providers registrados, 39 módulos locales importables y las claves
+  `CAREERJET_AFFID`/`JOOBLE_API_KEY` aún heredadas por el Compose. El script ya
+  saneaba el fichero env, pero debe sanear también el candidato Compose.
+- ReactPortfolio se limpia en el worktree
+  `/tmp/reactportfolio-dt144-deploy-b587c3e`, rama
+  `feat/dt144-final-cleanup`, todavía **sin commit**: sus seams resuelven sólo a
+  Core; `main.py` ya no arma cosecha, snapshots ni worker bridge; AI matching e
+  informe diario leen sólo Core; se retiraron del árbol los módulos productores,
+  routers locales y motores composite/local. `py_compile` y el ratchet de
+  registro vacío pasan. La colección de pytest demuestra que quedan por migrar
+  pruebas históricas que importan esos módulos; no desactivar CI ni ocultarlas.
+- SwissJob se prepara en `/tmp/swissjob-dt144-deploy-a2ba944`, rama
+  `feat/dt144-final-cleanup`. La primera lista incluía 41 productores directos;
+  el trazado transitivo elevó el alcance correcto a **60 módulos**: el paquete
+  `providers`, los 41 directos y 18 helpers/modelos cuyo único consumidor es la
+  cosecha local. También quedan sin uso `beautifulsoup4`, `playwright`, la capa
+  de instalación de Chromium y sus variables de Compose. Se conservan
+  `models.Job`, `scrapers.swiss_schools_config` y `utils.text` porque tienen
+  consumidores de producto comprobados. La retirada aún no se aplicó y es
+  recuperable por Git, pero exige aprobación informada específica.
+- Segundo ciclo nativo: terminó con 49/49 scopes `ok`, cero tareas en curso o
+  en error y cero filas JSearch. El censo total es 79 scopes, 49 habilitados;
+  los otros scopes deshabilitados son sombras/históricos y JSearch es la
+  excepción nativa manual verificada.
+- Reanudación exacta: (1) obtener la aprobación informada para borrar código y
+  pruebas locales recuperables por Git; (2) completar las dos limpiezas y
+  migrar las pruebas a invariantes Core-only; (3) suites, commits, PR/CI y
+  fusión; (4) desplegar Core final, SwissJob BFF+worker y Portfolio; (5) sondas
+  finales, inventario/ratchet y cierre. El terminal 49/49 ya está verificado.
+- Checkpoint `2026-10-15T19:14+02:00`: el PR 13 de relevo quedó completamente
+  verde. Su único fallo inicial, `docker-build`, fue un `BrokenPipeError`
+  descargando PyTorch; se repitió sólo ese job sobre el mismo SHA `c6bd5af` y
+  terminó correctamente. En producción, el segundo ciclo conserva 24 scopes
+  `ok` y Arbeitnow `running`; su heartbeat alcanzó
+  `2026-10-15T17:11:22Z` después de extraer 13.064 ofertas. JSearch no fue
+  despachado ni sondeado.
+- En la rama `feat/dt144-final-cleanup` de SwissJob ya se aplicó la primera
+  desconexión reversible: registro de providers vacío, Celery sin incluir ni
+  enrutar `fetch_tasks`/`scraping_tasks`/`pipeline_tasks`, y scheduler sin
+  `daily_harvest`, `fetch_providers` ni `fetch_scrapers`. Se preservaron URL
+  health, limpieza, idiomas, watchlist, alertas y digest. Las pruebas focales
+  de registro/scheduler se migraron al invariante Core-only; `py_compile`, Ruff
+  y formato pasan. Tras alinear el contenedor efímero DT-144 con la credencial
+  pública de CI, las pruebas de registro, scheduler y leader-lock pasan 11/11.
+  La retirada física de módulos sigue pendiente de la confirmación informada
+  específica y es recuperable por Git.
+- La misma rama retiró las diez opciones de credencial de portal de
+  `backend/config.py`, las plantillas de entorno y el Compose NAS saneado de
+  SwissJob. El transformador de despliegue elimina ahora esos nombres también
+  del Compose candidato de BFF/worker, además del `.env.prod`; las variables
+  `CORE_ADZUNA_*` y `CORE_JSEARCH_*` permanecen deliberadamente en Core.
+  `bash -n`, `py_compile`, Ruff y la búsqueda nominal pasan. El manifiesto
+  marca ya como falsas las siete banderas de registro retiradas y el ratchet
+  vuelve a verde (`16` Core-owned, `24` local-pending); esas cifras no se
+  elevarán artificialmente hasta el borrado físico y el gate final.
+- La primera CI de código detectó una única rotura de colección: una prueba
+  histórica importaba `_PROVIDER_CLASSES`. Se conservó ese símbolo como
+  diccionario vacío, que no registra ni construye proveedores. La colección
+  local completa vuelve a pasar con 2.068 pruebas descubiertas y el ratchet
+  sigue verde. La corrección está publicada en `66b3e6a`; su CI reemplaza a
+  los runs anteriores. En Core, Arbeitnow cerró `ok` en 1.489,6 s con 11.350
+  ofertas; después Jobroom y TES cerraron `ok`, dejando al menos 27 scopes
+  terminales sin ejecutar JSearch.
+- Checkpoint `2026-10-15T19:14+02:00`: el PR 13 de relevo quedó completamente
+  verde. Su único fallo inicial, `docker-build`, fue un `BrokenPipeError`
+  descargando el wheel de PyTorch; se reintentó sólo ese job sobre el mismo SHA
+  `c6bd5af` y terminó correctamente. En producción, el segundo ciclo conserva
+  24 scopes `ok` y Arbeitnow `running`; su heartbeat alcanzó
+  `2026-10-15T17:11:22Z` después de extraer 13.064 ofertas. JSearch no fue
+  despachado ni sondeado.
+- En la rama `feat/dt144-final-cleanup` de SwissJob ya se aplicó la primera
+  desconexión reversible: registro de providers vacío, Celery sin incluir ni
+  enrutar `fetch_tasks`/`scraping_tasks`/`pipeline_tasks`, y scheduler sin
+  `daily_harvest`, `fetch_providers` ni `fetch_scrapers`. Se preservaron URL
+  health, limpieza, idiomas, watchlist, alertas y digest. Las pruebas focales
+  de registro/scheduler se migraron al invariante Core-only; `py_compile`, Ruff
+  y formato pasan. Pytest local no llegó a ejecutar casos porque el entorno
+  fuera de Compose no resolvía el host `postgres`; no se registra como fallo de
+  código ni como suite verde. La retirada física de módulos continúa pendiente
+  de la confirmación informada específica y recuperable por Git.
+- `probe_core_final.py` ya implementa la dispensa ratificada: 49 scopes
+  ejecutables sanos y una puerta separada que exige un único scope JSearch
+  manualmente deshabilitado, sin `disabled_by_blocks_at` y sin runs desde
+  `2026-10-15T15:54:15Z`. La ejecución productiva por stdin es de sólo lectura y
+  terminó con `failures: []`: readiness autoritativo, 49/49, delivery/staging
+  drenados y slot de captura ausente. No llama a ningún proveedor.
+- La lectura terminal del segundo ciclo contiene 49 filas y las 49 están `ok`,
+  sin tareas activas o erróneas y sin filas JSearch. La sonda de estado global
+  pasa también después de drenar las ocho entregas nuevas; ambas puertas quedan
+  cerradas. Evidencia:
+  `docs/audits/2026-10-15-dt144-second-cycle-production.json`.
+- La CI de `dcc653a` diagnosticó el límite de la retirada parcial: backend
+  ejecutó 1.919 casos, con 1.895 aprobados, 15 fallos, 11 errores y 4 `xfail`.
+  Todos salvo el caso de timeout de carta LLM pertenecen a pruebas de providers,
+  políticas y credenciales locales que siguen en el árbol. Varias de ellas
+  parchean el objeto global `asyncio.sleep`, por lo que la contaminación entre
+  tests es una hipótesis concreta, no un hecho todavía reproducido: repetir el
+  caso tras retirar ese bloque. No restaurar campos de secretos en `Settings`:
+  retirar/migrar esas pruebas en el mismo commit que sus módulos.
+- La auditoría nominal del borrado corrigió un falso negativo de la sonda
+  SwissJob: el persistidor real es `tasks.harvest_persist`, no
+  `services.harvest_persist`, y `services.harvest_window` también es exclusivo
+  de las tareas locales. Ambos forman parte de la retirada y el gate final ya
+  exige que no sean importables; `scrapers.swiss_schools_config` se conserva
+  porque sigue siendo un contrato de producto usado fuera de la cosecha.
+- La sonda corregida se ejecutó contra `swissjob-backend` sin mutar datos:
+  conserva verdes las cuatro autoridades y la entrega 2/2, y enumera exactamente
+  41 módulos locales importables, siete providers registrados y las dos
+  variables heredadas `CAREERJET_AFFID`/`JOOBLE_API_KEY`. Son las tres únicas
+  causas de rojo; por tanto el inventario de retirada ya no depende de un
+  recuento estimado.
+- El mismo contraste cerró un hueco equivalente en la sonda Portfolio: ahora
+  incluye los nueve routers locales, `analysis_runner`, `job_router_helpers`,
+  `worker_bridge` y las implementaciones `catalog.local`/`matching.local`,
+  además de providers, cachés y composites. Son módulos ya retirados en el
+  worktree, pero el gate debía nombrarlos para impedir que una recuperación
+  parcial del árbol pasara inadvertida.
+- Ejecutada contra `portfolio_backend`, la sonda endurecida conserva verdes
+  schedulers, registro vacío, cero credenciales y las seis capacidades
+  exactamente `core_primary`; su única causa de rojo son los 37 módulos locales
+  que enumera nominalmente. Coinciden con las eliminaciones preparadas en el
+  worktree, de modo que el gate y el diff físico tienen el mismo alcance.
+- El segundo trazado nominal/transitivo evita cerrar con implementaciones
+  inaccesibles todavía instaladas. En SwissJob, la sonda final enumera ahora
+  nominalmente los 60 módulos y exige además que `beautifulsoup4` y `playwright`
+  no estén en la imagen. En Portfolio, el alcance pasa de 37 a **40 módulos** al
+  incluir `circuit_breaker`, el matcher local y su registro vacío; la sonda exige
+  también la ausencia de `sentence-transformers`, `scikit-learn` y `torch`, y
+  que `numpy` no sea dependencia directa. El router conservará
+  `/ai-match/status` y `/warmup` como contrato Core-only, sin cargar el modelo
+  local. `beautifulsoup4` y `SCRAPER_PROXY_URL`
+  de Portfolio se conservan: siguen siendo usados por detalle/colegios y no son
+  residuos de cosecha.
+- **Punto vigente de reanudación:** no ejecutar ni programar JSearch. Obtener la
+  aprobación informada sobre el alcance ampliado (60 módulos SwissJob, 40
+  módulos Portfolio, sus pruebas exclusivas y las dependencias anteriores),
+  aplicar la retirada, migrar sólo las pruebas de invariantes Core-only, pasar
+  suites/CI, fusionar, desplegar las imágenes limpias y ejecutar las tres sondas
+  finales. El gate operativo de Core ya está cerrado en 49/49.
 
 ---
 
