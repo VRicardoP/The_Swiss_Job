@@ -13,7 +13,8 @@
 > y la corrección de redacción están fusionadas; Core `5b3bf3d` está desplegado.
 > Los 33 scopes DT-144 están habilitados, SwissJob local está detenido y
 > Portfolio local está verificablemente quiescente. El primer ciclo válido es
-> el ciclo nativo de las 12:10 Europe/Zurich: sigue en curso, sin fallos, como
+> el ciclo nativo de las 12:10 Europe/Zurich: 49 de 50 scopes terminaron `ok` y
+> JSearch quedó pendiente por agotamiento comprobado de su cuota externa, como
 > detalla §0.1.
 
 ---
@@ -34,7 +35,7 @@
 
 ---
 
-## 0.1 Checkpoint vivo del corte (2026-10-15 11:58 UTC)
+## 0.1 Checkpoint vivo del corte (2026-10-15)
 
 Este bloque **prevalece sobre las fotografías anteriores de este documento**
 hasta el siguiente checkpoint:
@@ -77,17 +78,22 @@ hasta el siguiente checkpoint:
 - La validación correcta sigue el camino real de producción: beat despachó a
   las 12:10 Europe/Zurich la ventana exacta
   `2026-10-15T12:00:00+02:00`, una tarea independiente por scope con identidad
-  `scope:{scope_id}:native:{window}:{scope_id}`. La sonda de las 11:58 UTC
-  devuelve 50 esperados, 24 `ok`, 1 `running` (Arbeitnow) y 25 aún no iniciados,
-  sin fallos. Celery confirma esa misma tarea activa desde las 11:38:37 UTC,
-  sin duplicados reservados; su heartbeat avanzó a las 11:53:52 UTC y está
-  dentro del presupuesto documentado de 1.500 s.
-- Punto exacto de reanudación: no interrumpir esta ventana. Exigir 50/50 `ok`,
-  desplegar BFF/worker de SwissJob y backend/worker de Portfolio, sondar ambos
-  consumidores, lanzar un segundo dispatcher nativo con ventana única y exigir
-  otro 50/50. Sólo después retirar físicamente productores, credenciales,
-  `CompositeCatalog` y `FallbackCatalog`, actualizar el inventario y repetir
-  suites, CI, despliegues y sondas finales.
+  `scope:{scope_id}:native:{window}:{scope_id}`. El ciclo terminó su trabajo:
+  49 scopes están `ok`, ninguno sigue ejecutándose o sin iniciar y sólo JSearch
+  falló con `http_429` tras agotar sus reintentos.
+- Diagnóstico seguro de JSearch: una única petición de control desde el Core
+  devolvió 429, límite publicado de 200 peticiones y
+  `x-ratelimit-requests-reset=1544540` (aprox. 17,9 días desde la sonda). No se
+  imprimieron clave, URL, query ni cuerpo. El scope sigue habilitado, acumula
+  dos fallos y todavía no alcanzó el umbral de autoapagado. La cola quedó vacía.
+- Punto exacto de reanudación: no contar este ciclo como superado hasta obtener
+  50/50 `ok`. Cuando la cuota esté disponible —o se aporte otra credencial
+  válida sin coste— reejecutar **sólo JSearch** con la misma clave determinista
+  de la ventana; después desplegar BFF/worker de SwissJob y backend/worker de
+  Portfolio, sondar ambos consumidores, lanzar un segundo dispatcher nativo con
+  ventana única y exigir otro 50/50. Sólo entonces retirar físicamente
+  productores, credenciales, `CompositeCatalog` y `FallbackCatalog`, actualizar
+  el inventario y repetir suites, CI, despliegues y sondas finales.
 
 ---
 

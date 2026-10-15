@@ -177,6 +177,24 @@ continuar sin rediseñarlo.
   `source_ownership.json`, pasar suites/CI, fusionar, redesplegar y ejecutar las
   sondas finales. El detalle vivo manda en `DT144_RELEVO.md` §0.1.
 
+### Checkpoint 2026-10-15 · Primer ciclo detenido en 49/50 por cuota de JSearch
+
+- La ventana nativa `2026-10-15T12:00:00+02:00` terminó con 49 scopes `ok`,
+  cero en ejecución, cero sin iniciar y un único error: JSearch `http_429`.
+  Celery agotó sus reintentos y dejó la cola vacía; no hay otro fallo oculto.
+- Una única sonda segura desde el contenedor Core confirmó 429, límite publicado
+  de 200 peticiones y `x-ratelimit-requests-reset=1544540` (aprox. 17,9 días
+  desde esa lectura). La salida excluyó secreto, URL, query y cuerpo. No se
+  vuelve a consumir cuota con sondeos repetidos.
+- El scope JSearch permanece habilitado con dos fallos consecutivos y no ha
+  alcanzado el kill-switch. Este ciclo **no satisface** el gate 50/50 y no se
+  despliegan aún los consumidores.
+- Reanudación exacta: al restablecerse la cuota —o con otra credencial válida
+  sin coste— reejecutar sólo el scope JSearch usando su misma clave de ventana.
+  Si queda `ok`, el primer ciclo será 50/50 y continúa el orden ya documentado:
+  consumidores y sondas, segundo ciclo 50/50, borrado físico, inventario,
+  suites/CI, despliegue y sondas finales.
+
 ### Checkpoint 2026-10-14 · Fase -1 parcialmente completada
 
 - Inventario reconciliado: 58 fuentes, 16 `local_removed`, 26
