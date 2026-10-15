@@ -399,22 +399,6 @@ class Settings(BaseSettings):
     # servir a los tres guardarraíles.)
     HARVEST_ALERT_MIN_BATCH: int = Field(default=10, ge=1)
 
-    # Fuentes RESTRINGIDAS (jobs.ch/jobup.ch, LinkedIn, Indeed, Glassdoor, XING).
-    # Vacío = conector deshabilitado (auth_missing, 0 peticiones). NO scraping
-    # público: solo se activan con credencial de partner/API autorizada. Ver a.txt §6-7.
-    JOBCLOUD_PARTNER_API_KEY: str = ""
-    LINKEDIN_PARTNER_TOKEN: str = ""
-    INDEED_PARTNER_KEY: str = ""
-    GLASSDOOR_PARTNER_KEY: str = ""
-    XING_PARTNER_TOKEN: str = ""
-
-    # Provider API Keys (empty = provider disabled)
-    JSEARCH_RAPIDAPI_KEY: str = ""
-    ADZUNA_APP_ID: str = ""
-    ADZUNA_APP_KEY: str = ""
-    JOOBLE_API_KEY: str = ""
-    CAREERJET_AFFID: str = ""
-
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

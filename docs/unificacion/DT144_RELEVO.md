@@ -280,6 +280,12 @@ hasta el siguiente checkpoint:
   pública de CI, las pruebas de registro, scheduler y leader-lock pasan 11/11.
   La retirada física de módulos sigue pendiente de la confirmación informada
   específica y es recuperable por Git.
+- La misma rama retiró las diez opciones de credencial de portal de
+  `backend/config.py`, las plantillas de entorno y el Compose NAS saneado de
+  SwissJob. El transformador de despliegue elimina ahora esos nombres también
+  del Compose candidato de BFF/worker, además del `.env.prod`; las variables
+  `CORE_ADZUNA_*` y `CORE_JSEARCH_*` permanecen deliberadamente en Core.
+  `bash -n`, `py_compile`, Ruff y la búsqueda nominal pasan.
 - Checkpoint `2026-10-15T19:14+02:00`: el PR 13 de relevo quedó completamente
   verde. Su único fallo inicial, `docker-build`, fue un `BrokenPipeError`
   descargando el wheel de PyTorch; se reintentó sólo ese job sobre el mismo SHA

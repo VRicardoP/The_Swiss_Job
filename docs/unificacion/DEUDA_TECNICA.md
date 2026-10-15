@@ -156,6 +156,11 @@ continuar sin rediseñarlo.
   scheduler y leader-lock se adaptaron al nuevo invariante y pasan 11/11 contra
   el PostgreSQL/Redis efímero DT-144. No se han borrado todavía los módulos
   físicos.
+- Se retiraron también las diez opciones locales de credenciales de portal de
+  settings, plantillas y `deploy/nas/swissjob.configured.yml`; el despliegue
+  sanea tanto `.env.prod` como el Compose candidato. Las credenciales
+  `CORE_ADZUNA_*`/`CORE_JSEARCH_*` se conservan porque pertenecen al único
+  colector. Validación: `bash -n`, `py_compile`, Ruff y búsqueda nominal verdes.
 - Punto exacto y metodología de relevo: ver
   `DT144_RELEVO.md` §0.1, checkpoint «despliegue de consumidores y limpieza
   final en curso». Los worktrees y ramas están allí fijados; ningún cambio de
