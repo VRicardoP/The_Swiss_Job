@@ -103,6 +103,35 @@ continuar sin rediseñarlo.
    aislado; paridad explicada; adaptación del consumidor y apagado local;
    suites/CI; y checkpoint de relevo antes de avanzar al portal siguiente.
 
+### Checkpoint 2026-10-15 · Dispensa limitada de JSearch y reanudación del corte
+
+- El propietario ordenó no esperar al `2026-11-02` y continuar **sin un nuevo
+  intento de JSearch**. Esta decisión supersede sólo la puerta que exigía
+  completar JSearch antes del despliegue; no altera el objetivo arquitectónico
+  ni permite retirar, simular o marcar como saludable ese scope.
+- El primer ciclo se acepta como 49/49 scopes ejecutables `ok`, cero en curso y
+  un único fallo externo conocido: JSearch `http_429`. Su scope permanece
+  configurado en Core pero se deshabilita temporalmente hasta el reset para que
+  el beat no efectúe otra petición durante el corte. Debe ser el único scope
+  deshabilitado y no llevar marca de autoapagado; cualquier otro fallo vuelve a
+  cerrar la puerta.
+- La validación posterior exigirá un segundo ciclo nativo 49/49 con ventana
+  nueva y JSearch expresamente excluido, además de todas las sondas, retiradas,
+  inventarios, suites y CI ya contratados. La primera cosecha positiva futura
+  de JSearch se observará en un ciclo ordinario cuando exista cuota y no bloquea
+  el cierre de DT-144.
+- Reanudación exacta: deshabilitar JSearch explícitamente por cuota; desplegar
+  desde `main` limpio los consumidores preparados de SwissJob y ReactPortfolio;
+  sondarlos; ejecutar el segundo ciclo 49/49; después efectuar la retirada
+  física y el cierre verificable. Este
+  checkpoint prevalece sobre todas las instrucciones históricas de esperar o
+  reintentar JSearch.
+- A las `2026-10-15T17:54:15+02:00` se ejecutó el primer paso con bloqueo de
+  fila y comprobaciones previas: sólo JSearch pasó de habilitado a deshabilitado
+  y conserva `disabled_by_blocks_at` nulo. La salud posterior muestra 49
+  habilitados/con estado, cero autoapagados y cero alertas; delivery permanece
+  drenado. La maniobra no llamó al proveedor ni modificó los otros 49 scopes.
+
 ### Checkpoint 2026-10-15 · Decisión de retirada y comienzo del corte
 
 - El propietario confirmó la retirada definitiva de `proz` y `remoteco` y
