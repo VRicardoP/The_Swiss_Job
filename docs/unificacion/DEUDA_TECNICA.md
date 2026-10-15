@@ -44,19 +44,20 @@ continuar sin rediseñarlo.
 > trampas ya pisadas. Esta lista es el punto de reanudación; ese fichero es el
 > contexto.
 
-**Checkpoint prevalente 2026-10-15 — limpieza SwissJob validada, aún sin
-commit:** en `/tmp/swissjob-dt144-deploy-a2ba944` (`feat/dt144-final-cleanup`,
-base publicada `3856482`) ya se aplicó la autorización informada: 60 módulos de
-cosecha local, 58 suites exclusivamente locales, el backfill de deduplicación
-obsoleto, `beautifulsoup4`, `playwright`, Chromium y su configuración fueron
-retirados. Se conservaron todas las rutas y pruebas de producto. Validación:
-891/891 pytest, Ruff/formato/compilación verdes, secretos 0 y ratchet
-`40 core_owned / 0 local_pending / 58 total`; el inventario contiene UUID y
-fechas de finalización leídos de producción. JSearch sigue configurado y
-manualmente deshabilitado, sin llamada nueva. Siguiente paso exacto: revisar,
-commit/push y CI de SwissJob; después aplicar y validar la limpieza de 40
-módulos en ReactPortfolio. Los detalles, lista de preservaciones y método de
-reanudación están en `DT144_RELEVO.md` §0.1.
+**Checkpoint prevalente 2026-10-15 — las dos limpiezas están publicadas:**
+SwissJob PR 13 contiene `7441e0e` (60 módulos y 58 suites locales retirados) y
+`20355b1` (las tablas históricas se preservan en Alembic sin restaurar sus
+runtimes). ReactPortfolio PR 4 contiene `c0c87fb`: 40 módulos y 29 suites
+locales retirados, 22.111 líneas eliminadas; ratchet 40/40 y suite **1740
+passed, 1 skipped**; `935ed56` limpia las variables y cachés de modelo del
+Compose vivo. Sus dos CI de código son verdes (`38791663711`, `38791703790`);
+los dos `backend-test` SwissJob confirman migración y `alembic check` verdes
+(`38792413497`, `38792421864`). El ratchet común permanece en
+`40 core_owned / 0 local_pending / 58 total`. JSearch sigue configurado y
+manualmente deshabilitado, sin llamada nueva. Siguiente paso exacto: CI verde
+de SwissJob, fusionar ambas PR, desplegar desde `main` en orden Core → SwissJob
+→ ReactPortfolio y ejecutar las tres sondas finales. Detalles y método de
+reanudación: `DT144_RELEVO.md` §0.1.
 
 1. No repetir el inventario ni la Fase 0: las 58 fuentes están verificadas y
    los ratchets están activos. GitHub Free es el único forge autorizado; no
@@ -233,8 +234,10 @@ reanudación están en `DT144_RELEVO.md` §0.1.
 - Optimización exigida en la imagen limpia: retirar de SwissJob
   `beautifulsoup4`, `playwright`, la instalación de Chromium y su configuración
   Compose; retirar de Portfolio `sentence-transformers`, `scikit-learn`,
-  `numpy`, `torch` y la precarga del modelo. Las sondas finales ya fallan si
-  estos módulos o distribuciones siguen instalados. Los endpoints públicos de
+  `torch`, la dependencia directa de `numpy` y la precarga del modelo. `numpy`
+  sigue transitivamente por `folium`, necesario para analítica. Las sondas
+  finales fallan si reaparece cualquiera de esas dependencias directas o una
+  distribución exclusiva del matcher. Los endpoints públicos de
   estado/warmup se preservan con semántica Core-only, sin motor local.
 - Decisión prevalente del propietario en este checkpoint: continuar ahora, sin
   esperar al 2 de noviembre y **sin el reintento seguro de JSearch**. JSearch

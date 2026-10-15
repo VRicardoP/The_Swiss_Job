@@ -9,12 +9,12 @@
 > ha hecho, cómo, en qué estado está respecto al objetivo final y qué queda**,
 > para que no haya que reconstruirlo leyendo veinte checkpoints.
 >
-> Última actualización: **2026-10-15, limpieza final en curso**. Core `5b3bf3d`
+> Última actualización: **2026-10-15, limpieza final publicada**. Core `5b3bf3d`
 > está desplegado y el segundo ciclo terminó con **49/49 scopes ejecutables
-> `ok`**, delivery drenado y cero filas de JSearch. SwissJob ya tiene aplicada y
-> validada en su worktree la retirada física autorizada; ReactPortfolio es el
-> siguiente repositorio que debe cerrar su limpieza. La dispensa de JSearch y
-> el punto exacto de continuación están al comienzo de §0.1.
+> `ok`**, delivery drenado y cero filas de JSearch. Las retiradas físicas de
+> SwissJob y ReactPortfolio están publicadas en sus PR finales; ReactPortfolio
+> tiene CI verde y SwissJob está verificando en CI el ajuste Alembic descrito en
+> §0.1. JSearch continúa deshabilitado y no se ha reintentado.
 
 ---
 
@@ -39,7 +39,43 @@
 Este bloque **prevalece sobre las fotografías anteriores de este documento**
 hasta el siguiente checkpoint:
 
-### Checkpoint más reciente · retirada física de SwissJob validada
+### Checkpoint más reciente · retiradas físicas publicadas y verificadas
+
+- **SwissJob:** `7441e0e` retiró exactamente 60 módulos locales, 58 ficheros de
+  pruebas exclusivamente locales y las dependencias/configuración obsoletas;
+  `20355b1` preserva en Alembic cuatro tablas históricas cuyos runtimes ya no
+  existen. El primer CI reveló que eliminar los modelos ORM hacía que
+  `alembic check` propusiera destruir `source_compliance`, `source_cursors` y
+  `source_health`; se corrigió excluyéndolas del autogenerado igual que
+  `jobhunt_routing`, sin restaurar código productivo. Rama
+  `feat/dt144-final-cleanup`, PR 13. Ratchet: 40 Core-owned, 0 local pending,
+  58 fuentes. Los dos trabajos `backend-test` de `20355b1` pasan, incluido
+  `alembic upgrade head && alembic check` (`38792413497`, `38792421864`).
+- **ReactPortfolio:** `c0c87fb` retiró los 40 módulos nominales, 29 ficheros de
+  pruebas puramente locales, los caminos de fallback y las dependencias
+  directas del matcher local. Resultado neto: 22.111 líneas eliminadas y 792
+  añadidas (contratos y ratchet). Suite local: **1740 passed, 1 skipped**;
+  ratchet: **40/40 módulos ausentes**. PR 4, dos ejecuciones Backend CI verdes
+  (`38791663711` y `38791703790`). `935ed56` retiró además del manifiesto y del
+  transformador de despliegue los dos ajustes locales obsoletos y los montajes
+  de caché Hugging Face; el despliegue exige eliminar exactamente dos montajes
+  antes de sustituir el Compose vivo.
+- La suite completa descubrió y cerró una regresión independiente: la
+  normalización PostgreSQL dejaba pasar `NaN`/infinitos y podía convertir un
+  422 en 500. `pg_safe_tree` los transforma ahora en `None`; la prueba de
+  frontera está verde.
+- `numpy` ya no es dependencia directa de Portfolio, pero sigue llegando de
+  forma transitiva por `folium`, que sí respalda analítica activa. La sonda
+  final exige que `numpy` no figure en `requirements.txt`; sólo exige ausencia
+  instalada para `sentence-transformers`, `scikit-learn` y `torch`. Así mide la
+  retirada del matcher sin romper una función ajena.
+- **Punto exacto de reanudación:** esperar que la CI de SwissJob cierre verde;
+  fusionar PR 13 y ReactPortfolio PR 4; verificar/desplegar primero el Core ya
+  autoritativo y después las dos imágenes limpias desde los SHA exactos de
+  `main`; arrancar las tareas de producto sin cosecha local; ejecutar las tres
+  sondas finales y cerrar DT-144. No ejecutar ni programar JSearch.
+
+### Checkpoint anterior · retirada física de SwissJob validada
 
 - El propietario autorizó expresamente retirar los 60 módulos locales de
   SwissJob, los 40 de ReactPortfolio, sus pruebas exclusivamente locales y las
@@ -404,9 +440,10 @@ hasta el siguiente checkpoint:
   nominalmente los 60 módulos y exige además que `beautifulsoup4` y `playwright`
   no estén en la imagen. En Portfolio, el alcance pasa de 37 a **40 módulos** al
   incluir `circuit_breaker`, el matcher local y su registro vacío; la sonda exige
-  también la ausencia de `sentence-transformers`, `scikit-learn`, `numpy` y
-  `torch`. El router conservará `/ai-match/status` y `/warmup` como contrato
-  Core-only, sin cargar el modelo local. `beautifulsoup4` y `SCRAPER_PROXY_URL`
+  también la ausencia de `sentence-transformers`, `scikit-learn` y `torch`, y
+  que `numpy` no sea dependencia directa. El router conservará
+  `/ai-match/status` y `/warmup` como contrato Core-only, sin cargar el modelo
+  local. `beautifulsoup4` y `SCRAPER_PROXY_URL`
   de Portfolio se conservan: siguen siendo usados por detalle/colegios y no son
   residuos de cosecha.
 - **Punto vigente de reanudación:** no ejecutar ni programar JSearch. Obtener la
