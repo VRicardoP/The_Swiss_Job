@@ -62,6 +62,18 @@ ISCS = """<html><head><title>Employment | ISCS</title></head><body><ul>
   <li><strong>Primary Teacher</strong> — duplicate</li>
 </ul></body></html>"""
 
+VIS = """<html><head><title>Careers | Verbier International School</title></head><body>
+<p>Job Openings:</p>
+<h3><strong>IT Manager – </strong>Permanent, Full Time (ASAP)</h3>
+<p>All information is available on
+  <a href="https://www.tes.com/jobs/vacancy/it-manager-verbier-switzerland-2345691">TES</a>.</p>
+<h1>Safeguarding and child protection</h1>
+<h3>Contact us</h3><a href="https://example.test/not-a-job">Ignore</a>
+</body></html>"""
+
+VIS_EMPTY = """<html><head><title>Careers | Verbier International School</title></head>
+<body><p>Job Openings:</p><h1>Safeguarding and child protection</h1></body></html>"""
+
 
 def fetch(source, pages, *, params=None, monkeypatch=None):
     from jobhunt_core.harvest.providers import native_swiss_schools as module
@@ -146,6 +158,7 @@ def test_the_portal_saying_it_is_empty_is_also_verified(monkeypatch):
         "swiss_schools_ecolint",
         "swiss_schools_hautlac",
         "swiss_schools_iscs",
+        "swiss_schools_vis",
     ],
 )
 def test_a_page_that_is_not_the_board_is_a_visible_failure(source, monkeypatch):
@@ -214,6 +227,28 @@ def test_iscs_needs_a_keyword_and_a_bold_title():
     assert rows[0]["url"] == "https://iscs-zug.ch/employment/#primary-teacher"
 
 
+def test_vis_reads_only_the_job_openings_section():
+    rows = board_rows(BOARDS_BY_SOURCE["swiss_schools_vis"], VIS)
+
+    assert rows == [
+        {
+            "source_id": "2345691",
+            "title": "IT Manager – Permanent, Full Time (ASAP)",
+            "company": "Verbier International School",
+            "location": "Verbier, CH",
+            "url": "https://www.tes.com/jobs/vacancy/it-manager-verbier-switzerland-2345691",
+            "school_id": "verbier_vis",
+            "language": "en",
+        }
+    ]
+
+
+def test_vis_empty_section_is_a_verified_empty(monkeypatch):
+    result, _requests = fetch("swiss_schools_vis", VIS_EMPTY, monkeypatch=monkeypatch)
+
+    assert result.listings == () and result.complete
+
+
 def test_ecolint_pagination_stops_when_a_page_adds_nothing(monkeypatch):
     result, requests = fetch(
         "swiss_schools_ecolint", [ECOLINT, ECOLINT], monkeypatch=monkeypatch
@@ -241,7 +276,7 @@ def test_every_board_declares_a_title_marker_and_a_school():
 
     # The literal census the ownership ratchet reads must match the sources.
     assert tuple(boards_by_source()) == SOURCE_NAMES
-    assert len(ALL_BOARDS) == 10
+    assert len(ALL_BOARDS) == 11
     BOARDS = ALL_BOARDS
     for board in BOARDS:
         assert board.title_marker and board.school_id and board.school_name

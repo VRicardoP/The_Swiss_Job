@@ -9,6 +9,7 @@ There is no network I/O here; existing producers submit finished observations.
 import hashlib
 import json
 import uuid
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
 import sqlalchemy as sa
@@ -25,6 +26,7 @@ from jobhunt_core.harvest.types import RawListing
 
 SOURCE_NAME = "school-observation"
 SCOPE_ID = uuid.uuid5(uuid.NAMESPACE_URL, "jobhunt:school-observation")
+NATIVE_SCHOOL_SOURCE_PREFIX = "swiss_schools_"
 
 
 def register_handlers():
@@ -364,3 +366,176 @@ async def record_shared_observation(session, monitor, values, *, publish_missing
     if source_result is None:
         raise RuntimeError("source school monitor disappeared during observation")
     return source_result
+
+
+def _native_source_ref(source_name, external_id, title, detected_at):
+    identity = hashlib.sha256(
+        f"{source_name}\0{external_id}\0{title}".encode("utf-8")
+    ).hexdigest()
+    return f"native:{identity}:{detected_at:%Y-%m}"
+
+
+async def _project_native_observation(session, monitor, vacancy_id, values, cutoff):
+    """Attach one native corpus vacancy while preserving recent legacy identity."""
+    existing = (
+        (
+            await session.execute(
+                sa.text(
+                    "SELECT * FROM school_job_details WHERE monitor_id=:monitor AND ("
+                    "source_ref=:ref OR vacancy_id=:vacancy OR "
+                    "(metadata->>'title'=:title AND created_at>=:cutoff)) "
+                    "ORDER BY (source_ref=:ref) DESC,(vacancy_id=:vacancy) DESC,created_at DESC "
+                    "LIMIT 1 FOR UPDATE"
+                ),
+                {
+                    "monitor": monitor["id"],
+                    "ref": values["dedup_key"],
+                    "vacancy": vacancy_id,
+                    "title": values["title"],
+                    "cutoff": cutoff,
+                },
+            )
+        )
+        .mappings()
+        .one_or_none()
+    )
+    if existing is not None:
+        metadata = dict(existing["metadata"])
+        enriched = False
+        for field in ("url", "description_snippet"):
+            if not metadata.get(field) and values.get(field):
+                metadata[field] = values[field]
+                enriched = True
+        if enriched:
+            metadata["content_hash"] = values["content_hash"]
+        metadata["source_active"] = True
+        if (
+            existing["vacancy_id"] != vacancy_id
+            or existing["quarantine_reason"] is not None
+            or enriched
+            or not existing["metadata"].get("source_active", False)
+        ):
+            await session.execute(
+                sa.text(
+                    "UPDATE school_job_details SET vacancy_id=:vacancy,quarantine_reason=NULL,"
+                    "metadata=CAST(:metadata AS jsonb),updated_at=clock_timestamp() WHERE id=:id"
+                ),
+                {
+                    "id": existing["id"],
+                    "vacancy": vacancy_id,
+                    "metadata": json.dumps(metadata, default=str),
+                },
+            )
+        return False
+
+    created = await session.scalar(
+        sa.text(
+            "INSERT INTO school_job_details(id,monitor_id,consumer_id,source_ref,vacancy_id,"
+            "quarantine_reason,metadata,created_at) VALUES "
+            "(:id,:monitor,:consumer,:ref,:vacancy,NULL,CAST(:metadata AS jsonb),:detected) "
+            "ON CONFLICT(monitor_id,source_ref) DO NOTHING RETURNING id"
+        ),
+        {
+            "id": uuid.uuid4(),
+            "monitor": monitor["id"],
+            "consumer": monitor["consumer_id"],
+            "ref": values["dedup_key"],
+            "vacancy": vacancy_id,
+            "metadata": json.dumps(
+                {**values, "notified": False, "source_active": True}, default=str
+            ),
+            "detected": values["date_detected"],
+        },
+    )
+    return created is not None
+
+
+async def project_native_listings(session, source_name, listings):
+    """Project native school vacancies to every active monitor of that school."""
+    if not source_name.startswith(NATIVE_SCHOOL_SOURCE_PREFIX) or not listings:
+        return 0
+
+    by_external = {listing.external_id: listing for listing in listings}
+    keys = {
+        f"CH:{school_id}"
+        for listing in by_external.values()
+        if (school_id := listing.payload.get("school_id"))
+    }
+    if not keys:
+        return 0
+    monitors = (
+        (
+            await session.execute(
+                sa.text(
+                    "SELECT m.*,s.school_key FROM school_monitors m "
+                    "JOIN schools s ON s.id=m.school_id "
+                    "WHERE s.school_key=ANY(:keys) "
+                    "AND COALESCE((m.settings->>'is_active')::boolean,false) "
+                    "AND m.settings->>'monitoring_mode'='scrape'"
+                ),
+                {"keys": sorted(keys)},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    if not monitors:
+        return 0
+
+    vacancies = {
+        row.external_id: row.vacancy_id
+        for row in (
+            await session.execute(
+                sa.text(
+                    "SELECT sl.external_id,i.vacancy_id FROM source_listings sl "
+                    "JOIN sources s ON s.id=sl.source_id "
+                    "JOIN source_listing_incarnations i ON i.source_listing_id=sl.id "
+                    "AND i.ended_at IS NULL WHERE s.name=:source "
+                    "AND sl.external_id=ANY(:external_ids)"
+                ),
+                {"source": source_name, "external_ids": sorted(by_external)},
+            )
+        ).all()
+    }
+    if not vacancies:
+        return 0
+
+    from jobhunt_core.harvest import normalize
+
+    detected_at = datetime.now(timezone.utc)
+    cutoff = detected_at - timedelta(days=30)
+    monitors_by_key = {}
+    for monitor in monitors:
+        monitors_by_key.setdefault(monitor["school_key"], []).append(monitor)
+
+    created = 0
+    for external_id, vacancy_id in vacancies.items():
+        listing = by_external[external_id]
+        school_id = listing.payload.get("school_id")
+        content = normalize.normalize_offer(source_name, listing.payload)
+        if not isinstance(school_id, str) or content is None:
+            continue
+        description = content.get("description") or ""
+        source_ref = _native_source_ref(
+            source_name, external_id, content["title"], detected_at
+        )
+        base = {
+            "source": "official",
+            "title": content["title"],
+            "url": listing.url,
+            "description_snippet": description[:1000] or None,
+            "content_hash": normalize.offer_content_hash(content),
+            "dedup_key": source_ref,
+            "date_detected": detected_at,
+            "date_posted": None,
+            "deadline": None,
+        }
+        for monitor in monitors_by_key.get(f"CH:{school_id}", ()):
+            created += await _project_native_observation(
+                session,
+                monitor,
+                vacancy_id,
+                _scored_observation(monitor, base),
+                cutoff,
+            )
+    return created

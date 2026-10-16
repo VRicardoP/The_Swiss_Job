@@ -176,6 +176,7 @@ def parse_document(html: str) -> _Document:
 # ---------------------------------------------------------------------------
 
 _JOBID_RE = re.compile(r"jobid=(\d+)")
+_VIS_JOB_RE = re.compile(r"(?:-|/)(\d+)(?:[/?#]|$)")
 _ISCS_KEYWORDS = (
     "TEACHER",
     "COORDINATOR",
@@ -393,6 +394,47 @@ def _iscs(document: _Document, board: Board) -> list[dict]:
     return out
 
 
+def _vis(document: _Document, board: Board) -> list[dict]:
+    """VIS lists role headings followed by their public TES vacancy link."""
+    marker = next(
+        (
+            index
+            for index, element in enumerate(document.elements)
+            if element.tag == "p" and element.spaced_text.casefold() == "job openings:"
+        ),
+        None,
+    )
+    if marker is None:
+        raise StructureUnknown("the Job Openings marker is gone")
+
+    out = []
+    elements = document.elements[marker + 1 :]
+    for index, heading in enumerate(elements):
+        if heading.tag in {"h1", "h2"}:
+            break
+        if heading.tag != "h3":
+            continue
+        link = None
+        for element in elements[index + 1 :]:
+            if element.tag in {"h1", "h2", "h3"}:
+                break
+            if (
+                element.tag == "a"
+                and "href" in element.attrs
+                and "tes.com/jobs/vacancy/" in element.attrs["href"]
+            ):
+                link = element
+                break
+        if link is None:
+            raise StructureUnknown("a VIS vacancy has no TES link")
+        href = link.attrs["href"]
+        match = _VIS_JOB_RE.search(href)
+        if match is None:
+            raise StructureUnknown("a VIS vacancy has no stable TES id")
+        out.append(_stub(board, match.group(1), heading.spaced_text, href))
+    return out
+
+
 def _ecolint_page(board: Board, page: int) -> str:
     # Drupal counts from zero.
     return f"{board.listing_url}?page={page - 1}"
@@ -453,6 +495,16 @@ BOARDS: tuple[Board, ...] = (
         title_marker="employment",
         parse=_iscs,
     ),
+    Board(
+        source="swiss_schools_vis",
+        school_id="verbier_vis",
+        school_name="Verbier International School",
+        city="Verbier",
+        base_url="https://verbierinternationalschool.ch",
+        listing_url="https://verbierinternationalschool.ch/careers/",
+        title_marker="careers",
+        parse=_vis,
+    ),
 )
 BOARDS_BY_SOURCE = {board.source: board for board in BOARDS}
 # Literal census for `scripts/check_source_ownership.py`: this module owns more
@@ -463,6 +515,7 @@ SOURCE_NAMES = (
     "swiss_schools_ecolint",
     "swiss_schools_hautlac",
     "swiss_schools_iscs",
+    "swiss_schools_vis",
     "swiss_schools_nae",
     "swiss_schools_inspired",
 )

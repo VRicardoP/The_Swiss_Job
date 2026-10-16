@@ -51,6 +51,7 @@ FORBIDDEN_SWISSJOB_PATHS = {
             "swiss_schools_iscs",
             "swiss_schools_isp",
             "swiss_schools_nae",
+            "swiss_schools_vis",
             "swiss_schools_zis",
             "tes",
         )

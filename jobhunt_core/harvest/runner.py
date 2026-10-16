@@ -205,6 +205,10 @@ async def run_scope(
                 session, provider.name, result, window, filter_titles=filter_titles
             )
             await sink.handle(session, scope_id, result.listings)
+            if provider.name.startswith("swiss_schools_"):
+                from jobhunt_core.school_ingest import project_native_listings
+
+                await project_native_listings(session, provider.name, result.listings)
             new_cursor = {**result.next_cursor, FINGERPRINT_KEY: fingerprint}
             # Un barrido INCOMPLETO se persiste (sus listings son válidos) pero
             # NO cuenta como cosecha completa: last_complete_at intacto y los
