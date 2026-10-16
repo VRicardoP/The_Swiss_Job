@@ -75,7 +75,9 @@ completarse todas sus fases y conservarse las funcionalidades observables.
 | Fecha | Fase | Estado | Evidencia / punto de reanudación |
 |---|---|---|---|
 | 2026-10-16 | Apertura | COMPLETADO | Plan creado; ramas `feat/post-dt144-simplification` sobre las cabezas productivas verificadas. |
-| 2026-10-16 | P0 | EN CURSO | Reanudar caracterizando el contrato de refresco manual y el mapeo colegio → scope del Core antes de tocar código. |
+| 2026-10-16 | P0 código | COMPLETADO | Core `1736dd6`: adaptador VIS y proyección nativa a observaciones escolares. Portfolio `08ca961`: refrescos sólo por dispatcher Core, retirada de 5 módulos y 6 suites locales, BeautifulSoup retirada y ratchet ampliado. 2.720 líneas netas eliminadas en el commit Portfolio. Validación: 27 unitarias + 2 integradas Core focales; 205 focales y suite completa Portfolio verdes. |
+| 2026-10-16 | P0 operación | PENDIENTE P4 | Construir imágenes, desplegar Core antes que Portfolio, habilitar `swiss_schools_vis` y ejecutar sondas positiva y negativa. No declarar P0 operativo antes. |
+| 2026-10-16 | P1 | EN CURSO | Reanudar verificando imports y manifiestos de cada dependencia candidata; después separar runtime/dev y medir imágenes limpias. |
 
 **Reanudación exacta:** abrir el plan, confirmar las cabezas anotadas, trabajar
 solo en los worktrees/ramas allí indicados y continuar en el primer checkpoint

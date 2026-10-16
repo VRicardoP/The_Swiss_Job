@@ -1,6 +1,6 @@
 # Plan de acción post-DT-144 — simplificación y eficiencia
 
-> **Estado:** ABIERTO · ejecución obligatoria iniciada el 2026-10-16.
+> **Estado:** EN EJECUCIÓN · P0 implementado y validado localmente el 2026-10-16; pendiente de build, despliegue y sondas de P4.
 >
 > **Objetivo final:** cerrar la última vía de cosecha externa fuera de Core,
 > retirar el código que quede sin responsabilidad productiva y reducir el coste
@@ -169,5 +169,4 @@ Leer primero este documento y después el bloque DT-145 al principio de
   `feat/post-dt144-simplification`, base `c47b7a3`.
 
 Antes de cada cambio comprobar `git status`, HEAD, consumidores e invariantes.
-El primer punto pendiente es P0. No empezar por Docker o complejidad mientras
-ReactPortfolio conserve el colector escolar manual.
+P0 quedó implementado en Core `1736dd6` y ReactPortfolio `08ca961`: el colector escolar manual ya no existe y el ratchet impide recuperarlo. La suite completa de Portfolio pasó; Core tuvo 27 pruebas unitarias y 2 integradas focales verdes. El siguiente punto es P1. Los gates de imagen, despliegue y sondas permanecen abiertos hasta P4.
