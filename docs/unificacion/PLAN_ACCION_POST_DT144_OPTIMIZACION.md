@@ -1,6 +1,6 @@
 # Plan de acción post-DT-144 — simplificación y eficiencia
 
-> **Estado:** EN EJECUCIÓN · P0 y P1 implementados y validados localmente el 2026-10-16; pendiente de P2-P4 y despliegue.
+> **Estado:** EN EJECUCIÓN · P0-P2 implementados y validados localmente el 2026-10-16; pendiente de P3-P4 y despliegue.
 >
 > **Objetivo final:** cerrar la última vía de cosecha externa fuera de Core,
 > retirar el código que quede sin responsabilidad productiva y reducir el coste
@@ -169,4 +169,18 @@ Leer primero este documento y después el bloque DT-145 al principio de
   `feat/post-dt144-simplification`, base `c47b7a3`.
 
 Antes de cada cambio comprobar `git status`, HEAD, consumidores e invariantes.
-P0 quedó implementado en Core `1736dd6` y ReactPortfolio `08ca961`: el colector escolar manual ya no existe y el ratchet impide recuperarlo. La suite completa de Portfolio pasó; Core tuvo 27 pruebas unitarias y 2 integradas focales verdes. P1 quedó implementado en SwissJob/Core `68f21c6` y ReactPortfolio `1c795f9`. Los tres builds sin caché, `pip check`, imports y Compose pasaron; las medidas finales son 511.476.439 bytes para SwissJob, 596.152.846 para Portfolio y 2.175.767.560 para Core. `lxml` y `requests` ya no son dependencias directas, pero permanecen transitivamente por `python-docx` y las bibliotecas de presentación; retirarlas físicamente rompería consumidores verificados. El siguiente punto es P2. Los gates de despliegue y sondas permanecen abiertos hasta P4.
+P0 quedó implementado en Core `1736dd6` y ReactPortfolio `08ca961`: el
+colector escolar manual ya no existe y el ratchet impide recuperarlo. La suite
+completa de Portfolio pasó; Core tuvo 27 pruebas unitarias y 2 integradas
+focales verdes. P1 quedó implementado en SwissJob/Core `68f21c6` y
+ReactPortfolio `1c795f9`. Los tres builds sin caché, `pip check`, imports y
+Compose pasaron; las medidas finales son 511.476.439 bytes para SwissJob,
+596.152.846 para Portfolio y 2.175.767.560 para Core. `lxml` y `requests` ya no
+son dependencias directas, pero permanecen transitivamente por `python-docx` y
+las bibliotecas de presentación; retirarlas físicamente rompería consumidores
+verificados. P2 quedó implementado en Core `ba47ec8` y ReactPortfolio
+`cdf9996`: los despachadores conservan los payloads por fuente y bajaron de
+F/58 a A/2 y de F/88 a A/4. Validación: 80 pruebas Core, 225 focales y la suite
+completa Portfolio (1.587 pasadas, 15 omitidas), Ruff y formato verdes. El
+siguiente punto es construir el grafo de imports y ejecutar P3. Los gates de
+despliegue y sondas permanecen abiertos hasta P4.
