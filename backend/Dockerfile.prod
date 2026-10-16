@@ -1,11 +1,9 @@
 # Backend producción — API y tareas de producto, sin cosecha local.
 FROM python:3.12-slim
 
-# build-essential para extensiones con wheels nativas; curl para healthcheck.
+# curl respalda el healthcheck sin arrastrar un toolchain de compilación.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        build-essential \
-        curl \
+    && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Python sin buffering para que los logs salgan al stdout en tiempo real

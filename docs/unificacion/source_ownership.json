@@ -4,7 +4,7 @@
   "verified_at": "2026-10-16",
   "ratchet": {
     "min_core_owned_sources": 40,
-    "min_inventory_verified_sources": 58,
+    "min_inventory_verified_sources": 59,
     "max_local_pending_sources": 0,
     "max_active_local_publishers": 0
   },
@@ -1853,6 +1853,35 @@
       "swissjob_module": false,
       "swissjob_registry": false,
       "evidence": "Core is the sole live publisher; scope ids and last completion were verified read-only in production after the 49/49 second cycle."
+    },
+    {
+      "name": "swiss_schools_vis",
+      "aliases": [
+        "verbier-international-school"
+      ],
+      "current_harvesters": [],
+      "credentials": [],
+      "transport": "public official school careers HTML linking canonical TES vacancies over HTTPS",
+      "external_identity": "canonical TES vacancy numeric id and URL",
+      "deduplication": "Core upserts the native source id and canonical URL through the shared offer sink, then projects the persisted vacancy to the school monitor.",
+      "last_success": [],
+      "production_metrics": {
+        "stored_entries": 0,
+        "active_entries": 0,
+        "marked_duplicate": 0,
+        "duplicate_fuzzy_hashes": 0,
+        "evidence": "Parser fixtures and integrated sink/projection tests passed; production scope is intentionally absent until P4."
+      },
+      "core_adapter": true,
+      "core_scope_ids": [],
+      "blocker": "P4 deployment and scope provisioning pending",
+      "inventory_verified": true,
+      "state": "core_shadow",
+      "target_owner": "core",
+      "active_publishers": [],
+      "swissjob_module": false,
+      "swissjob_registry": false,
+      "evidence": "The official VIS careers page and TES link identity were verified on 2026-10-16; Core implementation is committed as 1736dd6 but is not yet deployed."
     },
     {
       "name": "swiss_schools_zis",

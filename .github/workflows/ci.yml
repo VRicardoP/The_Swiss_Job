@@ -88,7 +88,7 @@ jobs:
           PGPASSWORD=swissjob_dev_2024
           psql -h localhost -U swissjob -d swissjobhunter
           -c "CREATE EXTENSION IF NOT EXISTS vector;"
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements-dev.txt
       # A20-03: la cadena de migraciones sobre una base VACÍA y, después, que
       # los modelos describan exactamente lo que las migraciones construyen.
       # Sin esto, cuatro objetos creados con `op.execute` vivían solo en la
@@ -181,7 +181,7 @@ jobs:
         run: >-
           docker exec pgcore psql -U swissjob -d swissjobhunter
           -c "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;"
-      - run: pip install -r jobhunt_core/requirements.txt
+      - run: pip install -r jobhunt_core/requirements-dev.txt
       - name: Bootstrap del rol y migraciones (lo que hace core-migrate al arrancar)
         run: python -m jobhunt_core.migrate
       - run: python -m pytest jobhunt_core/tests -q

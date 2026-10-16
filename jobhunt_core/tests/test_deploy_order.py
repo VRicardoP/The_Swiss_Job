@@ -146,3 +146,25 @@ def test_el_compose_del_NAS_sigue_autoarrancando_los_escritores(servicio):
     arriba deja de proteger nada y hay que revisarla en vez de creerla."""
     qnap = yaml.safe_load(_QNAP.read_text(encoding="utf-8"))
     assert qnap["services"][servicio]["restart"] == "unless-stopped"
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "docker-compose.prod.yml",
+        "docker-compose.qnap.yml",
+        "deploy/nas/containerstation-swissjob.yml",
+        "deploy/nas/swissjob.configured.yml",
+    ],
+)
+def test_api_y_worker_swissjob_comparten_una_imagen(relative):
+    compose = yaml.safe_load((_REPO / relative).read_text(encoding="utf-8"))
+    services = compose["services"]
+    assert services["backend"]["image"] == services["worker"]["image"]
+
+
+def test_el_deploy_publica_api_y_worker_en_una_sola_maniobra():
+    script = (_REPO / "scripts/deploy_nas.sh").read_text(encoding="utf-8")
+    assert "SERVICIOS=(backend worker)" in script
+    assert 'IMAGEN="swissjob-backend:point5-$SHA"' in script
+    assert 'IMAGEN="swissjob-worker:' not in script

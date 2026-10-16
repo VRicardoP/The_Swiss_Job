@@ -89,22 +89,15 @@ if [[ "$SERVICIO" == core ]]; then
   PATRON="swissjob-core:point5-"
   CONTENEDOR_API="swissjob-core-api-r5"
   CONTENEDOR_SALUD="$CONTENEDOR_API"
-elif [[ "$SERVICIO" == bff ]]; then
+elif [[ "$SERVICIO" == bff || "$SERVICIO" == worker ]]; then
+  # Ambos alias publican juntos un único artefacto inmutable por SHA.
   IMAGEN="swissjob-backend:point5-$SHA"
   COMPOSE="swissjob.configured.yml"; PROYECTO="swissjob"
-  SERVICIOS=(backend)
+  SERVICIOS=(backend worker)
   CONSTRUIR=(docker build -f backend/Dockerfile.prod -t "$IMAGEN" backend/)
   ETIQUETAR=(true)
   PATRON="swissjob-backend:point5-"
   CONTENEDOR_SALUD="swissjob-backend"
-elif [[ "$SERVICIO" == worker ]]; then
-  IMAGEN="swissjob-worker:point5-$SHA"
-  COMPOSE="swissjob.configured.yml"; PROYECTO="swissjob"
-  SERVICIOS=(worker)
-  CONSTRUIR=(docker build -f backend/Dockerfile.prod -t "$IMAGEN" backend/)
-  ETIQUETAR=(true)
-  PATRON="swissjob-worker:point5-"
-  CONTENEDOR_SALUD="swissjob-worker"
 else
   IMAGEN="swissjob-frontend:point5-$SHA"
   COMPOSE="swissjob.configured.yml"; PROYECTO="swissjob"
@@ -213,13 +206,13 @@ for linea in lineas:
     servicio = re.match(r"^  ([a-z_-]+):\s*$", linea)
     if servicio:
         actual = servicio.group(1)
-    if "$SERVICIO" == "worker" and actual == "worker":
+    if "$SERVICIO" in {"bff", "worker"} and actual == "worker":
         linea = linea.replace(queue_marker, queue_target)
         queue_line = linea.strip()
         queue_verified = queue_verified or queue_line == f"- {queue_target}" or bool(
             re.search(rf"(?:^|\s)-Q\s+{re.escape(queue_target)}(?:\s|$)", queue_line)
         )
-    if actual in servicios and re.match(r"^    image: $PATRON[a-f0-9]+\s*$", linea):
+    if actual in servicios and re.match(r"^    image: (?:$PATRON|swissjob-worker:point5-)[a-f0-9]+\s*$", linea):
         linea = "    image: $IMAGEN"
         etiquetadas.add(actual)
     if actual in servicios and re.match(
@@ -233,7 +226,7 @@ if etiquetadas != set(servicios):
         f"ABORTA: etiquetas incompletas; cambiadas={sorted(etiquetadas)}, "
         f"esperadas={sorted(servicios)}"
     )
-if "$SERVICIO" == "worker" and (
+if "$SERVICIO" in {"bff", "worker"} and (
     not queue_verified or queue_marker in "\n".join(salida)
 ):
     sys.exit("ABORTA: no se pudo retirar la cola local scraping del worker")
@@ -303,17 +296,28 @@ echo "== recreando ${SERVICIOS[*]} (con el proyecto correcto: trampa 2)"
 ssh nas "cd $E && $C -p $PROYECTO -f $COMPOSE up -d --no-deps ${SERVICIOS[*]}"
 
 echo "== salud"
-if [[ "$SERVICIO" == worker ]]; then
+if [[ "$SERVICIO" == bff || "$SERVICIO" == worker ]]; then
+  estado=""
+  for _ in $(seq 1 30); do
+    estado="$(ssh nas "$D inspect swissjob-backend --format '{{.State.Health.Status}}'" 2>/dev/null || true)"
+    [[ "$estado" == healthy ]] && break
+    sleep 10
+  done
+  [[ "$estado" == healthy ]] || { echo "ABORTA: swissjob-backend no alcanzó healthy" >&2; exit 1; }
   respuesta=""
   for _ in $(seq 1 30); do
-    respuesta="$(ssh nas "$D exec $CONTENEDOR_SALUD celery -A celery_app inspect ping --timeout 5" 2>/dev/null || true)"
+    respuesta="$(ssh nas "$D exec swissjob-worker celery -A celery_app inspect ping --timeout 5" 2>/dev/null || true)"
     [[ "$respuesta" == *pong* ]] && break
     sleep 10
   done
-  [[ "$respuesta" == *pong* ]] || { echo "ABORTA: $CONTENEDOR_SALUD no responde al ping Celery" >&2; exit 1; }
+  [[ "$respuesta" == *pong* ]] || { echo "ABORTA: swissjob-worker no responde al ping Celery" >&2; exit 1; }
+  for contenedor in swissjob-backend swissjob-worker; do
+    ejecutada="$(ssh nas "$D inspect $contenedor --format '{{.Config.Image}}'")"
+    [[ "$ejecutada" == "$IMAGEN" ]] || { echo "ABORTA: $contenedor corre $ejecutada" >&2; exit 1; }
+  done
 else
   for _ in $(seq 1 30); do
-    estado="$(ssh nas "$D inspect $CONTENEDOR_SALUD --format '{{.State.Health.Status}}' 2>/dev/null || true")"
+    estado="$(ssh nas "$D inspect $CONTENEDOR_SALUD --format '{{.State.Health.Status}}'" 2>/dev/null || true)"
     [[ "$estado" == healthy ]] && break
     sleep 10
   done

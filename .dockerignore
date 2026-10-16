@@ -4,3 +4,5 @@
 *
 !jobhunt_core
 jobhunt_core/**/__pycache__
+jobhunt_core/tests/
+jobhunt_core/requirements-dev.txt

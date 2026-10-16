@@ -86,7 +86,15 @@ FORBIDDEN_SWISSJOB_PATHS = {
     "backend/utils/fetch_diagnostics.py",
     "backend/utils/http.py",
 }
-FORBIDDEN_SWISSJOB_DEPENDENCIES = {"beautifulsoup4", "playwright"}
+FORBIDDEN_SWISSJOB_DEPENDENCIES = {
+    "beautifulsoup4",
+    "lxml",
+    "playwright",
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+}
+FORBIDDEN_CORE_DEPENDENCIES = {"pytest"}
 SWISSJOB_RUNTIME_FILES = (
     "backend/Dockerfile",
     "backend/Dockerfile.prod",
@@ -359,6 +367,23 @@ def validate(manifest: dict, portfolio_root: Path | None) -> list[str]:
         errors.append(
             f"retired SwissJob harvest dependencies present: {retired_dependencies}"
         )
+    core_requirements = (ROOT / "jobhunt_core/requirements.txt").read_text(
+        encoding="utf-8"
+    )
+    core_installed_names = {
+        line.split("==", 1)[0].strip().lower()
+        for line in core_requirements.splitlines()
+        if line.strip() and not line.lstrip().startswith(("#", "-"))
+    }
+    forbidden_core = sorted(FORBIDDEN_CORE_DEPENDENCIES & core_installed_names)
+    if forbidden_core:
+        errors.append(f"development dependencies in Core runtime: {forbidden_core}")
+    prod_docker = (ROOT / "backend/Dockerfile.prod").read_text(encoding="utf-8")
+    if "build-essential" in prod_docker:
+        errors.append("SwissJob production image retains build-essential")
+    prod_compose = (ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
+    if "swissjob-worker:prod" in prod_compose:
+        errors.append("SwissJob production API and workers do not share one image")
     dockerignore = (ROOT / "backend/.dockerignore").read_text(encoding="utf-8")
     missing_recursive_ignores = sorted(
         {"**/__pycache__/", "**/*.pyc", "providers/"} - set(dockerignore.splitlines())
