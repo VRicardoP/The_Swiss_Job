@@ -1,6 +1,6 @@
 # Plan de acción post-DT-144 — simplificación y eficiencia
 
-> **Estado:** EN EJECUCIÓN · P0 implementado y validado localmente el 2026-10-16; pendiente de build, despliegue y sondas de P4.
+> **Estado:** EN EJECUCIÓN · P0 y P1 implementados y validados localmente el 2026-10-16; pendiente de P2-P4 y despliegue.
 >
 > **Objetivo final:** cerrar la última vía de cosecha externa fuera de Core,
 > retirar el código que quede sin responsabilidad productiva y reducir el coste
@@ -169,4 +169,4 @@ Leer primero este documento y después el bloque DT-145 al principio de
   `feat/post-dt144-simplification`, base `c47b7a3`.
 
 Antes de cada cambio comprobar `git status`, HEAD, consumidores e invariantes.
-P0 quedó implementado en Core `1736dd6` y ReactPortfolio `08ca961`: el colector escolar manual ya no existe y el ratchet impide recuperarlo. La suite completa de Portfolio pasó; Core tuvo 27 pruebas unitarias y 2 integradas focales verdes. El siguiente punto es P1. Los gates de imagen, despliegue y sondas permanecen abiertos hasta P4.
+P0 quedó implementado en Core `1736dd6` y ReactPortfolio `08ca961`: el colector escolar manual ya no existe y el ratchet impide recuperarlo. La suite completa de Portfolio pasó; Core tuvo 27 pruebas unitarias y 2 integradas focales verdes. P1 quedó implementado en SwissJob/Core `68f21c6` y ReactPortfolio `1c795f9`. Los tres builds sin caché, `pip check`, imports y Compose pasaron; las medidas finales son 511.476.439 bytes para SwissJob, 596.152.846 para Portfolio y 2.175.767.560 para Core. `lxml` y `requests` ya no son dependencias directas, pero permanecen transitivamente por `python-docx` y las bibliotecas de presentación; retirarlas físicamente rompería consumidores verificados. El siguiente punto es P2. Los gates de despliegue y sondas permanecen abiertos hasta P4.

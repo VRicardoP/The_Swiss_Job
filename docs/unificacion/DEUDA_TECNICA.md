@@ -77,7 +77,8 @@ completarse todas sus fases y conservarse las funcionalidades observables.
 | 2026-10-16 | Apertura | COMPLETADO | Plan creado; ramas `feat/post-dt144-simplification` sobre las cabezas productivas verificadas. |
 | 2026-10-16 | P0 código | COMPLETADO | Core `1736dd6`: adaptador VIS y proyección nativa a observaciones escolares. Portfolio `08ca961`: refrescos sólo por dispatcher Core, retirada de 5 módulos y 6 suites locales, BeautifulSoup retirada y ratchet ampliado. 2.720 líneas netas eliminadas en el commit Portfolio. Validación: 27 unitarias + 2 integradas Core focales; 205 focales y suite completa Portfolio verdes. |
 | 2026-10-16 | P0 operación | PENDIENTE P4 | Construir imágenes, desplegar Core antes que Portfolio, habilitar `swiss_schools_vis` y ejecutar sondas positiva y negativa. No declarar P0 operativo antes. |
-| 2026-10-16 | P1 | EN CURSO | Reanudar verificando imports y manifiestos de cada dependencia candidata; después separar runtime/dev y medir imágenes limpias. |
+| 2026-10-16 | P1 | COMPLETADO | SwissJob/Core `68f21c6`, Portfolio `1c795f9`: manifiestos runtime/dev separados; herramientas de test fuera de producción; toolchains retirados; API y worker SwissJob comparten una imagen y despliegue atómico. Builds sin caché, `pip check`, imports, Compose, ratchets, 11 pruebas de despliegue y dry-runs verdes. Tamaños: SwissJob 511.476.439 B (−48,66 %), Portfolio 596.152.846 B (−33,24 %), Core 2.175.767.560 B (−0,93 %); agregado único −802.060.265 B (−19,63 %). `lxml` y `requests` siguen transitivos por consumidores verificados. |
+| 2026-10-16 | P2 | EN CURSO | Congelar payloads de `core_source_compat._job` y `native_json._content`; dividir únicamente ramas por fuente y volver a medir Radon. |
 
 **Reanudación exacta:** abrir el plan, confirmar las cabezas anotadas, trabajar
 solo en los worktrees/ramas allí indicados y continuar en el primer checkpoint
