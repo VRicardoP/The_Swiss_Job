@@ -1,6 +1,6 @@
 # Deuda técnica — proyecto jobhunting (SwissJob + jobhunt-core)
 
-> **Lectura vigente — 2026-10-18.** Este fichero es un ledger técnico
+> **Lectura vigente — 2026-10-19.** Este fichero es un ledger técnico
 > cronológico. Para estado global y releases manda
 > [MEMORIA_PROYECTO.md](MEMORIA_PROYECTO.md); aquí mandan las marcas
 > **ABIERTO/PARCIAL/COTA** más recientes de cada identificador. Los bloques
@@ -15,6 +15,74 @@
 > Nueva cota aceptada: el `canton` del histórico legacy no se repara (~4.500
 > canónicas por un campo que hoy consume una sola búsqueda semanal); lo nuevo sí
 > lo lleva.
+
+## DT-146 · Reactivación de JSearch dentro de la cuota gratuita
+
+**Estado: ABIERTO — JSearch permanece deshabilitado y no debe ejecutarse antes
+de completar todos los gates de esta entrada.**
+
+El plan Basic de JSearch comprobado el 2026-10-19 ofrece 200 créditos por ciclo
+mensual, con límite duro y sin tarjeta obligatoria. Cada página solicitada
+consume un crédito y devuelve hasta diez ofertas. La integración retirada de
+ReactPortfolio pedía diez páginas al arrancar y en cada cosecha diaria: veinte
+cosechas bastaban para agotar la cuota y un mes de 30/31 días requería por sí
+solo 300/310 créditos, antes de búsquedas en vivo, reinicios o pruebas. La
+evidencia productiva conserva el `http_429`, límite 200, restante `-2` y el
+reinicio conservador `2026-11-02T11:28:18+01:00` en
+[`DT144_RELEVO.md`](DT144_RELEVO.md).
+
+Fuentes oficiales vigentes al comprobar el plan:
+[tarifa](https://rapidapi.com/letscrape-6bRBa3qguO5/api/jsearch/pricing),
+[contrato de JSearch](https://rapidapi.com/letscrape-6bRBa3qguO5/api/jsearch),
+[coste por página](https://rapidapi.com/letscrape-6bRBa3qguO5/api/jsearch/playground/Job%20Search)
+y [cabeceras de cuota](https://docs.rapidapi.com/docs/response-headers).
+
+### Presupuesto imperativo por ciclo mensual
+
+| Uso | Créditos máximos |
+|---|---:|
+| Cosecha automática: 4 páginas/día × hasta 31 días | 124 |
+| Búsquedas en vivo: máximo 1 página por búsqueda | 40 |
+| Activación, prueba controlada y actuaciones manuales | 16 |
+| Margen de seguridad que no se programa | 20 |
+| **Total** | **200** |
+
+El consumo ordinario debe detenerse en 180 créditos o cuando queden 20. Los
+créditos no usados no autorizan a aumentar automáticamente páginas, frecuencia
+o búsquedas. Cosecha, búsqueda en vivo y operaciones manuales comparten la
+misma credencial y el mismo contador.
+
+### Gates obligatorios antes de reactivar
+
+1. No llamar a JSearch antes del límite conservador del 2 de noviembre; después
+   hacer una sola prueba de una página y conservar sus cabeceras saneadas. Si
+   devuelve 429, mantenerlo apagado y registrar el nuevo reset sin repetir.
+2. Excluir JSearch de la cadencia general de Core y programarlo una sola vez al
+   día. Reducir su scope de diez a cuatro páginas.
+3. Limitar cada búsqueda en vivo a una página, reutilizar resultados repetidos
+   y aplicar un contador único a cosecha, búsquedas y acciones manuales.
+4. No reintentar 429 de cuota mensual. Deshabilitar automáticamente JSearch al
+   alcanzar 180 créditos, quedar 20 o recibir un 429.
+5. Añadir las regresiones mínimas para frecuencia, páginas, presupuesto, corte
+   y ausencia de reintento; ejecutar suites y CI, desplegar Core primero y
+   mantener los consumidores sin credencial ni productor local.
+6. Ejecutar una única cosecha controlada, comprobar persistencia, duplicados,
+   salud y consulta desde ReactPortfolio; observar después el primer ciclo
+   diario ordinario antes de cerrar esta deuda y actualizar el inventario.
+
+**Estado efectivo comprobado el 2026-10-19:** el dispatcher Core corre a las
+00:10, 06:10, 12:10 y 18:10 de Europe/Zurich y selecciona todos los scopes
+habilitados. Producción tiene 50 scopes habilitados pertenecientes a 40
+fuentes: Jobicy aporta 8, Adzuna 3, NAV 2 y las otras 37 aportan uno. JSearch es
+la fuente 41 bajo propiedad Core, pero su único scope está manualmente
+deshabilitado y queda excluido. Las fuentes retiradas tampoco se despachan.
+Por ello, activar hoy el scope sin implementar el gate 2 consumiría cuatro
+cosechas diarias y rompería el presupuesto aunque se redujera el número de
+páginas.
+
+**Reanudación exacta:** partir de `main`, verificar de nuevo tarifa, cabeceras,
+estado del scope y cadencia viva; implementar los seis gates en orden. No basta
+con cambiar `enabled=false` a `true` y no se contratará ningún plan de pago.
 
 ## DT-145 · Simplificación y eficiencia post-DT-144
 
