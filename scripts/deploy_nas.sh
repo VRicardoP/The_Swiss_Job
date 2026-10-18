@@ -9,7 +9,8 @@
 #    (`-p swissjob` / `-p swissjob-r5`), o choca con el nombre y no recrea nada.
 # 3. `RELEASE_SHA` debe ser el SHA real: con `unknown`, la comprobación «todos
 #    publican el mismo SHA» se cumple entre `unknown`s sin significar nada.
-# 4. La etiqueta se cambia POR SERVICIO para no alterar otros contenedores.
+# 4. La etiqueta se cambia sólo para el grupo solicitado: Core, frontend o el
+#    par atómico BFF+worker. Así no se alteran contenedores ajenos al corte.
 # 5. (2026-09-25) Las migraciones del núcleo se aplican ANTES de recrear, con un
 #    contenedor desechable de la imagen nueva en la red de la API. El código
 #    nuevo espera la cabeza nueva; recrear primero deja `/v1/ready` en 503.
@@ -21,8 +22,8 @@
 # 8. BFF y worker eliminan del Compose vivo las antiguas variables
 #    LEGACY_DISABLED_* y del env compartido las credenciales de portales; las
 #    fuentes transferidas ya no existen en su imagen.
-# 9. El respaldo incluye el servicio: BFF y worker comparten SHA y no deben
-#    sobrescribir el punto de vuelta atrás del otro al desplegarse por separado.
+# 9. BFF y worker son dos alias del mismo despliegue atómico: comparten imagen,
+#    SHA, respaldo y recreación; nunca se actualizan por separado.
 # 10. El compose transformado se valida como candidato antes de sustituir el vivo.
 # 11. BFF/worker retiran del Compose vivo la caché HuggingFace que pertenecía
 #     al matcher local eliminado. El volumen no se borra: sólo deja de montarse.
@@ -152,7 +153,7 @@ else
   echo "== config-only: se conserva la imagen viva $IMAGEN"
 fi
 
-echo "== copia .before y cambio de etiqueta POR SERVICIO (trampa 4)"
+echo "== copia .before y cambio de etiqueta sólo para ${SERVICIOS[*]} (trampa 4)"
 # Se edita con python para tocar sólo la línea `image:` de cada servicio listado.
 ssh nas "cp $E/$COMPOSE $E/$COMPOSE.before-$SERVICIO-$SHA"
 # El NAS no tiene python3: se edita en local sobre una copia y se sube.
