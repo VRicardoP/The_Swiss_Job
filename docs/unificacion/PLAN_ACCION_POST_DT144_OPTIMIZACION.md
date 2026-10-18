@@ -1,6 +1,6 @@
 # Plan de acción post-DT-144 — simplificación y eficiencia
 
-> **Estado:** EN EJECUCIÓN · P0-P2 implementados y validados localmente el 2026-10-16; pendiente de P3-P4 y despliegue.
+> **Estado:** EN EJECUCIÓN · P0-P3 implementados y validados localmente; pendiente de P4, CI y despliegue.
 >
 > **Objetivo final:** cerrar la última vía de cosecha externa fuera de Core,
 > retirar el código que quede sin responsabilidad productiva y reducir el coste
@@ -170,17 +170,28 @@ Leer primero este documento y después el bloque DT-145 al principio de
 
 Antes de cada cambio comprobar `git status`, HEAD, consumidores e invariantes.
 P0 quedó implementado en Core `1736dd6` y ReactPortfolio `08ca961`: el
-colector escolar manual ya no existe y el ratchet impide recuperarlo. La suite
-completa de Portfolio pasó; Core tuvo 27 pruebas unitarias y 2 integradas
-focales verdes. P1 quedó implementado en SwissJob/Core `68f21c6` y
-ReactPortfolio `1c795f9`. Los tres builds sin caché, `pip check`, imports y
-Compose pasaron; las medidas finales son 511.476.439 bytes para SwissJob,
-596.152.846 para Portfolio y 2.175.767.560 para Core. `lxml` y `requests` ya no
-son dependencias directas, pero permanecen transitivamente por `python-docx` y
-las bibliotecas de presentación; retirarlas físicamente rompería consumidores
-verificados. P2 quedó implementado en Core `ba47ec8` y ReactPortfolio
-`cdf9996`: los despachadores conservan los payloads por fuente y bajaron de
-F/58 a A/2 y de F/88 a A/4. Validación: 80 pruebas Core, 225 focales y la suite
-completa Portfolio (1.587 pasadas, 15 omitidas), Ruff y formato verdes. El
-siguiente punto es construir el grafo de imports y ejecutar P3. Los gates de
-despliegue y sondas permanecen abiertos hasta P4.
+colector escolar manual ya no existe y el ratchet impide recuperarlo. P1 quedó
+implementado en SwissJob/Core `68f21c6` y ReactPortfolio `1c795f9`; los tres
+builds sin caché, `pip check`, imports y Compose pasaron, con una reducción
+agregada única de 802.060.265 bytes. P2 quedó implementado en Core `ba47ec8` y
+ReactPortfolio `cdf9996`: los despachadores bajaron de F/58 a A/2 y de F/88 a
+A/4 sin cambiar sus payloads.
+
+P3 quedó implementado en Core `1f415d3`. El grafo real clasificó los 17 módulos
+previstos: se retiraron 15 herramientas de corte consumidas; se conservaron
+`migrate.py` y toda la cadena Alembic, la recuperación vigente
+`erasure_restore.py` usada por `nas_backup_daily.sh`, y la síntesis runtime de
+candidaturas, extraída como `portfolio_vacancies.py`. También se retiraron 4
+auxiliares exclusivos del corte, 6 scripts de ensayo y 23 pruebas históricas.
+Resultado del commit: 58 ficheros, 166 inserciones y 15.872 eliminaciones
+(−15.706 líneas netas). No queda ninguna referencia ejecutable a los módulos
+retirados. Validación: compilación/imports, Ruff, formato y `diff --check`
+verdes; 58 pruebas integradas focales pasaron tras la extracción. La suite Core
+completa anterior a la última limpieza pasó 1.768/1; P4 debe repetirla sobre el
+SHA final junto con las suites de SwissJob y Portfolio.
+
+Siguiente punto exacto: P4. Ejecutar validación completa, builds finales,
+ratchets y CI; después fusionar y desplegar Core antes que Portfolio, provisionar
+y habilitar `swiss_schools_vis`, desplegar consumidores y ejecutar sondas
+positivas y negativas. No ejecutar JSearch. Los gates de operación continúan
+abiertos hasta completar esas sondas sobre los SHA desplegados.
