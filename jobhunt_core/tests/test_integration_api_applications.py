@@ -20,7 +20,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from jobhunt_core import import_portfolio as ip
+from jobhunt_core import portfolio_vacancies as ip
 from jobhunt_core import matching, profiles
 from jobhunt_core.config import settings
 from jobhunt_core.harvest.sink import RawListingSink

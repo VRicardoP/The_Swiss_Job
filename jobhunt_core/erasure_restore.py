@@ -2,22 +2,58 @@
 
 Snapshot the current receipt inventory before restoring an older database.
 Reconcile the restored database, then BFF replicas, BEFORE opening networking.
-Only minimal identities are exported, not CVs or credentials. Files are private
-and exclusive-create using the established cutover artifact helpers.
+Only minimal identities are exported, not CVs or credentials. Artifacts are
+private and created exclusively.
 """
 
 import argparse
 import asyncio
 import hashlib
 import json
+import os
+import stat
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 import sqlalchemy as sa
 
 from jobhunt_core.database import task_session_factory
-from jobhunt_core.document_cutover import private_read, private_write
 from jobhunt_core.erasure import erase_owned_profile, lock_identity
+
+
+def private_read(path):
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "r") as file:
+        info = os.fstat(file.fileno())
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_mode & 0o077
+            or info.st_uid != os.getuid()
+        ):
+            raise ValueError("input file must be private and owned by this user")
+        return json.load(file)
+
+
+def private_write(path, value):
+    path = Path(path)
+    info = path.parent.stat()
+    if info.st_mode & 0o077 or info.st_uid != os.getuid():
+        raise ValueError("output directory must be private and owned by this user")
+    content = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode()
+    with os.fdopen(
+        os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600),
+        "wb",
+    ) as file:
+        file.write(content)
+        file.flush()
+        os.fsync(file.fileno())
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def digest(value):

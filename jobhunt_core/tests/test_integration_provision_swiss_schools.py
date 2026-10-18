@@ -1,4 +1,4 @@
-"""The seven watched sources are provisioned together, disabled, idempotently."""
+"""All watched sources are provisioned together, disabled, idempotently."""
 
 import asyncio
 
@@ -17,7 +17,8 @@ def test_provision_every_board_disabled_then_explicitly_enabled(db):  # noqa: F8
             first = await provision(session)
             await session.commit()
             sources = list(boards_by_source())
-            assert len(first) == len(sources) == 7
+            assert len(first) == len(sources)
+            assert "swiss_schools_vis" in sources
             for source in sources:
                 source_id = await session.scalar(
                     sa.text("SELECT id FROM sources WHERE name=:name"),

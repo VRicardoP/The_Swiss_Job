@@ -29,9 +29,9 @@ import sqlalchemy as sa
 from jobhunt_core import matching, outbox
 from jobhunt_core.harvest.sink import RawListingSink
 from jobhunt_core.harvest.types import RawListing
-from jobhunt_core.import_portfolio import (
-    durable_synthesizable,
-    ensure_import_scope,
+from jobhunt_core.portfolio_vacancies import (
+    listing_synthesizable,
+    ensure_source_scope,
     normalized_key,
     resolve_vacancy_by_url,
     synthesize_vacancies,
@@ -238,7 +238,7 @@ async def resolve_by_url_any_source(session, url: str) -> uuid.UUID | None:
 async def _synthesize_by_url(session, item: dict) -> uuid.UUID:
     """(c) síntesis en portfolio-import — camino YA ENTREGADO del import
     (external_id = sha256(url normalizada)), en la MISMA tx del POST."""
-    scope_id = await ensure_import_scope(session)
+    scope_id = await ensure_source_scope(session)
     collided = await synthesize_vacancies(session, scope_id, [item])
     vid = await resolve_vacancy_by_url(session, item["url"])
     if vid is None:
@@ -261,7 +261,7 @@ async def _synthesize_manual(
 ) -> uuid.UUID:
     """(d) candidatura manual SIN url: síntesis con el external_id alternativo
     y la URL sintética interna del sink (jamás presentada)."""
-    scope_id = await ensure_import_scope(session)
+    scope_id = await ensure_source_scope(session)
     external_id = manual_external_id(profile_id, title, company)
     url = MANUAL_URL_PREFIX + external_id
     listing = RawListing(
@@ -306,7 +306,7 @@ async def link_vacancy(
         # FRONTERA del sink ANTES de tocar la BD (misma partición que el
         # import): una url con NUL/surrogate jamás vive en source_listings
         # (el sink la cuarentena) y como bind-param reventaría la query.
-        ok, reason = durable_synthesizable(item)
+        ok, reason = listing_synthesizable(item)
         if not ok:
             raise LinkError(reason or "malformed")
         vid = await resolve_by_url_any_source(session, url)
