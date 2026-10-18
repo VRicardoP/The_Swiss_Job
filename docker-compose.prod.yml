@@ -98,10 +98,7 @@ services:
       - swissjob-net
 
   worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.prod
-    image: swissjob-worker:prod
+    image: swissjob-backend:prod
     container_name: swissjob-worker
     restart: unless-stopped
     env_file:
@@ -125,7 +122,7 @@ services:
 
   worker-ai:
     # Worker dedicado al análisis de CV mediante servicios LLM (concurrency=1).
-    image: swissjob-worker:prod
+    image: swissjob-backend:prod
     container_name: swissjob-worker-ai
     restart: unless-stopped
     env_file:

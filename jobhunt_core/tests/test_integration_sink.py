@@ -608,7 +608,7 @@ def test_g4_reparacion_da_de_alta_el_handler_de_portfolio_import(db):
     idempotente (`harvest/registry.py`)."""
     from jobhunt_core.harvest import normalize
     from jobhunt_core.harvest.providers import arbeitnow  # noqa: F401
-    from jobhunt_core.import_portfolio import PORTFOLIO_IMPORT_SOURCE
+    from jobhunt_core.portfolio_vacancies import PORTFOLIO_IMPORT_SOURCE
 
     factory, created = db
     scope = _seed_scope(factory, created)  # fuente 'arbeitnow'
@@ -667,7 +667,7 @@ def test_g4_reparacion_da_de_alta_el_handler_de_portfolio_import(db):
         s=src_pf,
         e=ext,
     )
-    # Proceso que NUNCA importó `import_portfolio` (el core-worker real).
+    # Proceso que NUNCA importó `portfolio_vacancies` (el core-worker real).
     fn = normalize._NORMALIZERS.pop(PORTFOLIO_IMPORT_SOURCE)
     assert normalize.has_normalizer(PORTFOLIO_IMPORT_SOURCE) is False
 
@@ -727,7 +727,7 @@ def test_g6_un_import_roto_del_alta_tampoco_tumba_la_cosecha(monkeypatch, caplog
     """Regresión G6-P3-2: el `try/except` de G5-N-3 NO envolvía el import que
     decía proteger. `alta = _altas_exact_match().get(...)` estaba una línea
     ANTES del `try`, y es `_altas_exact_match()` quien hace
-    `from jobhunt_core import import_portfolio`: para cuando el `try` empieza,
+    `from jobhunt_core import portfolio_vacancies`: para cuando el `try` empieza,
     `alta` es ya una referencia a `register_handlers` de un módulo YA
     importado. El modo de fallo que el commit describe —un ImportError o un
     efecto de import que revienta— seguía propagando y abortando la
@@ -741,11 +741,11 @@ def test_g6_un_import_roto_del_alta_tampoco_tumba_la_cosecha(monkeypatch, caplog
 
     import jobhunt_core
     from jobhunt_core.harvest import normalize, registry
-    from jobhunt_core.import_portfolio import PORTFOLIO_IMPORT_SOURCE
+    from jobhunt_core.portfolio_vacancies import PORTFOLIO_IMPORT_SOURCE
 
     monkeypatch.setattr(normalize, "has_normalizer", lambda n: False)
     for modname in (
-        "jobhunt_core.import_portfolio",
+        "jobhunt_core.portfolio_vacancies",
         "jobhunt_core.harvest.providers.legacy_shadow",
     ):
         monkeypatch.delattr(jobhunt_core, modname.rsplit(".", 1)[1], raising=False)
@@ -753,7 +753,7 @@ def test_g6_un_import_roto_del_alta_tampoco_tumba_la_cosecha(monkeypatch, caplog
     monkeypatch.setattr(
         sys,
         "meta_path",
-        [_ImportRoto("jobhunt_core.import_portfolio")] + list(sys.meta_path),
+        [_ImportRoto("jobhunt_core.portfolio_vacancies")] + list(sys.meta_path),
     )
     with caplog.at_level(logging.ERROR, logger="jobhunt_core.harvest.registry"):
         # antes del fix: ImportError propagada al sink (cosecha abortada)

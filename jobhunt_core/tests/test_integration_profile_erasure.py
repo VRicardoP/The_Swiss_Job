@@ -2,6 +2,7 @@
 
 import asyncio
 import uuid
+import json
 
 import pytest
 import sqlalchemy as sa
@@ -18,7 +19,6 @@ from jobhunt_core.tests.test_integration_api_saved_searches import (
 
 
 def test_portfolio_erasure_scrubs_material_manifest_without_other_user_loss(db):  # noqa: F811  (la fixture, no una redefinición)
-    from jobhunt_core.import_portfolio_manifest import persist_manifest
 
     f, made = db
 
@@ -45,7 +45,18 @@ def test_portfolio_erasure_scrubs_material_manifest_without_other_user_loss(db):
                 "events": {"expected": {gone: 1, kept: 1}, "actual": {}},
                 "provenance": {"applications": [str(uuid.uuid4())]},
             }
-            mid = await persist_manifest(session, manifest)
+            mid = uuid.uuid4()
+            await session.execute(
+                sa.text(
+                    "INSERT INTO portfolio_migration_manifest (id, verdict, manifest) "
+                    "VALUES (:id, :verdict, CAST(:manifest AS jsonb))"
+                ),
+                {
+                    "id": mid,
+                    "verdict": manifest["verdict"],
+                    "manifest": json.dumps(manifest),
+                },
+            )
             await erase_owned_profile(session, cid, pid)
             row = (
                 await session.execute(
@@ -55,7 +66,6 @@ def test_portfolio_erasure_scrubs_material_manifest_without_other_user_loss(db):
                     {"id": mid},
                 )
             ).one()
-            import json
 
             assert "private-note" not in json.dumps(row.manifest)
             assert row.manifest["tables"]["applications"]["missing"] == [kept]
@@ -291,3 +301,19 @@ def test_erasure_serializes_with_inflight_enrollment(db):  # noqa: F811  (la fix
             await eraser.commit()
 
     asyncio.run(run())
+
+
+def test_private_erasure_inventory_is_exclusive_and_private(tmp_path):
+    from jobhunt_core.erasure_restore import private_read, private_write
+
+    tmp_path.chmod(0o700)
+    artifact = tmp_path / "erasures.json"
+    body = {"version": 1, "items": []}
+    private_write(artifact, body)
+    assert artifact.stat().st_mode & 0o777 == 0o600
+    assert private_read(artifact) == body
+    with pytest.raises(FileExistsError):
+        private_write(artifact, body)
+    artifact.chmod(0o644)
+    with pytest.raises(ValueError, match="private"):
+        private_read(artifact)

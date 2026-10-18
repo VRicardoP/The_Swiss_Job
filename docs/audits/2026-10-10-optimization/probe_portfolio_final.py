@@ -42,11 +42,16 @@ LOCAL_PRODUCER_MODULES = {
     "services.dynamitejobs_provider_impl",
     "services.job_cache_updater",
     "services.job_router_helpers",
+    "services.job_detail",
     "services.jobicy_provider_impl",
     "services.jobroom_provider_impl",
     "services.jobscout24_provider_impl",
     "services.jsearch_provider_impl",
     "services.remoteok_provider_impl",
+    "services.school_classifier",
+    "services.school_extractor",
+    "services.school_scraper",
+    "services.school_urgency",
     "services.swissdevjobs_provider_impl",
     "services.worker_bridge",
     "services.wordpress_job_base",
@@ -85,7 +90,12 @@ PORTAL_CREDENTIAL_NAMES = {
     "ADZUNA_APP_KEY",
     "JSEARCH_RAPIDAPI_KEY",
 }
-FORBIDDEN_DISTRIBUTIONS = {"scikit-learn", "sentence-transformers", "torch"}
+FORBIDDEN_DISTRIBUTIONS = {
+    "beautifulsoup4",
+    "scikit-learn",
+    "sentence-transformers",
+    "torch",
+}
 FORBIDDEN_DIRECT_REQUIREMENTS = FORBIDDEN_DISTRIBUTIONS | {"numpy"}
 EXPECTED_CAPABILITIES = {
     "applications",

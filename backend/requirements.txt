@@ -53,13 +53,9 @@ python-multipart==0.0.32
 
 # HTTP client
 httpx==0.28.1
-lxml==5.4.0
 
 # Dev / Testing
-pytest==8.4.2
-pytest-asyncio==0.26.0
 # Fijado a la MISMA version que CI (.github/workflows/ci.yml). Con un rango,
 # cada reconstruccion de la imagen podia traer otro linter: paso el 2026-09-24,
 # ruff salto de 0.15 a 0.16, el conjunto de reglas por defecto crecio y
 # aparecieron 917 "errores" sin que cambiara una linea de codigo.
-ruff==0.15.14

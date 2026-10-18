@@ -10,7 +10,7 @@ normalizarla, y `normalize_offer` devuelve None por una causa que NO es
 Confundir ambas causas anula la canónica de una vacante VIVA (G3-A-P3-2), así
 que aquí vive el ÚNICO sitio que sabe dar de alta el handler de una fuente
 CUALQUIERA. Se importa siempre en LOCAL (el sink es dependencia de
-`providers/` y de `import_portfolio`: importarlo arriba cerraría el ciclo).
+`providers/` y de `portfolio_vacancies`: importarlo arriba cerraría el ciclo).
 """
 
 import logging
@@ -24,7 +24,7 @@ def _altas_exact_match() -> dict:
     """{nombre de fuente: alta idempotente}. Enumeradas, no adivinadas: son
     las únicas fuentes exact-match del core (el resto son `legacy:*`, que
     comparten el handler genérico de la sombra). Imports LOCALES."""
-    from jobhunt_core import import_portfolio, school_ingest
+    from jobhunt_core import portfolio_vacancies, school_ingest
     from jobhunt_core.harvest.providers import (
         arbeitnow,
         native_json,
@@ -50,7 +50,7 @@ def _altas_exact_match() -> dict:
 
     return {
         arbeitnow.SOURCE_NAME: arbeitnow.register_handlers,
-        import_portfolio.PORTFOLIO_IMPORT_SOURCE: import_portfolio.register_handlers,
+        portfolio_vacancies.PORTFOLIO_IMPORT_SOURCE: portfolio_vacancies.register_handlers,
         school_ingest.SOURCE_NAME: school_ingest.register_handlers,
         **{name: native_json.register_handlers for name in native_json.ENDPOINTS},
         **{name: native_rss.register_handlers for name in native_rss.ENDPOINTS},
@@ -93,7 +93,7 @@ def ensure_handler(source_name: str) -> bool:
     try:
         # G6-P3-2: los IMPORTS van DENTRO del try, no solo la llamada al alta.
         # El fix de G5-N-3 dejaba `_altas_exact_match()` (que es quien hace
-        # `from jobhunt_core import import_portfolio`) y el import de
+        # `from jobhunt_core import portfolio_vacancies`) y el import de
         # `legacy_shadow` una línea ANTES del bloque protegido, así que `alta`
         # era ya una referencia a `register_handlers` de un módulo YA
         # importado: el modo de fallo que el commit describía —un ImportError
@@ -109,7 +109,7 @@ def ensure_handler(source_name: str) -> bool:
             return False
         alta()
     except Exception:
-        # G5-N-3: el alta importa un módulo (hoy `import_portfolio`) DENTRO de
+        # G5-N-3: el alta importa un módulo (hoy `portfolio_vacancies`) DENTRO de
         # la transacción de reparación del sink. Donde el camino anterior solo
         # LOGUEABA, un ImportError o un efecto de import abortaría la cosecha
         # entera. Fail-soft: sin normalizador la canónica queda NULL, que es el

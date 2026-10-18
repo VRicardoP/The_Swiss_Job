@@ -65,7 +65,7 @@ def _check_storable(body) -> None:
     degradaría el diagnóstico del cliente.
 
     G8-P3-3: pero esa frontera SOLO corre en la rama por-URL.
-    `applications.link_vacancy` llama a `durable_synthesizable` dentro de
+    `applications.link_vacancy` llama a `listing_synthesizable` dentro de
     `if url is not None:`, y a esa rama solo se llega tras
     `if vacancy_id is not None: return await resolve_direct(...)`. Los DTO
     permiten mandar AMBOS: con `vacancy_id` presente el vínculo ni mira la

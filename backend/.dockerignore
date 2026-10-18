@@ -13,3 +13,4 @@ providers/
 !.env.prod.example
 .venv/
 venv/
+requirements-dev.txt

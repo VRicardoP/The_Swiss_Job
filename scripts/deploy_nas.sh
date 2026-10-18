@@ -9,7 +9,8 @@
 #    (`-p swissjob` / `-p swissjob-r5`), o choca con el nombre y no recrea nada.
 # 3. `RELEASE_SHA` debe ser el SHA real: con `unknown`, la comprobación «todos
 #    publican el mismo SHA» se cumple entre `unknown`s sin significar nada.
-# 4. La etiqueta se cambia POR SERVICIO para no alterar otros contenedores.
+# 4. La etiqueta se cambia sólo para el grupo solicitado: Core, frontend o el
+#    par atómico BFF+worker. Así no se alteran contenedores ajenos al corte.
 # 5. (2026-09-25) Las migraciones del núcleo se aplican ANTES de recrear, con un
 #    contenedor desechable de la imagen nueva en la red de la API. El código
 #    nuevo espera la cabeza nueva; recrear primero deja `/v1/ready` en 503.
@@ -21,8 +22,8 @@
 # 8. BFF y worker eliminan del Compose vivo las antiguas variables
 #    LEGACY_DISABLED_* y del env compartido las credenciales de portales; las
 #    fuentes transferidas ya no existen en su imagen.
-# 9. El respaldo incluye el servicio: BFF y worker comparten SHA y no deben
-#    sobrescribir el punto de vuelta atrás del otro al desplegarse por separado.
+# 9. BFF y worker son dos alias del mismo despliegue atómico: comparten imagen,
+#    SHA, respaldo y recreación; nunca se actualizan por separado.
 # 10. El compose transformado se valida como candidato antes de sustituir el vivo.
 # 11. BFF/worker retiran del Compose vivo la caché HuggingFace que pertenecía
 #     al matcher local eliminado. El volumen no se borra: sólo deja de montarse.
@@ -89,22 +90,15 @@ if [[ "$SERVICIO" == core ]]; then
   PATRON="swissjob-core:point5-"
   CONTENEDOR_API="swissjob-core-api-r5"
   CONTENEDOR_SALUD="$CONTENEDOR_API"
-elif [[ "$SERVICIO" == bff ]]; then
+elif [[ "$SERVICIO" == bff || "$SERVICIO" == worker ]]; then
+  # Ambos alias publican juntos un único artefacto inmutable por SHA.
   IMAGEN="swissjob-backend:point5-$SHA"
   COMPOSE="swissjob.configured.yml"; PROYECTO="swissjob"
-  SERVICIOS=(backend)
+  SERVICIOS=(backend worker)
   CONSTRUIR=(docker build -f backend/Dockerfile.prod -t "$IMAGEN" backend/)
   ETIQUETAR=(true)
   PATRON="swissjob-backend:point5-"
   CONTENEDOR_SALUD="swissjob-backend"
-elif [[ "$SERVICIO" == worker ]]; then
-  IMAGEN="swissjob-worker:point5-$SHA"
-  COMPOSE="swissjob.configured.yml"; PROYECTO="swissjob"
-  SERVICIOS=(worker)
-  CONSTRUIR=(docker build -f backend/Dockerfile.prod -t "$IMAGEN" backend/)
-  ETIQUETAR=(true)
-  PATRON="swissjob-worker:point5-"
-  CONTENEDOR_SALUD="swissjob-worker"
 else
   IMAGEN="swissjob-frontend:point5-$SHA"
   COMPOSE="swissjob.configured.yml"; PROYECTO="swissjob"
@@ -159,7 +153,7 @@ else
   echo "== config-only: se conserva la imagen viva $IMAGEN"
 fi
 
-echo "== copia .before y cambio de etiqueta POR SERVICIO (trampa 4)"
+echo "== copia .before y cambio de etiqueta sólo para ${SERVICIOS[*]} (trampa 4)"
 # Se edita con python para tocar sólo la línea `image:` de cada servicio listado.
 ssh nas "cp $E/$COMPOSE $E/$COMPOSE.before-$SERVICIO-$SHA"
 # El NAS no tiene python3: se edita en local sobre una copia y se sube.
@@ -213,13 +207,13 @@ for linea in lineas:
     servicio = re.match(r"^  ([a-z_-]+):\s*$", linea)
     if servicio:
         actual = servicio.group(1)
-    if "$SERVICIO" == "worker" and actual == "worker":
+    if "$SERVICIO" in {"bff", "worker"} and actual == "worker":
         linea = linea.replace(queue_marker, queue_target)
         queue_line = linea.strip()
         queue_verified = queue_verified or queue_line == f"- {queue_target}" or bool(
             re.search(rf"(?:^|\s)-Q\s+{re.escape(queue_target)}(?:\s|$)", queue_line)
         )
-    if actual in servicios and re.match(r"^    image: $PATRON[a-f0-9]+\s*$", linea):
+    if actual in servicios and re.match(r"^    image: (?:$PATRON|swissjob-worker:point5-)[a-f0-9]+\s*$", linea):
         linea = "    image: $IMAGEN"
         etiquetadas.add(actual)
     if actual in servicios and re.match(
@@ -233,7 +227,7 @@ if etiquetadas != set(servicios):
         f"ABORTA: etiquetas incompletas; cambiadas={sorted(etiquetadas)}, "
         f"esperadas={sorted(servicios)}"
     )
-if "$SERVICIO" == "worker" and (
+if "$SERVICIO" in {"bff", "worker"} and (
     not queue_verified or queue_marker in "\n".join(salida)
 ):
     sys.exit("ABORTA: no se pudo retirar la cola local scraping del worker")
@@ -303,17 +297,28 @@ echo "== recreando ${SERVICIOS[*]} (con el proyecto correcto: trampa 2)"
 ssh nas "cd $E && $C -p $PROYECTO -f $COMPOSE up -d --no-deps ${SERVICIOS[*]}"
 
 echo "== salud"
-if [[ "$SERVICIO" == worker ]]; then
+if [[ "$SERVICIO" == bff || "$SERVICIO" == worker ]]; then
+  estado=""
+  for _ in $(seq 1 30); do
+    estado="$(ssh nas "$D inspect swissjob-backend --format '{{.State.Health.Status}}'" 2>/dev/null || true)"
+    [[ "$estado" == healthy ]] && break
+    sleep 10
+  done
+  [[ "$estado" == healthy ]] || { echo "ABORTA: swissjob-backend no alcanzó healthy" >&2; exit 1; }
   respuesta=""
   for _ in $(seq 1 30); do
-    respuesta="$(ssh nas "$D exec $CONTENEDOR_SALUD celery -A celery_app inspect ping --timeout 5" 2>/dev/null || true)"
+    respuesta="$(ssh nas "$D exec swissjob-worker celery -A celery_app inspect ping --timeout 5" 2>/dev/null || true)"
     [[ "$respuesta" == *pong* ]] && break
     sleep 10
   done
-  [[ "$respuesta" == *pong* ]] || { echo "ABORTA: $CONTENEDOR_SALUD no responde al ping Celery" >&2; exit 1; }
+  [[ "$respuesta" == *pong* ]] || { echo "ABORTA: swissjob-worker no responde al ping Celery" >&2; exit 1; }
+  for contenedor in swissjob-backend swissjob-worker; do
+    ejecutada="$(ssh nas "$D inspect $contenedor --format '{{.Config.Image}}'")"
+    [[ "$ejecutada" == "$IMAGEN" ]] || { echo "ABORTA: $contenedor corre $ejecutada" >&2; exit 1; }
+  done
 else
   for _ in $(seq 1 30); do
-    estado="$(ssh nas "$D inspect $CONTENEDOR_SALUD --format '{{.State.Health.Status}}' 2>/dev/null || true")"
+    estado="$(ssh nas "$D inspect $CONTENEDOR_SALUD --format '{{.State.Health.Status}}'" 2>/dev/null || true)"
     [[ "$estado" == healthy ]] && break
     sleep 10
   done

@@ -77,7 +77,25 @@ def test_synthesize_and_resolve_shadow_vacancies():
 
 
 async def _scenario(factory):
-    from jobhunt_core import import_portfolio as ip
+    from jobhunt_core import portfolio_vacancies as ip
+
+    # El scope determinista debe pertenecer siempre a la fuente interna.
+    async with factory() as guarded:
+        other = uuid.uuid4()
+        await guarded.execute(
+            sa.text("INSERT INTO sources (id, name, tier) VALUES (:i, 'ajena', 0)"),
+            {"i": other},
+        )
+        await guarded.execute(
+            sa.text(
+                "INSERT INTO harvest_scopes (id, source_id, params, tier, enabled) "
+                "VALUES (:i, :s, '{}'::jsonb, 0, false)"
+            ),
+            {"i": ip.PORTFOLIO_IMPORT_SCOPE_ID, "s": other},
+        )
+        with pytest.raises(RuntimeError, match="fuente ajena"):
+            await ip.ensure_source_scope(guarded)
+        await guarded.rollback()
 
     with_url = [
         {
@@ -98,7 +116,7 @@ async def _scenario(factory):
     no_url = {"url": None, "title": "Sin URL", "company": "X", "description": "d"}
 
     async with factory() as s:
-        scope_id = await ip.ensure_import_scope(s)
+        scope_id = await ip.ensure_source_scope(s)
         await s.commit()
 
         # --- Síntesis: 2 con url crean vacante; el que no tiene url se omite.
@@ -136,7 +154,7 @@ async def _scenario(factory):
             assert await ip.resolve_vacancy_by_url(s, url) == vid
 
         # --- IDEMPOTENCIA del alta: mismo scope_id, una sola source y scope.
-        assert await ip.ensure_import_scope(s) == scope_id
+        assert await ip.ensure_source_scope(s) == scope_id
         await s.commit()
         assert (
             await s.execute(
@@ -247,34 +265,3 @@ async def _count(session, table: str) -> int:
     return (
         await session.execute(sa.text(f"SELECT count(*) FROM {table}"))
     ).scalar_one()
-
-
-def test_scope_apuntando_a_otra_fuente_falla_fuerte():
-    """Regresión G1 H-12: si el scope determinista PORTFOLIO_IMPORT_SCOPE_ID ya
-    existía apuntando a OTRA fuente (estado inconsistente previo), el ON
-    CONFLICT DO NOTHING lo dejaba pasar y el sink habría escrito TODO el corpus
-    sintetizado bajo esa fuente ajena sin error. Ahora: RuntimeError fail-closed."""
-    from jobhunt_core import import_portfolio as ip
-    from jobhunt_core.tests.test_integration_migration_rehearsal_portfolio import (
-        _on_disposable_db,
-    )
-
-    async def _run(factory):
-        async with factory() as s:
-            other = uuid.uuid4()
-            await s.execute(
-                sa.text("INSERT INTO sources (id, name, tier) VALUES (:i, 'ajena', 0)"),
-                {"i": other},
-            )
-            await s.execute(
-                sa.text(
-                    "INSERT INTO harvest_scopes (id, source_id, params, tier, enabled) "
-                    "VALUES (:i, :s, '{}'::jsonb, 0, false)"
-                ),
-                {"i": ip.PORTFOLIO_IMPORT_SCOPE_ID, "s": other},
-            )
-            await s.commit()
-            with pytest.raises(RuntimeError, match="fuente ajena"):
-                await ip.ensure_import_scope(s)
-
-    asyncio.run(_on_disposable_db(_run))

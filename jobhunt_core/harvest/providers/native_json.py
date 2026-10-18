@@ -222,119 +222,147 @@ def _ictjobs_content(raw):
     }
 
 
-def _content(name, raw):
-    if name == "swisstechjobs":
-        return _swisstechjobs_content(raw)
-    if name == "ictjobs":
-        return _ictjobs_content(raw)
-    jobicy = name == "jobicy"
-    remoteok = name == "remoteok"
-    himalayas = name == "himalayas"
-    title = raw.get("jobTitle" if jobicy else "position" if remoteok else "title")
-    if remoteok and not title:
-        title = raw.get("title")
-    description = (
-        raw.get("excerpt")
-        if himalayas
-        else _plain(raw.get("jobDescription" if jobicy else "description"))
+def _merge_tags(tags, extracted):
+    merged, seen = [], set()
+    for tag in [*tags, *extracted]:
+        if not isinstance(tag, (str, int, float)) or isinstance(tag, bool):
+            continue
+        tag = str(tag).strip()
+        if tag and tag.lower() not in seen:
+            seen.add(tag.lower())
+            merged.append(tag)
+    return merged
+
+
+def _base_content(title, company, description, location, tags):
+    return {
+        "title": title,
+        "company": company,
+        "description": description,
+        "location": location,
+        "tags": tags,
+        "remote": True,
+        # Preserve the existing canonical boundary; unverified portal salary
+        # stays in raw. Source-specific verified salary is added below.
+        "salary": None,
+    }
+
+
+def _jobicy_content(raw):
+    title = raw.get("jobTitle")
+    description = _plain(raw.get("jobDescription"))
+    extracted = [
+        *extract_tech_skills(title, description),
+        *extract_job_skills(title if isinstance(title, str) else "", description or ""),
+    ]
+    location = normalize_location(raw.get("jobGeo") or raw.get("country"))
+    content = _base_content(
+        title,
+        raw.get("companyName"),
+        description,
+        location,
+        _merge_tags([], extracted)[:15],
     )
-    tags = raw.get("categories" if himalayas else "tags")
+    content.update(search_metadata(title, description, location, raw.get("jobType")))
+    return content
+
+
+def _remoteok_content(raw):
+    title = raw.get("position") or raw.get("title")
+    description = _plain(raw.get("description"))
+    tags = raw.get("tags")
+    tags = tags if isinstance(tags, list) else []
+    content = _base_content(
+        title,
+        raw.get("company"),
+        description,
+        normalize_location(raw.get("location")) or "Worldwide",
+        tags,
+    )
+    salary_min = _remoteok_salary(raw.get("salary_min"))
+    salary_max = _remoteok_salary(raw.get("salary_max"))
+    content.update(
+        salary_min=salary_min,
+        salary_max=salary_max,
+        salary_currency="USD" if salary_min or salary_max else None,
+    )
+    return content
+
+
+def _himalayas_content(raw):
+    restrictions = raw.get("locationRestrictions")
+    location = (
+        restrictions[0] if isinstance(restrictions, list) and restrictions else None
+    )
+    tags = raw.get("categories")
+    tags = tags if isinstance(tags, list) else []
+    content = _base_content(
+        raw.get("title"),
+        raw.get("companyName"),
+        raw.get("excerpt"),
+        normalize_location(location) or "Worldwide",
+        tags,
+    )
+    salary_min = _positive_number(raw.get("minSalary"))
+    salary_max = _positive_number(raw.get("maxSalary"))
+    content.update(
+        salary_min=salary_min,
+        salary_max=salary_max,
+        salary_currency=(
+            raw.get("currency")
+            if (salary_min or salary_max) and isinstance(raw.get("currency"), str)
+            else None
+        ),
+        employment_type=raw.get("employmentType"),
+        logo=raw.get("companyLogo"),
+    )
+    return content
+
+
+def _generic_content(name, raw):
+    title = raw.get("title")
+    description = _plain(raw.get("description"))
+    tags = raw.get("tags")
     if name == "workingnomads" and isinstance(tags, str):
-        tags = [t.strip() for t in tags.split(",") if t.strip()]
-    tags = tags if isinstance(tags, list) and not jobicy else []
+        tags = [tag.strip() for tag in tags.split(",") if tag.strip()]
+    tags = tags if isinstance(tags, list) else []
     category = raw.get("category_name") if name == "workingnomads" else None
     if isinstance(category, str) and category.strip():
         tags = [category.strip(), *tags]
-    extracted = (
-        []
-        if remoteok or himalayas
-        else extract_job_skills(
-            title if isinstance(title, str) else "", description or ""
-        )
+    extracted = extract_job_skills(
+        title if isinstance(title, str) else "", description or ""
     )
-    if jobicy:
-        extracted = [*extract_tech_skills(title, description), *extracted]
-    if remoteok or himalayas:
-        merged = tags
-    else:
-        merged, seen = [], set()
-        for tag in [*tags, *extracted]:
-            if not isinstance(tag, (str, int, float)) or isinstance(tag, bool):
-                continue
-            tag = str(tag).strip()
-            if tag and tag.lower() not in seen:
-                seen.add(tag.lower())
-                merged.append(tag)
-    if himalayas:
-        restrictions = raw.get("locationRestrictions")
-        location = (
-            restrictions[0] if isinstance(restrictions, list) and restrictions else None
-        )
-    else:
-        location = (
-            (raw.get("jobGeo") or raw.get("country"))
-            if jobicy
-            else raw.get(
-                "candidate_required_location" if name == "remotive" else "location"
-            )
-        )
-    if jobicy:
-        location = normalize_location(location)
-    elif remoteok or himalayas:
-        location = normalize_location(location) or "Worldwide"
+    location = raw.get(
+        "candidate_required_location" if name == "remotive" else "location"
+    )
     if name == "workingnomads" and (
         not isinstance(location, str) or not location.strip()
     ):
         location = "Remote / Worldwide"
-    content = {
-        "title": title,
-        "company": raw.get(
-            "companyName"
-            if jobicy or himalayas
-            else "company"
-            if remoteok
-            else "company_name"
-        ),
-        "description": description,
-        "location": location,
-        "tags": merged if remoteok or himalayas else merged[:15],
-        "remote": True,
-        # Preserve the existing canonical boundary; unverified portal salary
-        # stays in raw. RemoteOK's USD amounts are mapped below from live parity.
-        "salary": None,
-    }
-    if name in {"workingnomads", "jobicy"}:
-        content.update(
-            search_metadata(
-                title,
-                description,
-                location,
-                raw.get("jobType") if jobicy else None,
-            )
-        )
-    if remoteok:
-        salary_min = _remoteok_salary(raw.get("salary_min"))
-        salary_max = _remoteok_salary(raw.get("salary_max"))
-        content.update(
-            salary_min=salary_min,
-            salary_max=salary_max,
-            salary_currency="USD" if salary_min or salary_max else None,
-        )
-    elif himalayas:
-        salary_min = _positive_number(raw.get("minSalary"))
-        salary_max = _positive_number(raw.get("maxSalary"))
-        content.update(
-            salary_min=salary_min,
-            salary_max=salary_max,
-            salary_currency=(
-                raw.get("currency")
-                if (salary_min or salary_max) and isinstance(raw.get("currency"), str)
-                else None
-            ),
-            employment_type=raw.get("employmentType"),
-            logo=raw.get("companyLogo"),
-        )
+    content = _base_content(
+        title,
+        raw.get("company_name"),
+        description,
+        location,
+        _merge_tags(tags, extracted)[:15],
+    )
+    if name == "workingnomads":
+        content.update(search_metadata(title, description, location, None))
     return content
+
+
+_CONTENT_MAPPERS = {
+    "himalayas": _himalayas_content,
+    "ictjobs": _ictjobs_content,
+    "jobicy": _jobicy_content,
+    "remoteok": _remoteok_content,
+    "swisstechjobs": _swisstechjobs_content,
+}
+
+
+def _content(name, raw):
+    mapper = _CONTENT_MAPPERS.get(name)
+    return mapper(raw) if mapper else _generic_content(name, raw)
 
 
 def register_handlers():

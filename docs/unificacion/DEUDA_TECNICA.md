@@ -16,6 +16,76 @@
 > canónicas por un campo que hoy consume una sola búsqueda semanal); lo nuevo sí
 > lo lleva.
 
+## DT-145 · Simplificación y eficiencia post-DT-144
+
+**Estado: ABIERTO — ejecución obligatoria iniciada el 2026-10-16.**
+
+El plan autoritativo y la bitácora de ejecución están en
+[`PLAN_ACCION_POST_DT144_OPTIMIZACION.md`](PLAN_ACCION_POST_DT144_OPTIMIZACION.md).
+Esta entrada no permite sustituir el objetivo por una mejora parcial: deben
+completarse todas sus fases y conservarse las funcionalidades observables.
+
+### Reglas imperativas
+
+1. **Nunca asumir nada:** comprobar toda afirmación relevante con código,
+   configuración, pruebas, métricas o estado desplegado antes de decidir.
+2. **Principios arquitectónicos (SIEMPRE):** SRP, cohesión alta, acoplamiento
+   bajo, legibilidad y consistencia. Si chocan con YAGNI, aplicar el mínimo que
+   satisface ambos; nunca crear una abstracción solo por cumplir un principio.
+3. **Realizar todo cambio propuesto:** una propuesta solo puede sustituirse si
+   evidencia reproducible demuestra que rompe funcionalidad; en ese caso debe
+   ejecutarse la alternativa mínima que cumpla el mismo objetivo.
+4. Toda retirada exige búsqueda de consumidores, prueba de caracterización,
+   prueba posterior y evidencia anotada aquí y en el plan.
+
+### Alcance obligatorio
+
+- **P0 — propiedad única de cosecha:** retirar del Portfolio el camino manual
+  que aún descarga portales/colegios y hacer que solicite la cosecha al Core;
+  retirar módulos y pruebas exclusivamente locales y ampliar el ratchet.
+- **P1 — imágenes y dependencias:** separar dependencias de producción y
+  desarrollo verificadas, retirar toolchains de las imágenes finales y usar
+  una sola imagen inmutable de SwissJob para API y worker.
+- **P2 — complejidad accidental:** dividir por fuente los dos mapeadores de
+  complejidad F detectados, conservando exactamente sus contratos.
+- **P3 — herramientas congeladas:** clasificar el grafo real de los 17 módulos
+  de corte/importación y retirar solo lo demostrado como no consumido; extraer
+  primero cualquier primitiva todavía usada en ejecución.
+- **P4 — validación y cierre:** suites, builds, CI, despliegue Core primero si
+  cambia contrato, sondas funcionales y negativas, y comparación de métricas.
+
+### Evidencia de apertura
+
+- DT-144 está cerrada y las rutas críticas medidas permanecen por debajo del
+  SLO; esta deuda persigue menos código y coste operativo, no corrige una caída.
+- ReactPortfolio conserva un colector manual en
+  `routers/schools.py::_scrape_and_alert` que fuerza
+  `manual_refresh=True`; `services/school_scraper.py` solo delega al Core
+  cuando ese valor es falso.
+- Las imágenes desplegadas medidas son aproximadamente 996 MB por cada imagen
+  SwissJob, 893 MB para Portfolio y 2,196 MB para Core; deben volver a medirse
+  tras P1, sin prometer una reducción no comprobada.
+- Los candidatos de dependencia son solo hipótesis hasta verificar imports,
+  carga de aplicación y pruebas. No se retira ninguno por nombre o intuición.
+- Los módulos de migración no se eliminan en bloque: existen consumidores vivos
+  conocidos en `applications.py`, el registro y las fuentes documentales.
+
+### Checkpoints
+
+| Fecha | Fase | Estado | Evidencia / punto de reanudación |
+|---|---|---|---|
+| 2026-10-16 | Apertura | COMPLETADO | Plan creado; ramas `feat/post-dt144-simplification` sobre las cabezas productivas verificadas. |
+| 2026-10-16 | P0 código | COMPLETADO | Core `1736dd6`: adaptador VIS y proyección nativa a observaciones escolares. Portfolio `08ca961`: refrescos sólo por dispatcher Core, retirada de 5 módulos y 6 suites locales, BeautifulSoup retirada y ratchet ampliado. 2.720 líneas netas eliminadas en el commit Portfolio. Validación: 27 unitarias + 2 integradas Core focales; 205 focales y suite completa Portfolio verdes. |
+| 2026-10-16 | P0 operación | PENDIENTE P4 | Construir imágenes, desplegar Core antes que Portfolio, habilitar `swiss_schools_vis` y ejecutar sondas positiva y negativa. No declarar P0 operativo antes. |
+| 2026-10-16 | P1 | COMPLETADO | SwissJob/Core `68f21c6`, Portfolio `1c795f9`: manifiestos runtime/dev separados; herramientas de test fuera de producción; toolchains retirados; API y worker SwissJob comparten una imagen y despliegue atómico. Builds sin caché, `pip check`, imports, Compose, ratchets, 11 pruebas de despliegue y dry-runs verdes. Tamaños: SwissJob 511.476.439 B (−48,66 %), Portfolio 596.152.846 B (−33,24 %), Core 2.175.767.560 B (−0,93 %); agregado único −802.060.265 B (−19,63 %). `lxml` y `requests` siguen transitivos por consumidores verificados. |
+| 2026-10-16 | P2 | COMPLETADO | Core `ba47ec8`, Portfolio `cdf9996`: `_content` y `_job` divididos en transformadores cohesionados por fuente/familia con despacho explícito, sin jerarquías nuevas. Radon bajó de F/58 a A/2 y de F/88 a A/4; no queda E/F en las dos unidades. Validación: Core 80 pruebas focales/integradas; Portfolio 225 focales y suite completa 1.587 pasadas/15 omitidas; Ruff, Black y `diff --check` verdes. Siguiente paso exacto: P3, construir el grafo de imports de las 17 herramientas y retirar únicamente ejecuciones consumidas. |
+| 2026-10-18 | P3 | COMPLETADO | Core `1f415d3`: grafo de 17 módulos verificado; 15 herramientas de corte consumidas, 4 auxiliares, 6 scripts de ensayo y 23 pruebas históricas retirados. Se conservaron `migrate.py`, Alembic y sus pruebas, `erasure_restore.py` porque lo llama `nas_backup_daily.sh`, y la síntesis runtime extraída como `portfolio_vacancies.py`. El restore retiene escritura privada/exclusiva y prueba propia. Resultado: 166 inserciones, 15.872 eliminaciones, −15.706 líneas netas. Ruff, formato, compilación/imports, `diff --check` y 58 pruebas integradas focales verdes; la suite Core completa previa pasó 1.768/1 y se repetirá sobre el SHA final en P4. Siguiente paso exacto: P4 completo; no ejecutar JSearch. |
+
+**Reanudación exacta:** abrir el plan, confirmar las cabezas anotadas, trabajar
+solo en los worktrees/ramas allí indicados y continuar en el primer checkpoint
+que no figure como `COMPLETADO`. No reinterpretar DT-144 ni reactivar
+productores locales.
+
 ## DT-144 · Centralización total de cosechadores en Core
 
 **Estado: CERRADO — objetivo cumplido y verificado en producción el
