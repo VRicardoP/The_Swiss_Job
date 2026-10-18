@@ -1,0 +1,154 @@
+{
+  "audit": "DT-145 post-DT-144 simplification and efficiency closure",
+  "closed_at": "2026-10-18",
+  "objective_met": true,
+  "rules": {
+    "verified_not_assumed": true,
+    "architecture": [
+      "single responsibility",
+      "high cohesion",
+      "low coupling",
+      "readability",
+      "consistency"
+    ],
+    "yagni": "minimum implementation satisfying the architectural principles",
+    "all_planned_changes_performed": true
+  },
+  "releases": {
+    "swissjob_core": {
+      "git_sha": "acf48b2e39612d729e612ed07de3cf781509dd7c",
+      "image": "swissjob-core:point5-acf48b2",
+      "alembic": "core0055",
+      "remote_size_bytes": 1583729535,
+      "user": "core"
+    },
+    "swissjob_backend_and_worker": {
+      "git_sha": "acf48b2e39612d729e612ed07de3cf781509dd7c",
+      "image": "swissjob-backend:point5-acf48b2",
+      "remote_size_bytes": 351193214,
+      "user": "app"
+    },
+    "swissjob_frontend": {
+      "git_sha": "acf48b2e39612d729e612ed07de3cf781509dd7c",
+      "image": "swissjob-frontend:point5-acf48b2",
+      "remote_size_bytes": 49695287,
+      "user": "nginx image default"
+    },
+    "reactportfolio_backend_and_worker": {
+      "git_sha": "54921476a91ae7450a70380bf981bedbd655b033",
+      "image": "portfolio-backend:board-5492147",
+      "remote_size_bytes": 417830909,
+      "user": "appuser",
+      "alembic": "uu44v3375x21"
+    }
+  },
+  "deployment": {
+    "order": [
+      "Core",
+      "VIS scope",
+      "SwissJob backend and worker",
+      "SwissJob frontend",
+      "ReactPortfolio backend and worker"
+    ],
+    "seconds": {
+      "core": 535.33,
+      "swissjob_backend_and_worker": 197.42,
+      "reactportfolio_backend_and_worker": 192.62
+    },
+    "compressed_transfers": {
+      "core": "450 MiB",
+      "swissjob_backend_and_worker": "118 MiB",
+      "reactportfolio_backend_and_worker": "130 MiB"
+    },
+    "safe_aborts": [
+      "Core first attempt stopped before build because the recreated worktree lacked its ignored .env link; the existing environment was linked and the dry-run repeated.",
+      "ReactPortfolio first attempt stopped before container recreation because the deploy cleanup required exactly two legacy model caches. PR 6 made the transformation idempotent while still rejecting any remaining cache; deployment then succeeded."
+    ]
+  },
+  "ci": {
+    "swissjob_branch": {"run_id": 39119249640, "result": "success", "jobs": "9/9"},
+    "swissjob_pr": {"run_id": 39119253396, "result": "success", "jobs": "9/9"},
+    "swissjob_main": {"run_id": 39140191519, "result": "success", "jobs": "9/9"},
+    "reactportfolio_initial_branch": {"run_id": 39118532581, "result": "success"},
+    "reactportfolio_initial_pr": {"run_id": 39118897898, "result": "success"},
+    "reactportfolio_initial_main": {"run_id": 39119290315, "result": "success"},
+    "reactportfolio_deploy_fix_push": {"run_id": 39142202390, "result": "success"},
+    "reactportfolio_deploy_fix_pr": {"run_id": 39142205358, "result": "success"},
+    "reactportfolio_final_main": {"run_id": 39142591147, "result": "success"}
+  },
+  "full_validation": {
+    "core": "1768 passed, 1 skipped",
+    "swissjob": "783 passed",
+    "reactportfolio": "1601 passed, 1 skipped",
+    "frontend": "lint, 57 tests and production build passed",
+    "npm_audit": "0 vulnerabilities",
+    "ratchets": {
+      "ownership": {"core_owned": 41, "local_pending": 0, "sources": 59},
+      "reactportfolio": "45 retired modules absent"
+    }
+  },
+  "production_probes": {
+    "core": {
+      "ready": true,
+      "authoritative": true,
+      "scopes": "50/50",
+      "alerts": 0,
+      "dead_deliveries": 0,
+      "pending_deliveries": 0,
+      "pending_staging": 0,
+      "capture_slot_exists": false
+    },
+    "jsearch_waiver": {
+      "enabled": 0,
+      "manually_disabled": 1,
+      "runs_since_waiver": 0
+    },
+    "swissjob": {
+      "authorities": {"catalog": "CoreCatalog", "matching": "CoreMatching", "schools": "CoreSchools"},
+      "local_producers": 0,
+      "portal_credentials": 0,
+      "failures": []
+    },
+    "reactportfolio": {
+      "core_primary": ["applications", "catalog", "documents", "matching", "saved_searches", "schools"],
+      "local_modules": 0,
+      "portal_credentials": 0,
+      "failures": []
+    },
+    "vis": {
+      "scope_id": "777ec0f4-da00-5ad0-9c05-9966862f53a4",
+      "dispatch_origin": "ReactPortfolio",
+      "only_core_contacted": true,
+      "last_complete_at": "2026-10-18T16:05:34.790886+00:00",
+      "status": "ok",
+      "consecutive_failures": 0,
+      "stored_entries": 3,
+      "active_entries": 3
+    }
+  },
+  "efficiency": {
+    "combined_source_delta": {"insertions": 2134, "deletions": 20282, "net_lines": -18148},
+    "resources_before": {"containers": 8, "cpu_percent_sum": 1.9, "memory_mib_sum": 1867.87, "pids_sum": 54},
+    "resources_after": {"containers": 8, "cpu_percent_sum": 1.5, "memory_mib_sum": 1232.4, "pids_sum": 36},
+    "resource_delta": {"cpu_percent": -21.1, "memory_percent": -34.0, "pids_percent": -33.3},
+    "latency_hot_100_samples_seconds": {
+      "facets_p95": 0.064,
+      "category_50_first_p95": 2.183,
+      "category_50_control_repeat_p95": 1.842,
+      "saved_p95": 1.243,
+      "catalog_p95": 0.299,
+      "budget_p95": 2.0,
+      "host_load_during_repeat": [9.41, 9.77, 9.39],
+      "note": "The first category run is retained as an unfavorable result. The controlled 100-sample repeat passed under the recorded high two-CPU host load; no speculative code change was made."
+    }
+  },
+  "cleanup": {
+    "unused_old_image_tags_removed": 65,
+    "old_project_containers_removed": 0,
+    "reason_no_container_removal": "No stopped SwissJob/Core/ReactPortfolio containers existed.",
+    "retained_for_live_gdpr_service": "swissjob-backend:d2a38e9",
+    "available_space_after": "520.9 GiB",
+    "health_after_cleanup": {"core": 200, "swissjob": 200, "reactportfolio": 200}
+  },
+  "remaining_work": []
+}
