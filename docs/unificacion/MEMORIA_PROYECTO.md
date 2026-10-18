@@ -1,6 +1,6 @@
 # Memoria del proyecto JobHunting
 
-Última reconciliación documental: **2026-10-16**.
+Última reconciliación documental: **2026-10-18**.
 
 Esta es la memoria vigente del sistema formado por SwissJob, jobhunt-core y
 ReactPortfolio. Resume estado, autoridades y trabajo pendiente. Los contratos y
@@ -27,17 +27,17 @@ sus interfaces, autenticación y responsabilidades propias de BFF.
 
 ## Estado vivo comprobado
 
-Sondas de solo lectura ejecutadas el 2026-10-16:
+Sondas finales ejecutadas el 2026-10-18:
 
 | Pieza | Release/imagen viva | Resultado |
 |---|---|---|
-| Core API y tres workers | swissjob-core:point5-5b3bf3d | ready, authoritative, Alembic core0055; 49/49 scopes ejecutables observados, cero alertas |
-| SwissJob BFF/worker | point5-5002445 | healthy/Celery pong; cero productores locales; worker sólo en `default,ai` |
-| SwissJob frontend | point5-254e826 | healthy; categorías canónicas y tarjetas con contenido |
-| Portfolio API/worker | portfolio-backend:board-c47b7a3 | healthy; seis capacidades `core_primary`; cero productores locales |
+| Core API y tres workers | swissjob-core:point5-acf48b2 | ready, authoritative, Alembic core0055; 50/50 scopes con estado, cero alertas |
+| SwissJob BFF/worker | swissjob-backend:point5-acf48b2 | healthy/Celery pong; misma imagen inmutable; cero productores locales |
+| SwissJob frontend | swissjob-frontend:point5-acf48b2 | healthy; categorías canónicas y tarjetas con contenido |
+| Portfolio API/worker | portfolio-backend:board-5492147 | healthy; seis capacidades `core_primary`; cero productores locales |
 | Portfolio frontend público | remoto 5045a28 | cookie-only publicado; login real y 12 ventanas con contenido verificadas por Playwright |
 
-Core registra 26.193 entregas, cero dead/pending/inflight, staging cero y slot de
+Core tiene delivery drenado, cero dead/pending/inflight, staging cero y slot de
 captura ausente. SwissJob y Portfolio tienen cero módulos productores,
 credenciales de portal y conexiones directas. JSearch conserva un único scope
 manualmente deshabilitado y cero ejecuciones desde la dispensa.
@@ -68,12 +68,28 @@ Los límites causales, protocolos y artefactos están en
 [OPTIMIZACION_CORE_PORTFOLIO_2026-10-10.md](../audits/OPTIMIZACION_CORE_PORTFOLIO_2026-10-10.md)
 y su directorio de evidencias.
 
+DT-145 completó la simplificación posterior: cerró el último colector escolar
+local, redujo las imágenes de producción, dividió los dos transformadores de
+complejidad F y retiró herramientas de corte consumidas. El delta conjunto es
+−18.148 líneas netas. En una ventana comparable de ocho contenedores, memoria
+mediana agregada bajó de 1.867,87 a 1.232,40 MiB (−34,0 %) y procesos de 54 a
+36 (−33,3 %).
+
+VIS quedó habilitado en Core y un refresco iniciado en Portfolio sólo contactó
+`core-api`; el ciclo terminó `ok` con tres ofertas activas. Tras verificar todas
+las sondas se retiraron 65 etiquetas antiguas no usadas. Se conservó la imagen
+del servicio vivo de borrado GDPR. Evidencia completa en
+[2026-10-18-dt145-final-optimization.json](../audits/2026-10-18-dt145-final-optimization.json).
+
 ## Cierre de deuda y exclusiones
 
 - **DT-144:** cerrada el 2026-10-16. La cosecha pertenece exclusivamente a Core.
   El [contrato de centralización total](CONTRATO_CENTRALIZACION_TOTAL.md) fija
   el objetivo vinculante, las fases, los controles contra desviaciones y la
   única definición válida de terminado.
+
+- **DT-145:** cerrada el 2026-10-18. P0-P4 están fusionados, desplegados y
+  verificados; no queda trabajo por reanudar.
 
 - **A19-31:** cerrado. BFF y worker comparten la cuenta SMTP autorizada, están
   saludables y completaron dos envíos reales; rollback fechado conservado.

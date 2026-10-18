@@ -1,6 +1,6 @@
 # Deuda técnica — proyecto jobhunting (SwissJob + jobhunt-core)
 
-> **Lectura vigente — 2026-10-16.** Este fichero es un ledger técnico
+> **Lectura vigente — 2026-10-18.** Este fichero es un ledger técnico
 > cronológico. Para estado global y releases manda
 > [MEMORIA_PROYECTO.md](MEMORIA_PROYECTO.md); aquí mandan las marcas
 > **ABIERTO/PARCIAL/COTA** más recientes de cada identificador. Los bloques
@@ -18,12 +18,37 @@
 
 ## DT-145 · Simplificación y eficiencia post-DT-144
 
-**Estado: ABIERTO — ejecución obligatoria iniciada el 2026-10-16.**
+**Estado: CERRADO — objetivo completo y verificado en producción el
+2026-10-18.**
 
 El plan autoritativo y la bitácora de ejecución están en
 [`PLAN_ACCION_POST_DT144_OPTIMIZACION.md`](PLAN_ACCION_POST_DT144_OPTIMIZACION.md).
 Esta entrada no permite sustituir el objetivo por una mejora parcial: deben
 completarse todas sus fases y conservarse las funcionalidades observables.
+
+Recibo final reproducible:
+[`2026-10-18-dt145-final-optimization.json`](../audits/2026-10-18-dt145-final-optimization.json).
+Las releases funcionales son SwissJob/Core `acf48b2` y ReactPortfolio
+`5492147`; Core es el único cosechador de las 59 fuentes inventariadas, 41 de
+ellas activas bajo propiedad Core y 18 retiradas. No queda ninguna fuente
+`local_pending` ni `core_shadow`.
+
+El cierre no oculta incidencias ni resultados desfavorables. El primer intento
+Core abortó antes de construir por faltar el enlace local a `.env`. El primer
+despliegue Portfolio abortó antes de recrear por una guardia no idempotente;
+ReactPortfolio PR 6 (`b565492`, merge `5492147`) la corrigió y sus CI pasaron.
+En rendimiento, una primera serie de `categoria-50` dio p95 2,183 s; una
+repetición controlada de 100 muestras dio 1,842 s bajo carga 9,41/9,77/9,39 en
+un NAS de dos CPU. Ambos valores quedan en el recibo; no se cambió código sin
+causa demostrada.
+
+La simplificación acumulada de ambos repositorios deja 18.148 líneas netas
+menos. En ocho contenedores, la memoria mediana agregada bajó 34,0 %
+(1.867,87 → 1.232,40 MiB) y los procesos 33,3 % (54 → 36). Tras todas las
+sondas se retiraron 65 etiquetas antiguas no usadas; no existían contenedores
+detenidos propios. Se conservó de forma deliberada `d2a38e9`, utilizada por el
+servicio vivo de borrado GDPR `swissjob-erasure-cdc`. Los tres backends
+devolvieron 200 después de la limpieza.
 
 ### Reglas imperativas
 
@@ -76,15 +101,18 @@ completarse todas sus fases y conservarse las funcionalidades observables.
 |---|---|---|---|
 | 2026-10-16 | Apertura | COMPLETADO | Plan creado; ramas `feat/post-dt144-simplification` sobre las cabezas productivas verificadas. |
 | 2026-10-16 | P0 código | COMPLETADO | Core `1736dd6`: adaptador VIS y proyección nativa a observaciones escolares. Portfolio `08ca961`: refrescos sólo por dispatcher Core, retirada de 5 módulos y 6 suites locales, BeautifulSoup retirada y ratchet ampliado. 2.720 líneas netas eliminadas en el commit Portfolio. Validación: 27 unitarias + 2 integradas Core focales; 205 focales y suite completa Portfolio verdes. |
-| 2026-10-16 | P0 operación | PENDIENTE P4 | Construir imágenes, desplegar Core antes que Portfolio, habilitar `swiss_schools_vis` y ejecutar sondas positiva y negativa. No declarar P0 operativo antes. |
+| 2026-10-18 | P0 operación | COMPLETADO | Scope VIS `777ec0f4-da00-5ad0-9c05-9966862f53a4` habilitado. Portfolio contactó sólo `core-api`; run `ok`, 3 ofertas activas y 0 fallos. |
 | 2026-10-16 | P1 | COMPLETADO | SwissJob/Core `68f21c6`, Portfolio `1c795f9`: manifiestos runtime/dev separados; herramientas de test fuera de producción; toolchains retirados; API y worker SwissJob comparten una imagen y despliegue atómico. Builds sin caché, `pip check`, imports, Compose, ratchets, 11 pruebas de despliegue y dry-runs verdes. Tamaños: SwissJob 511.476.439 B (−48,66 %), Portfolio 596.152.846 B (−33,24 %), Core 2.175.767.560 B (−0,93 %); agregado único −802.060.265 B (−19,63 %). `lxml` y `requests` siguen transitivos por consumidores verificados. |
 | 2026-10-16 | P2 | COMPLETADO | Core `ba47ec8`, Portfolio `cdf9996`: `_content` y `_job` divididos en transformadores cohesionados por fuente/familia con despacho explícito, sin jerarquías nuevas. Radon bajó de F/58 a A/2 y de F/88 a A/4; no queda E/F en las dos unidades. Validación: Core 80 pruebas focales/integradas; Portfolio 225 focales y suite completa 1.587 pasadas/15 omitidas; Ruff, Black y `diff --check` verdes. Siguiente paso exacto: P3, construir el grafo de imports de las 17 herramientas y retirar únicamente ejecuciones consumidas. |
 | 2026-10-18 | P3 | COMPLETADO | Core `1f415d3`: grafo de 17 módulos verificado; 15 herramientas de corte consumidas, 4 auxiliares, 6 scripts de ensayo y 23 pruebas históricas retirados. Se conservaron `migrate.py`, Alembic y sus pruebas, `erasure_restore.py` porque lo llama `nas_backup_daily.sh`, y la síntesis runtime extraída como `portfolio_vacancies.py`. El restore retiene escritura privada/exclusiva y prueba propia. Resultado: 166 inserciones, 15.872 eliminaciones, −15.706 líneas netas. Ruff, formato, compilación/imports, `diff --check` y 58 pruebas integradas focales verdes; la suite Core completa previa pasó 1.768/1 y se repetirá sobre el SHA final en P4. Siguiente paso exacto: P4 completo; no ejecutar JSearch. |
+| 2026-10-18 | P4 | COMPLETADO | Suites: Core 1.768/1, SwissJob 783, Portfolio 1.601/1; frontend lint/57/build y audit 0. CI finales `39140191519` y `39142591147` verdes. Despliegues por SHA, Core primero. Sondas: 50/50 scopes, cero alertas/colas/staging, JSearch 0 runs, consumidores sin productores locales y seis modos Portfolio `core_primary`. Recursos −34,0 % memoria y −33,3 % procesos. |
+| 2026-10-18 | Limpieza NAS | COMPLETADO | Eliminadas 65 etiquetas antiguas no usadas después de salud y sondas. Cero contenedores propios detenidos; se conservaron todos los ajenos y la imagen del servicio GDPR. Salud posterior: Core/SwissJob/Portfolio 200. |
 
-**Reanudación exacta:** abrir el plan, confirmar las cabezas anotadas, trabajar
-solo en los worktrees/ramas allí indicados y continuar en el primer checkpoint
-que no figure como `COMPLETADO`. No reinterpretar DT-144 ni reactivar
-productores locales.
+**Reanudación exacta:** no queda trabajo de DT-145. Ante una incidencia, partir
+de las releases y el recibo citados, comprobar el estado efectivo y preservar
+las invariantes: Core único cosechador, VIS habilitado, JSearch deshabilitado y
+`swissjob-erasure-cdc` vivo mientras sostenga el borrado coordinado. No
+reinterpretar DT-144 ni reactivar productores locales.
 
 ## DT-144 · Centralización total de cosechadores en Core
 

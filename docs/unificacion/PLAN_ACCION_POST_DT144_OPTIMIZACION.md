@@ -1,15 +1,15 @@
 # Plan de acción post-DT-144 — simplificación y eficiencia
 
-> **Estado:** EN EJECUCIÓN · P0-P3 implementados y validados localmente; pendiente de P4, CI y despliegue.
+> **Estado:** CERRADO · P0-P4 implementados, fusionados, desplegados y verificados en producción el 2026-10-18.
 >
 > **Objetivo final:** cerrar la última vía de cosecha externa fuera de Core,
 > retirar el código que quede sin responsabilidad productiva y reducir el coste
 > de construir, transferir y mantener las imágenes, sin perder ni degradar
 > ninguna función.
 >
-> **Bases inmutables verificadas:** SwissJob/Core `069f83a` (Core productivo
-> `5b3bf3d`, BFF/worker `5002445`) y ReactPortfolio backend `c47b7a3`.
-> Ramas de ejecución: `feat/post-dt144-simplification` en ambos repositorios.
+> **Releases funcionales verificadas:** SwissJob/Core `acf48b2` y
+> ReactPortfolio backend `5492147`. Recibo reproducible:
+> [`2026-10-18-dt145-final-optimization.json`](../audits/2026-10-18-dt145-final-optimization.json).
 
 ## 1. Reglas imperativas
 
@@ -144,6 +144,32 @@ para declarar un punto terminado antes de demostrarlo:
 5. Cerrar la deuda únicamente cuando todos los cambios anteriores estén
    desplegados y verificados en la release exacta.
 
+**Resultado P4: COMPLETADO.** Las suites finales pasaron (Core 1.768/1,
+SwissJob 783 y ReactPortfolio 1.601/1); frontend pasó lint, 57 pruebas, build y
+`npm audit` sin vulnerabilidades. Los CI de rama, PR y `main` quedaron verdes.
+Se desplegó Core antes de los consumidores, se provisionó el scope VIS
+`777ec0f4-da00-5ad0-9c05-9966862f53a4` y se desplegaron SwissJob y
+ReactPortfolio con imágenes por SHA.
+
+Las sondas productivas acreditaron 50/50 scopes sanos, cero alertas, colas y
+staging drenados, JSearch deshabilitado y sin nuevas ejecuciones, cero
+productores/credenciales locales y las seis capacidades Portfolio en
+`core_primary`. El refresco VIS iniciado en Portfolio contactó exclusivamente
+`core-api`; el run terminó `ok`, con tres ofertas activas y cero fallos.
+
+La comparación de ocho contenedores redujo memoria mediana agregada de
+1.867,87 a 1.232,40 MiB (−34,0 %) y procesos de 54 a 36 (−33,3 %). Las rutas
+facetas, guardados y catálogo cumplieron p95 ≤ 2 s. `categoria-50` dejó
+registrado un primer p95 desfavorable de 2,183 s; la repetición controlada de
+100 muestras, bajo carga 9,41/9,77/9,39 en dos CPU, dio 1,842 s. Se conservan
+ambos datos y no se inventó una optimización sin causa demostrada.
+
+Tras revalidar salud se eliminaron 65 etiquetas de imagen antiguas no usadas.
+No existían contenedores detenidos propios; no se tocaron contenedores ajenos.
+Se conserva `swissjob-backend:d2a38e9` porque el servicio vivo
+`swissjob-erasure-cdc` mantiene la responsabilidad de borrado GDPR. Core,
+SwissJob y ReactPortfolio devolvieron 200 después de la limpieza.
+
 ## 4. Definición de terminado
 
 - Core es el único proceso que contacta fuentes externas, también en refrescos
@@ -160,38 +186,15 @@ para declarar un punto terminado antes de demostrarlo:
 
 ## 5. Reanudación exacta
 
-Leer primero este documento y después el bloque DT-145 al principio de
-`DEUDA_TECNICA.md`. Trabajar únicamente en:
+No queda trabajo de DT-145 por reanudar. Para auditar o investigar una
+incidencia, leer este documento, el bloque DT-145 de `DEUDA_TECNICA.md` y el
+recibo JSON enlazado en el encabezado. Las releases funcionales que satisfacen
+el objetivo son Core/SwissJob `acf48b2` y ReactPortfolio `5492147`; un commit
+posterior exclusivamente documental no exige redespliegue.
 
-- `/tmp/swissjob-dt144-deploy-a2ba944`, rama
-  `feat/post-dt144-simplification`, base `069f83a`;
-- `/tmp/reactportfolio-dt144-deploy-b587c3e`, rama
-  `feat/post-dt144-simplification`, base `c47b7a3`.
-
-Antes de cada cambio comprobar `git status`, HEAD, consumidores e invariantes.
-P0 quedó implementado en Core `1736dd6` y ReactPortfolio `08ca961`: el
-colector escolar manual ya no existe y el ratchet impide recuperarlo. P1 quedó
-implementado en SwissJob/Core `68f21c6` y ReactPortfolio `1c795f9`; los tres
-builds sin caché, `pip check`, imports y Compose pasaron, con una reducción
-agregada única de 802.060.265 bytes. P2 quedó implementado en Core `ba47ec8` y
-ReactPortfolio `cdf9996`: los despachadores bajaron de F/58 a A/2 y de F/88 a
-A/4 sin cambiar sus payloads.
-
-P3 quedó implementado en Core `1f415d3`. El grafo real clasificó los 17 módulos
-previstos: se retiraron 15 herramientas de corte consumidas; se conservaron
-`migrate.py` y toda la cadena Alembic, la recuperación vigente
-`erasure_restore.py` usada por `nas_backup_daily.sh`, y la síntesis runtime de
-candidaturas, extraída como `portfolio_vacancies.py`. También se retiraron 4
-auxiliares exclusivos del corte, 6 scripts de ensayo y 23 pruebas históricas.
-Resultado del commit: 58 ficheros, 166 inserciones y 15.872 eliminaciones
-(−15.706 líneas netas). No queda ninguna referencia ejecutable a los módulos
-retirados. Validación: compilación/imports, Ruff, formato y `diff --check`
-verdes; 58 pruebas integradas focales pasaron tras la extracción. La suite Core
-completa anterior a la última limpieza pasó 1.768/1; P4 debe repetirla sobre el
-SHA final junto con las suites de SwissJob y Portfolio.
-
-Siguiente punto exacto: P4. Ejecutar validación completa, builds finales,
-ratchets y CI; después fusionar y desplegar Core antes que Portfolio, provisionar
-y habilitar `swiss_schools_vis`, desplegar consumidores y ejecutar sondas
-positivas y negativas. No ejecutar JSearch. Los gates de operación continúan
-abiertos hasta completar esas sondas sobre los SHA desplegados.
+Invariantes que siguen vigentes: Core es el único cosechador, los consumidores
+no recuperan productores locales, VIS permanece habilitado, JSearch permanece
+deshabilitado y no se ejecuta, y `swissjob-erasure-cdc` se conserva mientras
+sea responsable del borrado coordinado de perfiles. Cualquier cambio futuro es
+una tarea nueva y debe empezar comprobando el estado efectivo, no
+reinterpretando este cierre.

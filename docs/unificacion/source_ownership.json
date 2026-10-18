@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "objective": "Core is the sole external job-offer publisher; SwissJob and ReactPortfolio are consumers.",
-  "verified_at": "2026-10-16",
+  "verified_at": "2026-10-18",
   "ratchet": {
-    "min_core_owned_sources": 40,
+    "min_core_owned_sources": 41,
     "min_inventory_verified_sources": 59,
     "max_local_pending_sources": 0,
     "max_active_local_publishers": 0
@@ -1859,29 +1859,47 @@
       "aliases": [
         "verbier-international-school"
       ],
-      "current_harvesters": [],
+      "current_harvesters": [
+        {
+          "product": "core",
+          "module": "jobhunt_core/harvest/providers/native_swiss_schools.py",
+          "triggers": [
+            "Core native dispatcher; manual refresh from ReactPortfolio verified in production on 2026-10-18"
+          ]
+        }
+      ],
       "credentials": [],
       "transport": "public official school careers HTML linking canonical TES vacancies over HTTPS",
       "external_identity": "canonical TES vacancy numeric id and URL",
       "deduplication": "Core upserts the native source id and canonical URL through the shared offer sink, then projects the persisted vacancy to the school monitor.",
-      "last_success": [],
+      "last_success": [
+        {
+          "product": "core",
+          "at": "2026-10-18T16:05:34.790886+00:00",
+          "evidence": "ReactPortfolio dispatched VIS only through Core; the resulting production run completed ok with zero consecutive failures"
+        }
+      ],
       "production_metrics": {
-        "stored_entries": 0,
-        "active_entries": 0,
+        "stored_entries": 3,
+        "active_entries": 3,
         "marked_duplicate": 0,
         "duplicate_fuzzy_hashes": 0,
-        "evidence": "Parser fixtures and integrated sink/projection tests passed; production scope is intentionally absent until P4."
+        "evidence": "Read-only production query after the successful 2026-10-18 VIS run; last_seen_at equals 2026-10-18T16:05:34.790886+00:00."
       },
       "core_adapter": true,
-      "core_scope_ids": [],
-      "blocker": "P4 deployment and scope provisioning pending",
+      "core_scope_ids": [
+        "777ec0f4-da00-5ad0-9c05-9966862f53a4"
+      ],
+      "blocker": null,
       "inventory_verified": true,
-      "state": "core_shadow",
+      "state": "local_removed",
       "target_owner": "core",
-      "active_publishers": [],
+      "active_publishers": [
+        "core"
+      ],
       "swissjob_module": false,
       "swissjob_registry": false,
-      "evidence": "The official VIS careers page and TES link identity were verified on 2026-10-16; Core implementation is committed as 1736dd6 but is not yet deployed."
+      "evidence": "Core acf48b2 is the sole live publisher; scope, successful state and three active entries were verified read-only after ReactPortfolio 5492147 dispatched the refresh exclusively to core-api."
     },
     {
       "name": "swiss_schools_zis",
