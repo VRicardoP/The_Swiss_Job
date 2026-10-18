@@ -224,7 +224,8 @@ def discover_portfolio_known_sources(root: Path) -> set[str]:
                 for item in node.value.slice.elts
                 if isinstance(item, ast.Constant) and isinstance(item.value, str)
             }
-    raise ValueError(f"HarvestSource literal not found in {path}")
+    # No local source registry is the expected steady state after cutover.
+    return set()
 
 
 def _compare(
@@ -419,6 +420,7 @@ def validate(manifest: dict, portfolio_root: Path | None) -> list[str]:
             source["reactportfolio_source_name"]
             for source in sources
             if source.get("reactportfolio_source_name")
+            and "reactportfolio" in source.get("active_publishers", [])
         }
         _compare(
             "ReactPortfolio known sources",
