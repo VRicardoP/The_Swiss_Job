@@ -18,8 +18,8 @@
 
 ## DT-147 · Cadencia de cosecha escalonada y carga del NAS
 
-**Estado: IMPLEMENTACIÓN LOCAL COMPLETA Y VALIDADA — publicación y despliegue
-pendientes; no se construyó ninguna imagen antes de cerrar todo el código.**
+**Estado: IMPLEMENTACIÓN PUBLICADA EN RAMA Y CI VERDE — fusión y despliegue
+bloqueados únicamente por el pull request obligatorio de la rama protegida.**
 
 La medición de producción del 2026-10-19 comprobó 40 fuentes y 50 scopes
 habilitados, todos despachados cuatro veces al día. Sobre los tres días
@@ -69,11 +69,21 @@ minutos. JSearch queda fuera de este punto y continúa bloqueado por DT-146.
   1.767 verdes y 6 fallos ambientales porque sus subprocesos tomaron el Alembic
   global sin `psycopg2`; repetidas sólo esas seis con el PATH del venv, dieron
   6/6 verdes. Cobertura efectiva final: 1.773 pruebas superadas.
+- [x] **DT147-6 · Publicación segura:** commit `ac6a0ff`, rama
+  `feat/tiered-harvest-cadence`, GitHub CI #218 `success` en sus nueve jobs.
+  `main` sigue en `dea7d34`: su protección rechazó correctamente el push
+  directo y exige PR. No se construyó imagen ni se tocó el NAS.
+- [ ] **DT147-7 · Operación:** crear y fusionar el PR obligatorio, comprobar el
+  CI del SHA fusionado, ejecutar `scripts/deploy_nas.sh core`, verificar
+  `ready`/release/los cuatro contenedores y observar el primer despacho de cada
+  cadencia antes de atribuir ahorro real.
 
-**Reanudación exacta:** rama local `feat/tiered-harvest-cadence`, worktree
-`/tmp/swissjob-harvest-cadence`, base `dea7d34`. Código, documentación y
-validación están completos; el siguiente paso permitido es versionar, publicar,
-esperar el CI y sólo entonces construir/desplegar Core y ejecutar sondas.
+**Reanudación exacta:** abrir
+`https://github.com/VRicardoP/The_Swiss_Job/compare/main...feat/tiered-harvest-cadence?expand=1`,
+fusionar sólo con checks verdes y recrear un worktree limpio desde el nuevo
+`github/main`. El despliegue falla cerrado si HEAD no coincide con ese SHA. Al
+terminar DT147-7, registrar aquí release, sondas, primer ciclo y limpieza de la
+imagen Core anterior.
 
 ## DT-146 · Reactivación de JSearch dentro de la cuota gratuita
 
