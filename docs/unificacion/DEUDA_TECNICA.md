@@ -73,17 +73,20 @@ minutos. JSearch queda fuera de este punto y continúa bloqueado por DT-146.
   `53ec655` conserva el checkpoint; PR #22 fusionado en `c990131`. CI #218, el
   CI del PR y el CI de `main` #39231720242 terminaron `success` en sus nueve
   jobs. La rama `feat/tiered-harvest-cadence` y su worktree temporal se
-  eliminaron después de verificar que `53ec655` es ancestro del merge.
+  eliminaron después de verificar que `53ec655` es ancestro del merge. El
+  recibo de producción `a1ec554` pasó después CI #39262281353: 9/9 jobs verdes.
 - [x] **DT147-7 · Despliegue y sondas inmediatas:** imagen
   `swissjob-core:point5-c990131` desplegada conjuntamente en API y tres workers.
   `ready`, autoritativo, Alembic `core0055`; Celery 3/3 nodos; 50/50 scopes con
   estado y cero alertas; selección efectiva 12/9/29 y JSearch con cadencia nula;
   SwissJob y ReactPortfolio responden 200. La imagen anterior `acf48b2` (1,58
   GB) y el archivo temporal se eliminaron tras comprobar cero referencias.
-- [ ] **DT147-8 · Observación natural:** comprobar los primeros despachos de
-  6/12/24 h y repetir durante una ventana comparable la medida de ejecuciones y
-  ocupación. No se fuerza ahora una ronda de 50 scopes: sería carga superflua y
-  contaminaría precisamente la medición que se pretende validar.
+- [ ] **DT147-8 · Observación natural:** primer ciclo de 6 h confirmado el
+  2026-10-19 a las 13:30 Europe/Zurich: 12 scopes despachados, 12 `ok`, 915
+  ofertas leídas en 25 páginas, cero errores y unos 4 min 30 s de ejecución
+  secuencial. Faltan los primeros ciclos de 12/24 h y repetir durante una ventana
+  comparable la medida de ejecuciones y ocupación. No se fuerza una ronda de 50
+  scopes: sería carga superflua y contaminaría la medición que se pretende validar.
 
 El primer intento de despliegue abortó antes de construir o tocar el NAS porque
 el worktree limpio no tenía las dos variables que Compose exige para resolver
@@ -92,9 +95,9 @@ secretos productivos no se leyeron ni entraron en la imagen. La sonda posterior
 confirmó los horarios efectivos 01:30/07:30/13:30/19:30, 09:30/21:30 y 23:30.
 
 **Reanudación exacta:** release viva `c990131`; observar en los logs y en
-`source_harvest_runs` el primer ciclo de cada grupo desde 2026-10-19 13:30,
-21:30 y 23:30 Europe/Zurich. Comparar después tres días completos con la línea
-base 16–18 de octubre; sólo entonces cerrar DT147-8 y declarar ahorro medido.
+`source_harvest_runs` los primeros ciclos pendientes de 12/24 h a las 21:30 y
+23:30 Europe/Zurich. Comparar después tres días completos con la línea base
+16–18 de octubre; sólo entonces cerrar DT147-8 y declarar ahorro medido.
 
 ## DT-146 · Reactivación de JSearch dentro de la cuota gratuita
 
