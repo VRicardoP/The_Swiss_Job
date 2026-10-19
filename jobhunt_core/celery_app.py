@@ -115,11 +115,20 @@ celery_app.conf.update(
     task_time_limit=2100,
     # El beat va embebido en core-ops-worker para sobrevivir a recreates.
     beat_schedule={
-        "harvest-dispatch-native": {
+        "harvest-dispatch-native-6h": {
             "task": "jobhunt.harvest.dispatch_native",
-            # Existing R5 cadence, not an increase in portal traffic. All
-            # native scopes remain disabled until their individual handover.
-            "schedule": crontab(hour="0,6,12,18", minute=10),
+            "schedule": crontab(hour="1,7,13,19", minute=30),
+            "kwargs": {"cadence_hours": 6},
+        },
+        "harvest-dispatch-native-12h": {
+            "task": "jobhunt.harvest.dispatch_native",
+            "schedule": crontab(hour="9,21", minute=30),
+            "kwargs": {"cadence_hours": 12},
+        },
+        "harvest-dispatch-native-24h": {
+            "task": "jobhunt.harvest.dispatch_native",
+            "schedule": crontab(hour=23, minute=30),
+            "kwargs": {"cadence_hours": 24},
         },
         "delivery-check-health": {
             "task": "jobhunt.delivery.check_health",

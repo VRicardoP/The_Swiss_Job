@@ -16,6 +16,75 @@
 > canónicas por un campo que hoy consume una sola búsqueda semanal); lo nuevo sí
 > lo lleva.
 
+## DT-147 · Cadencia de cosecha escalonada y carga del NAS
+
+**Estado: IMPLEMENTACIÓN PUBLICADA EN RAMA Y CI VERDE — fusión y despliegue
+bloqueados únicamente por el pull request obligatorio de la rama protegida.**
+
+La medición de producción del 2026-10-19 comprobó 40 fuentes y 50 scopes
+habilitados, todos despachados cuatro veces al día. Sobre los tres días
+estabilizados del 16 al 18 de octubre, eso representa 200 ejecuciones y unas
+3,77 horas diarias de ocupación del worker de cosecha. La cadencia uniforme no
+se justifica: unas fuentes aportan cientos de ofertas diarias y otras pasan días
+sin novedades; además, el coste por barrido varía entre segundos y varios
+minutos. JSearch queda fuera de este punto y continúa bloqueado por DT-146.
+
+### Objetivo y condiciones obligatorias
+
+- **6 horas:** `jobgether`, `himalayas`, `jobicy`, `jobscout24`, `jobroom`.
+- **12 horas:** `arbeitnow`, `ostjob`, `financejobs`, `irishjobs`,
+  `nav_arbeidsplassen`, `publicjobs`, `schuljobs`, `weworkremotely`.
+- **24 horas:** las otras 27 fuentes activas; toda fuente futura empieza en
+  esta cadencia segura hasta que exista evidencia para promoverla.
+- Horarios Europe/Zurich: 01:30/07:30/13:30/19:30, 09:30/21:30 y 23:30,
+  respectivamente. Evitan el backup de las 02:20 y el mantenimiento
+  05:20–06:40.
+- Cada ejecución conserva el barrido completo del adaptador. No se introducen
+  lecturas parciales inseguras en fuentes con paginación mutable.
+- Tras dos fallos consecutivos, el siguiente intento espera 12 horas; tras
+  tres, 24 horas; desde cuatro, 48 horas. La exclusión y el fencing existentes
+  por scope se conservan.
+- Estimación reproducible con las duraciones observadas: 95 ejecuciones y 1,79
+  horas de worker al día, reducción del 52,5 %. No se declarará ahorro de CPU
+  causal hasta repetir el mismo protocolo tras el despliegue.
+
+### Progreso verificable
+
+- [x] **DT147-1 · Línea base y clasificación:** medidas en la base viva sin
+  leer contenido de ofertas; grupos, horarios, exclusiones y criterio de
+  ahorro fijados arriba.
+- [x] **DT147-2 · Despacho por cadencia:** `celery_app.py` programa los tres
+  horarios y `tasks/harvest.py` selecciona 6/12/24 h, usa ventanas y claves
+  idempotentes que incluyen la cadencia y asigna toda fuente nueva a 24 h.
+- [x] **DT147-3 · Fallos y cuota:** `tasks/harvest.py` calcula 12/24/48 h desde
+  los fallos consecutivos y el último intento; `jsearch` devuelve cadencia nula
+  y queda fuera del despachador general aunque su scope se habilite por error.
+- [x] **DT147-4 · Regresiones escritas, aún no ejecutadas:**
+  `test_native_harvest_dispatch.py` cubre horarios, grupos, fallback, JSearch,
+  claves y reintentos; `test_native_harvest_window.py` cubre ventanas y backoff
+  contra PostgreSQL. Se respeta la orden de reservar toda ejecución al final.
+- [x] **DT147-5 · Validación final:** Ruff 0.15.14 deja 371 ficheros limpios;
+  propiedad de fuentes `core_owned=41/local_pending=0`; secretos 0; diff sin
+  errores; 7 regresiones unitarias y 4 PostgreSQL verdes. La suite completa dio
+  1.767 verdes y 6 fallos ambientales porque sus subprocesos tomaron el Alembic
+  global sin `psycopg2`; repetidas sólo esas seis con el PATH del venv, dieron
+  6/6 verdes. Cobertura efectiva final: 1.773 pruebas superadas.
+- [x] **DT147-6 · Publicación segura:** commit `ac6a0ff`, rama
+  `feat/tiered-harvest-cadence`, GitHub CI #218 `success` en sus nueve jobs.
+  `main` sigue en `dea7d34`: su protección rechazó correctamente el push
+  directo y exige PR. No se construyó imagen ni se tocó el NAS.
+- [ ] **DT147-7 · Operación:** crear y fusionar el PR obligatorio, comprobar el
+  CI del SHA fusionado, ejecutar `scripts/deploy_nas.sh core`, verificar
+  `ready`/release/los cuatro contenedores y observar el primer despacho de cada
+  cadencia antes de atribuir ahorro real.
+
+**Reanudación exacta:** abrir
+`https://github.com/VRicardoP/The_Swiss_Job/compare/main...feat/tiered-harvest-cadence?expand=1`,
+fusionar sólo con checks verdes y recrear un worktree limpio desde el nuevo
+`github/main`. El despliegue falla cerrado si HEAD no coincide con ese SHA. Al
+terminar DT147-7, registrar aquí release, sondas, primer ciclo y limpieza de la
+imagen Core anterior.
+
 ## DT-146 · Reactivación de JSearch dentro de la cuota gratuita
 
 **Estado: ABIERTO — JSearch permanece deshabilitado y no debe ejecutarse antes
