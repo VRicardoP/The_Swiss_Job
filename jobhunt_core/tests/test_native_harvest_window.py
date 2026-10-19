@@ -1,12 +1,14 @@
 """A duplicate dispatch must not repeat an already completed public fetch."""
 
 import asyncio
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import sqlalchemy as sa
 
+from jobhunt_core import runs
 from jobhunt_core.harvest.provider import BaseProvider
 from jobhunt_core.harvest.types import FetchResult
 from jobhunt_core.tasks import harvest
@@ -42,7 +44,7 @@ def test_same_window_only_fetches_once_and_disabled_scope_is_not_dispatched(
                 {"sid": disabled},
             )
             await s.commit()
-        selected = await harvest._enabled_native_scope_ids()
+        selected = await harvest._enabled_native_scope_ids(12)
         assert str(enabled) in selected and str(disabled) not in selected
         try:
             first = await harvest._run_scope_impl(
@@ -88,9 +90,9 @@ class _RelojFijo:
         return self._momento.astimezone(tz) if tz else self._momento
 
 
-def _ventana_a(momento, monkeypatch) -> str:
+def _ventana_a(momento, monkeypatch, cadence_hours=6) -> str:
     monkeypatch.setattr(harvest, "datetime", _RelojFijo(momento))
-    return harvest.current_window()
+    return harvest.current_window(cadence_hours)
 
 
 def test_la_ventana_se_ancla_al_slot_de_zurich_no_al_de_utc(monkeypatch):
@@ -121,3 +123,64 @@ def test_la_ventana_se_ancla_al_slot_de_zurich_no_al_de_utc(monkeypatch):
     # a las 22:30 UTC. Anclado en UTC la etiqueta sería la de las 18:00 del 14.
     medianoche = _ventana_a(datetime(2026, 7, 16, 0, 30, tzinfo=zurich), monkeypatch)
     assert medianoche.startswith("2026-07-16T00:00:00")
+
+
+def test_each_cadence_uses_its_own_idempotency_window(monkeypatch):
+    zurich = ZoneInfo("Europe/Zurich")
+    moment = datetime(2026, 7, 15, 13, 30, tzinfo=zurich)
+    assert _ventana_a(moment, monkeypatch, 6).startswith("2026-07-15T12:00:00")
+    assert _ventana_a(moment, monkeypatch, 12).startswith("2026-07-15T12:00:00")
+    assert _ventana_a(moment, monkeypatch, 24).startswith("2026-07-15T00:00:00")
+
+
+def test_failed_scope_waits_until_its_backoff_has_elapsed(
+    db,  # noqa: F811  (la fixture, no una redefinición)
+    monkeypatch,
+):
+    factory, created = db
+    (scope_id,) = _seed_scopes(factory, created, n=1)
+
+    @asynccontextmanager
+    async def sessions():
+        yield factory
+
+    monkeypatch.setattr(harvest, "task_session_factory", sessions)
+
+    async def check():
+        async with factory() as session:
+            run_id = await runs.start_run(session, f"backoff-{uuid.uuid4()}")
+            created["runs"].append(run_id)
+            await session.execute(
+                sa.text(
+                    "INSERT INTO source_scope_state "
+                    "(scope_id, consecutive_failures) VALUES (:sid, 2)"
+                ),
+                {"sid": scope_id},
+            )
+            await session.execute(
+                sa.text(
+                    "INSERT INTO source_harvest_runs "
+                    "(run_id, scope_id, started_at, status) "
+                    "VALUES (:rid, :sid, clock_timestamp() - interval '11 hours', "
+                    "'error')"
+                ),
+                {"rid": run_id, "sid": scope_id},
+            )
+            await session.commit()
+
+        assert str(scope_id) not in await harvest._enabled_native_scope_ids(12)
+
+        async with factory() as session:
+            await session.execute(
+                sa.text(
+                    "UPDATE source_harvest_runs "
+                    "SET started_at = clock_timestamp() - interval '13 hours' "
+                    "WHERE run_id=:rid AND scope_id=:sid"
+                ),
+                {"rid": run_id, "sid": scope_id},
+            )
+            await session.commit()
+
+        assert str(scope_id) in await harvest._enabled_native_scope_ids(12)
+
+    asyncio.run(check())

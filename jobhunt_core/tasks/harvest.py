@@ -26,6 +26,24 @@ from jobhunt_core.harvest.types import ScopeRunResult
 
 logger = logging.getLogger(__name__)
 
+HARVEST_CADENCES = (6, 12, 24)
+SIX_HOUR_SOURCES = frozenset(
+    {"jobgether", "himalayas", "jobicy", "jobscout24", "jobroom"}
+)
+TWELVE_HOUR_SOURCES = frozenset(
+    {
+        "arbeitnow",
+        "ostjob",
+        "financejobs",
+        "irishjobs",
+        "nav_arbeidsplassen",
+        "publicjobs",
+        "schuljobs",
+        "weworkremotely",
+    }
+)
+AUTOMATIC_HARVEST_EXCLUSIONS = frozenset({"jsearch"})
+
 
 @celery_app.task(name="jobhunt.harvest.run_scope", bind=True, max_retries=1)
 def run_scope_task(
@@ -207,26 +225,67 @@ def _describe_scope_failure(exc: Exception) -> str:
     return str(exc)
 
 
-def current_window() -> str:
-    """Etiqueta del slot de 6 h en curso, en la zona que decide el disparo.
+def source_cadence_hours(source_name: str) -> int | None:
+    """Cadencia automática de una fuente; las nuevas empiezan a 24 h."""
+    normalized = source_name.casefold()
+    if normalized in AUTOMATIC_HARVEST_EXCLUSIONS:
+        return None
+    if normalized in SIX_HOUR_SOURCES:
+        return 6
+    if normalized in TWELVE_HOUR_SOURCES:
+        return 12
+    return 24
+
+
+def failure_backoff_hours(consecutive_failures: int) -> int:
+    """Descanso progresivo de un scope averiado; cero mantiene su cadencia."""
+    if consecutive_failures < 2:
+        return 0
+    if consecutive_failures == 2:
+        return 12
+    if consecutive_failures == 3:
+        return 24
+    return 48
+
+
+def backoff_elapsed(
+    consecutive_failures: int, seconds_since_attempt: float | None
+) -> bool:
+    delay = failure_backoff_hours(consecutive_failures)
+    return (
+        delay == 0
+        or seconds_since_attempt is None
+        or seconds_since_attempt >= delay * 3600
+    )
+
+
+def current_window(cadence_hours: int) -> str:
+    """Etiqueta del slot en curso, en la zona que decide el disparo.
 
     H8/T11: se truncaba en UTC, pero el beat dispara en Europe/Zurich (crontab
-    0,6,12,18). Con el desfase estacional la etiqueta no correspondía al
-    disparo, y en el cambio de hora dos disparos distintos podían caer en la
-    misma ventana —o saltarse una—. Se ancla a la MISMA zona que el crontab.
+    local). Con el desfase estacional la etiqueta no correspondía al disparo,
+    y en el cambio de hora dos disparos distintos podían caer en la misma
+    ventana —o saltarse una—. Se ancla a la MISMA zona que el crontab.
 
-    La etiqueta es la clave de idempotencia del run (`native:<window>:<scope>`),
-    así que dos disparos dentro del mismo slot DEBEN producir la misma cadena.
+    La cadencia forma parte de la clave para que reclasificar una fuente no
+    colisione con una ventana anterior.
     """
+    if cadence_hours not in HARVEST_CADENCES:
+        raise ValueError(f"cadencia de cosecha no válida: {cadence_hours}")
     zurich = datetime.now(ZoneInfo("Europe/Zurich"))
     return zurich.replace(
-        hour=(zurich.hour // 6) * 6, minute=0, second=0, microsecond=0
+        hour=(zurich.hour // cadence_hours) * cadence_hours,
+        minute=0,
+        second=0,
+        microsecond=0,
     ).isoformat()
 
 
 @celery_app.task(name="jobhunt.harvest.dispatch_native", bind=True, max_retries=2)
-def dispatch_native_task(self, window: str | None = None) -> dict[str, Any]:
-    """Dispatch bounded work per enabled scope, preserving the six-hour cadence.
+def dispatch_native_task(
+    self, cadence_hours: int, window: str | None = None
+) -> dict[str, Any]:
+    """Dispatch bounded work for the requested source cadence.
 
     The dispatcher performs no external fetch. A broker failure can re-send
     earlier scopes: stable per-window/per-scope run keys absorb completed work.
@@ -234,35 +293,61 @@ def dispatch_native_task(self, window: str | None = None) -> dict[str, Any]:
     is rechecked by the worker; deploying this task does not enable any source.
     """
     if window is None:
-        window = current_window()
+        window = current_window(cadence_hours)
     try:
-        scope_ids = asyncio.run(_enabled_native_scope_ids())
+        scope_ids = asyncio.run(_enabled_native_scope_ids(cadence_hours))
         for scope_id in scope_ids:
             run_scope_task.apply_async(
-                kwargs={"scope_id": scope_id, "run_key": f"native:{window}:{scope_id}"},
+                kwargs={
+                    "scope_id": scope_id,
+                    "run_key": f"native:{cadence_hours}h:{window}:{scope_id}",
+                },
                 expires=21600,
             )
     except Exception as exc:
-        raise self.retry(exc=exc, countdown=120, kwargs={"window": window})
-    return {"window": window, "dispatched": len(scope_ids)}
+        raise self.retry(
+            exc=exc,
+            countdown=120,
+            kwargs={"cadence_hours": cadence_hours, "window": window},
+        )
+    return {
+        "cadence_hours": cadence_hours,
+        "window": window,
+        "dispatched": len(scope_ids),
+    }
 
 
-async def _enabled_native_scope_ids() -> list[str]:
+async def _enabled_native_scope_ids(cadence_hours: int) -> list[str]:
+    if cadence_hours not in HARVEST_CADENCES:
+        raise ValueError(f"cadencia de cosecha no válida: {cadence_hours}")
     async with task_session_factory() as factory:
         async with factory() as session:
             # Do not silently filter unregistered sources: they must produce
             # their explicit configuration error, visible to health monitoring.
             return [
-                str(sid)
-                for sid in (
+                str(row.id)
+                for row in (
                     await session.execute(
                         sa.text(
-                            "SELECT id FROM harvest_scopes WHERE enabled ORDER BY id"
+                            "SELECT hs.id, s.name, "
+                            "COALESCE(sss.consecutive_failures, 0) "
+                            "  AS consecutive_failures, "
+                            "EXTRACT(EPOCH FROM (clock_timestamp() - "
+                            "  latest.last_attempt_at)) AS seconds_since_attempt "
+                            "FROM harvest_scopes hs "
+                            "JOIN sources s ON s.id = hs.source_id "
+                            "LEFT JOIN source_scope_state sss "
+                            "  ON sss.scope_id = hs.id "
+                            "LEFT JOIN ("
+                            "  SELECT scope_id, MAX(started_at) AS last_attempt_at "
+                            "  FROM source_harvest_runs GROUP BY scope_id"
+                            ") latest ON latest.scope_id = hs.id "
+                            "WHERE hs.enabled ORDER BY hs.id"
                         )
                     )
-                )
-                .scalars()
-                .all()
+                ).all()
+                if source_cadence_hours(row.name) == cadence_hours
+                and backoff_elapsed(row.consecutive_failures, row.seconds_since_attempt)
             ]
 
 
