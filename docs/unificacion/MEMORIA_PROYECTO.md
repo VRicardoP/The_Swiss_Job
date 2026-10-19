@@ -1,6 +1,6 @@
 # Memoria del proyecto JobHunting
 
-Última reconciliación documental: **2026-10-18**.
+Última reconciliación documental: **2026-10-19**.
 
 Esta es la memoria vigente del sistema formado por SwissJob, jobhunt-core y
 ReactPortfolio. Resume estado, autoridades y trabajo pendiente. Los contratos y
@@ -27,11 +27,11 @@ sus interfaces, autenticación y responsabilidades propias de BFF.
 
 ## Estado vivo comprobado
 
-Sondas finales ejecutadas el 2026-10-18:
+Sondas finales ejecutadas el 2026-10-19:
 
 | Pieza | Release/imagen viva | Resultado |
 |---|---|---|
-| Core API y tres workers | swissjob-core:point5-acf48b2 | ready, authoritative, Alembic core0055; 50/50 scopes con estado, cero alertas |
+| Core API y tres workers | swissjob-core:point5-c990131 | ready, authoritative, Alembic core0055; 50/50 scopes con estado, cero alertas |
 | SwissJob BFF/worker | swissjob-backend:point5-acf48b2 | healthy/Celery pong; misma imagen inmutable; cero productores locales |
 | SwissJob frontend | swissjob-frontend:point5-acf48b2 | healthy; categorías canónicas y tarjetas con contenido |
 | Portfolio API/worker | portfolio-backend:board-5492147 | healthy; seis capacidades `core_primary`; cero productores locales |
@@ -41,6 +41,11 @@ Core tiene delivery drenado, cero dead/pending/inflight, staging cero y slot de
 captura ausente. SwissJob y Portfolio tienen cero módulos productores,
 credenciales de portal y conexiones directas. JSearch conserva un único scope
 manualmente deshabilitado y cero ejecuciones desde la dispensa.
+
+La cosecha Core usa cadencias escalonadas: 12 scopes cada 6 horas, 9 cada 12 y
+29 cada 24; JSearch queda fuera. La reducción estimada es del 52,5 % frente al
+despacho uniforme anterior y no se declara todavía como ahorro medido: queda
+observar tres días completos con el nuevo calendario.
 
 ## Optimización cerrada
 

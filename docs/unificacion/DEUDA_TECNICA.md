@@ -18,8 +18,8 @@
 
 ## DT-147 · Cadencia de cosecha escalonada y carga del NAS
 
-**Estado: IMPLEMENTACIÓN PUBLICADA EN RAMA Y CI VERDE — fusión y despliegue
-bloqueados únicamente por el pull request obligatorio de la rama protegida.**
+**Estado: DESPLEGADO Y SONDEADO — pendiente únicamente observar los primeros
+ciclos naturales antes de cerrar la medida operativa.**
 
 La medición de producción del 2026-10-19 comprobó 40 fuentes y 50 scopes
 habilitados, todos despachados cuatro veces al día. Sobre los tres días
@@ -69,21 +69,35 @@ minutos. JSearch queda fuera de este punto y continúa bloqueado por DT-146.
   1.767 verdes y 6 fallos ambientales porque sus subprocesos tomaron el Alembic
   global sin `psycopg2`; repetidas sólo esas seis con el PATH del venv, dieron
   6/6 verdes. Cobertura efectiva final: 1.773 pruebas superadas.
-- [x] **DT147-6 · Publicación segura:** commit `ac6a0ff`, rama
-  `feat/tiered-harvest-cadence`, GitHub CI #218 `success` en sus nueve jobs.
-  `main` sigue en `dea7d34`: su protección rechazó correctamente el push
-  directo y exige PR. No se construyó imagen ni se tocó el NAS.
-- [ ] **DT147-7 · Operación:** crear y fusionar el PR obligatorio, comprobar el
-  CI del SHA fusionado, ejecutar `scripts/deploy_nas.sh core`, verificar
-  `ready`/release/los cuatro contenedores y observar el primer despacho de cada
-  cadencia antes de atribuir ahorro real.
+- [x] **DT147-6 · Publicación segura:** `ac6a0ff` implementa el cambio y
+  `53ec655` conserva el checkpoint; PR #22 fusionado en `c990131`. CI #218, el
+  CI del PR y el CI de `main` #39231720242 terminaron `success` en sus nueve
+  jobs. La rama `feat/tiered-harvest-cadence` y su worktree temporal se
+  eliminaron después de verificar que `53ec655` es ancestro del merge. El
+  recibo de producción `a1ec554` pasó después CI #39262281353: 9/9 jobs verdes.
+- [x] **DT147-7 · Despliegue y sondas inmediatas:** imagen
+  `swissjob-core:point5-c990131` desplegada conjuntamente en API y tres workers.
+  `ready`, autoritativo, Alembic `core0055`; Celery 3/3 nodos; 50/50 scopes con
+  estado y cero alertas; selección efectiva 12/9/29 y JSearch con cadencia nula;
+  SwissJob y ReactPortfolio responden 200. La imagen anterior `acf48b2` (1,58
+  GB) y el archivo temporal se eliminaron tras comprobar cero referencias.
+- [ ] **DT147-8 · Observación natural:** primer ciclo de 6 h confirmado el
+  2026-10-19 a las 13:30 Europe/Zurich: 12 scopes despachados, 12 `ok`, 915
+  ofertas leídas en 25 páginas, cero errores y unos 4 min 30 s de ejecución
+  secuencial. Faltan los primeros ciclos de 12/24 h y repetir durante una ventana
+  comparable la medida de ejecuciones y ocupación. No se fuerza una ronda de 50
+  scopes: sería carga superflua y contaminaría la medición que se pretende validar.
 
-**Reanudación exacta:** abrir
-`https://github.com/VRicardoP/The_Swiss_Job/compare/main...feat/tiered-harvest-cadence?expand=1`,
-fusionar sólo con checks verdes y recrear un worktree limpio desde el nuevo
-`github/main`. El despliegue falla cerrado si HEAD no coincide con ese SHA. Al
-terminar DT147-7, registrar aquí release, sondas, primer ciclo y limpieza de la
-imagen Core anterior.
+El primer intento de despliegue abortó antes de construir o tocar el NAS porque
+el worktree limpio no tenía las dos variables que Compose exige para resolver
+el modelo. El segundo usó valores de interpolación exclusivos del build; los
+secretos productivos no se leyeron ni entraron en la imagen. La sonda posterior
+confirmó los horarios efectivos 01:30/07:30/13:30/19:30, 09:30/21:30 y 23:30.
+
+**Reanudación exacta:** release viva `c990131`; observar en los logs y en
+`source_harvest_runs` los primeros ciclos pendientes de 12/24 h a las 21:30 y
+23:30 Europe/Zurich. Comparar después tres días completos con la línea base
+16–18 de octubre; sólo entonces cerrar DT147-8 y declarar ahorro medido.
 
 ## DT-146 · Reactivación de JSearch dentro de la cuota gratuita
 

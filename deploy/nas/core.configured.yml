@@ -1,29 +1,12 @@
 # Topología REAL de producción en el NAS — core.configured.yml
-# T13 §7 / A19-04. Copia literal de /share/CACHEDEV1_DATA/Public/unification-e15-20260914/core.configured.yml,
-# con los valores sensibles sustituidos por ${VARIABLE} (6). Verificado sin secretos por
-# scripts/check_no_secrets.py (también en CI). Refrescado el 2026-09-28 tras aplicar
-# healthchecks a 60 s y límites de memoria (A19-25, A19-11).
+# Copia semántica de /share/CACHEDEV1_DATA/Public/unification-e15-20260914/core.configured.yml,
+# con 8 valores sensibles sustituidos por marcadores.
+# Refrescado el 2026-10-19 tras desplegar y sondear DT-147 en c990131.
+name: unification-e15-20260914
 services:
   core-api:
-    image: swissjob-core:point5-254e826
-    mem_limit: 512m
-    container_name: swissjob-core-api-r5
-    environment:
-      CORE_DATABASE_URL: ${CORE_DATABASE_URL}
-      CORE_ENV: prod
-      CORE_BROKER_URL: ${CORE_BROKER_URL}
-      CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
-      CORE_JSEARCH_RAPIDAPI_KEY: ${CORE_JSEARCH_RAPIDAPI_KEY}
-      PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-      LANG: C.UTF-8
-      GPG_KEY: ${GPG_KEY}
-      PYTHON_VERSION: 3.12.14
-      PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
-      PYTHONDONTWRITEBYTECODE: '1'
-      HF_HOME: /tmp/hf-cache
-      CORE_SAVED_SEARCH_EXECUTION_ENABLED: 'true'
     restart: unless-stopped
-    entrypoint: null
+    container_name: swissjob-core-api-r5
     command:
     - uvicorn
     - jobhunt_core.api.main:app
@@ -31,8 +14,26 @@ services:
     - 0.0.0.0
     - --port
     - '8000'
-    working_dir: /app
-    user: core
+    environment:
+      CORE_BROKER_URL: ${CORE_BROKER_URL}
+      CORE_DATABASE_URL: ${CORE_DATABASE_URL}
+      CORE_ENV: prod
+      CORE_JSEARCH_RAPIDAPI_KEY: ${CORE_JSEARCH_RAPIDAPI_KEY}
+      CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
+      CORE_SAVED_SEARCH_EXECUTION_ENABLED: 'true'
+      GPG_KEY: ${GPG_KEY}
+      LANG: C.UTF-8
+      PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
+      PYTHON_VERSION: 3.12.14
+      PYTHONDONTWRITEBYTECODE: '1'
+    image: swissjob-core:point5-c990131
+    logging:
+      driver: json-file
+      options:
+        max-file: '10'
+        max-size: 10m
+    mem_limit: '536870912'
     networks:
       swissjob-r5_core-net:
         aliases:
@@ -42,8 +43,13 @@ services:
         aliases:
         - swissjob-core-api-r5
         - core-api
-    volumes: []
-    shm_size: 67108864
+    shm_size: '67108864'
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    user: core
+    working_dir: /app
     healthcheck:
       test:
       - CMD
@@ -51,102 +57,13 @@ services:
       - -c
       - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/ready',
         timeout=5)
-      interval: 30000000000ns
-      timeout: 10000000000ns
-      start_period: 30000000000ns
+      timeout: 10s
+      interval: 30s
       retries: 3
-    logging:
-      driver: json-file
-      options:
-        max-file: '10'
-        max-size: 10m
-    ulimits:
-      nofile:
-        soft: 65535
-        hard: 65535
-  core-worker:
-    image: swissjob-core:point5-254e826
-    mem_limit: 2g
-    container_name: swissjob-core-worker-r5
-    environment:
-      CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8000/api/v1/integration/inbox",
-        "swissjob-shadow": "http://swissjob-backend:8000/api/v1/integration/events"}'
-      CORE_ENV: prod
-      CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
-      CORE_DELIVERY_HTTP_TOKEN: ${CORE_DELIVERY_HTTP_TOKEN}
-      CORE_DATABASE_URL: ${CORE_DATABASE_URL}
-      CORE_BROKER_URL: ${CORE_BROKER_URL}
-      PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-      LANG: C.UTF-8
-      GPG_KEY: ${GPG_KEY}
-      PYTHON_VERSION: 3.12.14
-      PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
-      PYTHONDONTWRITEBYTECODE: '1'
-      HF_HOME: /tmp/hf-cache
-      CORE_SAVED_SEARCH_EXECUTION_ENABLED: 'true'
-    restart: unless-stopped
-    entrypoint: null
-    command:
-    - celery
-    - -A
-    - jobhunt_core.celery_app
-    - worker
-    - -l
-    - info
-    - -Q
-    - core.embedding,core.matching
-    - --concurrency=1
-    working_dir: /app
-    user: core
-    networks:
-      swissjob-r5_core-net:
-        aliases:
-        - swissjob-core-worker-r5
-        - core-worker
-      swissjob_swissjob-net:
-        aliases:
-        - swissjob-core-worker-r5
-        - core-worker
-    volumes:
-    - type: volume
-      source: swissjob-r5_core-hf-cache
-      target: /tmp/hf-cache
-      read_only: false
-    shm_size: 67108864
-    logging:
-      driver: json-file
-      options:
-        max-file: '10'
-        max-size: 10m
-    ulimits:
-      nofile:
-        soft: 65535
-        hard: 65535
+      start_period: 30s
   core-harvest-worker:
-    image: swissjob-core:point5-254e826
-    mem_limit: 768m
-    container_name: swissjob-core-harvest-worker-r5
-    environment:
-      CORE_ADZUNA_APP_ID: ${CORE_ADZUNA_APP_ID}
-      CORE_ADZUNA_APP_KEY: ${CORE_ADZUNA_APP_KEY}
-      CORE_JSEARCH_RAPIDAPI_KEY: ${CORE_JSEARCH_RAPIDAPI_KEY}
-      CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8000/api/v1/integration/inbox",
-        "swissjob-shadow": "http://swissjob-backend:8000/api/v1/integration/events"}'
-      CORE_ENV: prod
-      CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
-      CORE_DELIVERY_HTTP_TOKEN: ${CORE_DELIVERY_HTTP_TOKEN}
-      CORE_DATABASE_URL: ${CORE_DATABASE_URL}
-      CORE_BROKER_URL: ${CORE_BROKER_URL}
-      PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-      LANG: C.UTF-8
-      GPG_KEY: ${GPG_KEY}
-      PYTHON_VERSION: 3.12.14
-      PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
-      PYTHONDONTWRITEBYTECODE: '1'
-      HF_HOME: /tmp/hf-cache
-      CORE_SAVED_SEARCH_EXECUTION_ENABLED: 'true'
     restart: unless-stopped
-    entrypoint: null
+    container_name: swissjob-core-harvest-worker-r5
     command:
     - celery
     - -A
@@ -157,8 +74,31 @@ services:
     - -Q
     - core.harvest
     - --concurrency=1
-    working_dir: /app
-    user: core
+    environment:
+      CORE_ADZUNA_APP_ID: ${CORE_ADZUNA_APP_ID}
+      CORE_ADZUNA_APP_KEY: ${CORE_ADZUNA_APP_KEY}
+      CORE_BROKER_URL: ${CORE_BROKER_URL}
+      CORE_DATABASE_URL: ${CORE_DATABASE_URL}
+      CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8000/api/v1/integration/inbox",
+        "swissjob-shadow": "http://swissjob-backend:8000/api/v1/integration/events"}'
+      CORE_DELIVERY_HTTP_TOKEN: ${CORE_DELIVERY_HTTP_TOKEN}
+      CORE_ENV: prod
+      CORE_JSEARCH_RAPIDAPI_KEY: ${CORE_JSEARCH_RAPIDAPI_KEY}
+      CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
+      CORE_SAVED_SEARCH_EXECUTION_ENABLED: 'true'
+      GPG_KEY: ${GPG_KEY}
+      LANG: C.UTF-8
+      PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
+      PYTHON_VERSION: 3.12.14
+      PYTHONDONTWRITEBYTECODE: '1'
+    image: swissjob-core:point5-c990131
+    logging:
+      driver: json-file
+      options:
+        max-file: '10'
+        max-size: 10m
+    mem_limit: '805306368'
     networks:
       swissjob-r5_core-net:
         aliases:
@@ -168,39 +108,16 @@ services:
         aliases:
         - swissjob-core-harvest-worker-r5
         - core-harvest-worker
-    volumes: []
-    shm_size: 67108864
-    logging:
-      driver: json-file
-      options:
-        max-file: '10'
-        max-size: 10m
+    shm_size: '67108864'
     ulimits:
       nofile:
         soft: 65535
         hard: 65535
+    user: core
+    working_dir: /app
   core-ops-worker:
-    image: swissjob-core:point5-254e826
-    mem_limit: 768m
-    container_name: swissjob-core-ops-worker-r5
-    environment:
-      CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8000/api/v1/integration/inbox",
-        "swissjob-shadow": "http://swissjob-backend:8000/api/v1/integration/events"}'
-      CORE_ENV: prod
-      CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
-      CORE_DELIVERY_HTTP_TOKEN: ${CORE_DELIVERY_HTTP_TOKEN}
-      CORE_DATABASE_URL: ${CORE_DATABASE_URL}
-      CORE_BROKER_URL: ${CORE_BROKER_URL}
-      PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-      LANG: C.UTF-8
-      GPG_KEY: ${GPG_KEY}
-      PYTHON_VERSION: 3.12.14
-      PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
-      PYTHONDONTWRITEBYTECODE: '1'
-      HF_HOME: /tmp/hf-cache
-      CORE_SAVED_SEARCH_EXECUTION_ENABLED: 'true'
     restart: unless-stopped
-    entrypoint: null
+    container_name: swissjob-core-ops-worker-r5
     command:
     - celery
     - -A
@@ -214,8 +131,28 @@ services:
     - -B
     - -s
     - /tmp/celerybeat-schedule
-    working_dir: /app
-    user: core
+    environment:
+      CORE_BROKER_URL: ${CORE_BROKER_URL}
+      CORE_DATABASE_URL: ${CORE_DATABASE_URL}
+      CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8000/api/v1/integration/inbox",
+        "swissjob-shadow": "http://swissjob-backend:8000/api/v1/integration/events"}'
+      CORE_DELIVERY_HTTP_TOKEN: ${CORE_DELIVERY_HTTP_TOKEN}
+      CORE_ENV: prod
+      CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
+      CORE_SAVED_SEARCH_EXECUTION_ENABLED: 'true'
+      GPG_KEY: ${GPG_KEY}
+      LANG: C.UTF-8
+      PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
+      PYTHON_VERSION: 3.12.14
+      PYTHONDONTWRITEBYTECODE: '1'
+    image: swissjob-core:point5-c990131
+    logging:
+      driver: json-file
+      options:
+        max-file: '10'
+        max-size: 10m
+    mem_limit: '805306368'
     networks:
       swissjob-r5_core-net:
         aliases:
@@ -225,25 +162,76 @@ services:
         aliases:
         - swissjob-core-ops-worker-r5
         - core-ops-worker
-    volumes: []
-    shm_size: 67108864
+    shm_size: '67108864'
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    user: core
+    working_dir: /app
+  core-worker:
+    restart: unless-stopped
+    container_name: swissjob-core-worker-r5
+    command:
+    - celery
+    - -A
+    - jobhunt_core.celery_app
+    - worker
+    - -l
+    - info
+    - -Q
+    - core.embedding,core.matching
+    - --concurrency=1
+    environment:
+      CORE_BROKER_URL: ${CORE_BROKER_URL}
+      CORE_DATABASE_URL: ${CORE_DATABASE_URL}
+      CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8000/api/v1/integration/inbox",
+        "swissjob-shadow": "http://swissjob-backend:8000/api/v1/integration/events"}'
+      CORE_DELIVERY_HTTP_TOKEN: ${CORE_DELIVERY_HTTP_TOKEN}
+      CORE_ENV: prod
+      CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
+      CORE_SAVED_SEARCH_EXECUTION_ENABLED: 'true'
+      GPG_KEY: ${GPG_KEY}
+      LANG: C.UTF-8
+      PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
+      PYTHON_VERSION: 3.12.14
+      PYTHONDONTWRITEBYTECODE: '1'
+    image: swissjob-core:point5-c990131
     logging:
       driver: json-file
       options:
         max-file: '10'
         max-size: 10m
+    mem_limit: '2147483648'
+    networks:
+      swissjob-r5_core-net:
+        aliases:
+        - swissjob-core-worker-r5
+        - core-worker
+      swissjob_swissjob-net:
+        aliases:
+        - swissjob-core-worker-r5
+        - core-worker
+    shm_size: '67108864'
     ulimits:
       nofile:
         soft: 65535
         hard: 65535
+    user: core
+    volumes:
+    - type: volume
+      source: swissjob-r5_core-hf-cache
+      target: /tmp/hf-cache
+    working_dir: /app
 networks:
   swissjob-r5_core-net:
-    external: true
     name: swissjob-r5_core-net
-  swissjob_swissjob-net:
     external: true
+  swissjob_swissjob-net:
     name: swissjob_swissjob-net
+    external: true
 volumes:
   swissjob-r5_core-hf-cache:
-    external: true
     name: swissjob-r5_core-hf-cache
+    external: true
