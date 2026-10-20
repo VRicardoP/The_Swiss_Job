@@ -151,7 +151,9 @@ def test_a_card_without_a_link_or_a_portal_id_is_not_an_offer(monkeypatch):
     )
 
     assert [row.external_id for row in result.listings] == ["id:70451"]
-    assert not result.complete and result.error == "invalid_myscience_cards"
+    # DT-148 E1: el ilegible se cuenta en el cursor, el barrido sigue completo.
+    assert result.complete and result.error is None
+    assert result.next_cursor["invalid"] == 2
 
 
 def test_pages_are_deduplicated_by_identity(monkeypatch):
@@ -167,6 +169,7 @@ def test_pages_are_deduplicated_by_identity(monkeypatch):
     assert result.next_cursor == {
         "pages": 3,
         "items_seen": 4,
+        "invalid": 0,
         "identities": 3,
         "details_fetched": 3,
     }

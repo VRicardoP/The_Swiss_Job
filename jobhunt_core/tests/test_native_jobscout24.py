@@ -169,13 +169,15 @@ def test_recent_order_is_date_descending_then_sweep_order(monkeypatch):
     assert result.next_cursor["recent_items"] == 3
 
 
-def test_card_without_detail_url_is_dropped_and_reported(monkeypatch):
+def test_card_without_detail_url_is_dropped_and_counted(monkeypatch):
     pages = {"default": page()}
     pages[("informatik", 1)] = page(card(1) + card(2, detail=False))
     result, _requests = fetch(pages, monkeypatch=monkeypatch)
 
     assert [listing.external_id for listing in result.listings] == ["job-1"]
-    assert not result.complete and result.error == "invalid_jobscout24_cards"
+    # DT-148 E1: la tarjeta sin URL de detalle se cuenta en el cursor.
+    assert result.complete and result.error is None
+    assert result.next_cursor["invalid"] == 1
 
 
 def test_an_empty_sweep_fails_instead_of_emptying_the_corpus(monkeypatch):

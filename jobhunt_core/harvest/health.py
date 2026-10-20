@@ -42,12 +42,17 @@ async def check_harvest_health(
     max_consecutive_failures: int | None = None,
     stale_days: int | None = None,
     missing_date_ratio: float | None = None,
+    invalid_ratio: float | None = None,
 ) -> dict:
     """ALERTA (logger.error) por cada scope HABILITADO y ya ejecutado que:
 
     - acumula `consecutive_failures >= CORE_HARVEST_MAX_CONSECUTIVE_FAILURES`, o
     - no confirma una cosecha COMPLETA desde hace más de
-      `CORE_HARVEST_STALE_ALERT_DAYS` (o no la ha confirmado nunca).
+      `CORE_HARVEST_STALE_ALERT_DAYS` (o no la ha confirmado nunca), o
+    - descarta por falta de fecha más de `CORE_HARVEST_MISSING_DATE_ALERT_RATIO`
+      de sus altas, o no puede leer más de `CORE_HARVEST_INVALID_RATIO_MAX` de
+      los items que ve (DT-148 E1: antes bastaba UN item ilegible para marcar
+      el barrido incompleto, y eso congelaba `last_complete_at` para siempre).
 
     Devuelve `{"alertas": [...], "scopes": n, "censo": {...}}` JSON-serializable (tarea
     Celery). El censo va SIEMPRE: `scopes` dice cuántos se están mirando, y solo el censo
@@ -69,6 +74,11 @@ async def check_harvest_health(
         if missing_date_ratio is not None
         else float(settings.CORE_HARVEST_MISSING_DATE_ALERT_RATIO)
     )
+    invalid_ratio_max = (
+        invalid_ratio
+        if invalid_ratio is not None
+        else float(settings.CORE_HARVEST_INVALID_RATIO_MAX)
+    )
     rows = (
         await session.execute(
             sa.text(
@@ -86,7 +96,9 @@ async def check_harvest_health(
     _report_blocked_off(censo)
     alertas: list[dict] = []
     for row in rows:
-        alertas += _scope_alerts(row, moment, max_failures, days, ratio_max)
+        alertas += _scope_alerts(
+            row, moment, max_failures, days, ratio_max, invalid_ratio_max
+        )
     for alerta in alertas:
         logger.error("harvest_health: %s", alerta["msg"])
     return {"alertas": alertas, "scopes": len(rows), "censo": censo}
@@ -170,7 +182,12 @@ async def _censo(session: AsyncSession) -> dict:
 
 
 def _scope_alerts(
-    row, moment: datetime, max_failures: int, stale_days: int, ratio_max: float
+    row,
+    moment: datetime,
+    max_failures: int,
+    stale_days: int,
+    ratio_max: float,
+    invalid_ratio_max: float,
 ) -> list[dict]:
     """Alertas de UN scope (las dos señales son independientes: una fuente puede
     fallar sin llevar tiempo rancia, y quedarse rancia sin fallar — un barrido
@@ -210,7 +227,59 @@ def _scope_alerts(
             }
         )
     alertas += _missing_date_alert(row, ratio_max)
+    alertas += _invalid_items_alert(row, invalid_ratio_max)
     return alertas
+
+
+def _invalid_items_alert(row, ratio_max: float) -> list[dict]:
+    """Cuarta señal: items que el provider no pudo leer, por RATIO (DT-148 E1).
+
+    Hasta ahora diecisiete providers marcaban `complete=False` en cuanto UN
+    item salía ilegible. Parece prudente y era lo contrario: un
+    anuncio-publicidad sin enlace —permanente en myscience— dejaba
+    `last_complete_at` congelado PARA SIEMPRE, lo que (a) convertía
+    `cosecha_sin_completar` en ruido permanente y (b) impedía que el
+    kill-switch de bloqueos reseteara su contador, porque sólo una cosecha
+    COMPLETA lo pone a cero: tres bloqueos aislados a lo largo de meses
+    acababan apagando una fuente sana.
+
+    La política que se queda es la que jobgether y tes ya habían elegido y
+    documentado: el barrido es completo si se agotó el feed, el recuento de
+    ilegibles viaja en el cursor, y lo que se vigila es la PROPORCIÓN. Una
+    fuente que de pronto no entiende la mitad de su feed sí está rota.
+
+    Sin cursor, sin contadores o sin items vistos no se alerta: un scope que
+    aún no ha cosechado no es un scope roto.
+    """
+    cursor = getattr(row, "cursor", None)
+    if not isinstance(cursor, dict):
+        return []
+    try:
+        ilegibles = int(cursor.get("invalid") or 0)
+        vistos = int(cursor.get("items_seen") or 0)
+    except (TypeError, ValueError):
+        return []
+    if vistos <= 0 or ilegibles <= 0:
+        return []
+    ratio = ilegibles / vistos
+    if ratio <= ratio_max:
+        return []
+    return [
+        {
+            "code": "cosecha_con_items_ilegibles",
+            "scope_id": str(row.scope_id),
+            "source": row.source,
+            "invalid": ilegibles,
+            "items_seen": vistos,
+            "ratio": round(ratio, 3),
+            "msg": (
+                f"scope {row.scope_id} ({row.source}): {ilegibles} de {vistos} items "
+                f"del feed son ilegibles para el provider ({ratio:.0%} > "
+                f"{ratio_max:.0%}) — la fuente ha cambiado de forma y se está "
+                "cosechando una fracción de lo que publica"
+            ),
+        }
+    ]
 
 
 def _missing_date_alert(row, ratio_max: float) -> list[dict]:

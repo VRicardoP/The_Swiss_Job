@@ -986,3 +986,55 @@ def test_harvest_health_alerts_when_a_source_stops_publishing_dates(db):
         for a in _health(factory, missing_date_ratio=0.9)["alertas"]
         if a["code"] == "cosecha_sin_fechas"
     ]
+
+
+def test_harvest_health_alerts_by_ratio_of_unreadable_items(db):
+    """DT-148 E1: el ilegible se vigila por PROPORCIÓN, no por el primer item.
+
+    Diecisiete providers marcaban `complete=False` en cuanto UN item salía
+    ilegible. Parecía prudente y era lo contrario: un anuncio-publicidad sin
+    enlace —permanente en myscience— congelaba `last_complete_at` para siempre,
+    y como sólo una cosecha COMPLETA pone a cero el contador de bloqueos, el
+    kill-switch acababa apagando una fuente sana. Hoy el recuento viaja en el
+    cursor y lo que alerta es que la fuente haya cambiado de forma.
+    """
+    factory, created = db
+    rota, con_ruido, sin_cosechar = _seed_scopes(factory, created, n=3)
+    ahora = datetime.now(timezone.utc)
+    # 8 de 10 items del feed son ilegibles: la fuente cambió de forma.
+    _set_state(
+        factory, rota, last_complete_at=ahora, cursor={"items_seen": 10, "invalid": 8}
+    )
+    # Control negativo 1: el anuncio permanente. Un ilegible de cada cien es
+    # ruido conocido y NO debe alertar — ni congelar la cosecha.
+    _set_state(
+        factory,
+        con_ruido,
+        last_complete_at=ahora,
+        cursor={"items_seen": 100, "invalid": 1},
+    )
+    # Control negativo 2: sin cursor, nada que afirmar.
+    _set_state(factory, sin_cosechar, last_complete_at=ahora)
+
+    alertas = [
+        a
+        for a in _health(factory)["alertas"]
+        if a["code"] == "cosecha_con_items_ilegibles"
+    ]
+
+    assert [a["scope_id"] for a in alertas] == [str(rota)]
+    assert alertas[0]["invalid"] == 8 and alertas[0]["items_seen"] == 10
+    assert alertas[0]["ratio"] == 0.8 and "80%" in alertas[0]["msg"]
+
+    # Y el umbral manda en los dos sentidos.
+    assert not [
+        a
+        for a in _health(factory, invalid_ratio=0.9)["alertas"]
+        if a["code"] == "cosecha_con_items_ilegibles"
+    ]
+    ruidosos = [
+        a
+        for a in _health(factory, invalid_ratio=0.005)["alertas"]
+        if a["code"] == "cosecha_con_items_ilegibles"
+    ]
+    assert {a["scope_id"] for a in ruidosos} == {str(rota), str(con_ruido)}

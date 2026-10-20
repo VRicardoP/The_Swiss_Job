@@ -173,13 +173,16 @@ def test_a_subdomain_link_is_accepted():
     )
 
 
-def test_rows_without_id_or_title_are_reported(monkeypatch):
+def test_rows_without_id_or_title_are_counted(monkeypatch):
     rows = [row(1), row(2, title=""), {"title": "x"}, "nope"]
     rows[1]["szas"]["sza_title"] = ""
     result, _requests = fetch({0: body(rows)}, monkeypatch=monkeypatch)
 
     assert [listing.external_id for listing in result.listings] == ["id:10201991"]
-    assert not result.complete and result.error == "invalid_stelle_admin_rows"
+    # DT-148 E1: el barrido es completo porque AGOTÓ el feed; los ilegibles
+    # viajan en el cursor para que `health.py` los vigile por proporción.
+    assert result.complete and result.error is None
+    assert result.next_cursor["invalid"] == 3
 
 
 def test_the_offsets_follow_the_announced_total(monkeypatch):

@@ -282,8 +282,13 @@ class StelleAdminProvider(BaseProvider):
                 "items_seen": seen,
                 "announced": announced,
                 "identities": len(by_identity),
+                "invalid": invalid,
             },
             pages_fetched=pages,
-            complete=exhausted and not invalid,
-            error="invalid_stelle_admin_rows" if invalid else None,
+            # DT-148 E1: un item ilegible NO congela `last_complete_at`. Antes
+            # bastaba uno para marcar el barrido incompleto, y un anuncio
+            # permanente dejaba el scope «parcial para siempre» — lo que además
+            # impedía que el kill-switch reseteara su contador de bloqueos. El
+            # recuento viaja en el cursor y `health` vigila la PROPORCIÓN.
+            complete=exhausted,
         )

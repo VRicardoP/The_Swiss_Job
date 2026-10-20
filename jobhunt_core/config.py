@@ -104,6 +104,13 @@ class CoreSettings(BaseSettings):
     # G-T11 §3: fracción de altas descartadas por falta de fecha a partir de
     # la cual la fuente se considera rota. 0.5 = pierde más de la mitad.
     CORE_HARVEST_MISSING_DATE_ALERT_RATIO: float = Field(default=0.5, ge=0.0, le=1.0)
+    # DT-148 E1: misma idea para los items que el provider no puede leer. Un
+    # anuncio-publicidad permanente no debe congelar `last_complete_at` —eso
+    # dejaba el scope «parcial para siempre» y, de paso, impedía que el
+    # kill-switch reseteara su contador de bloqueos—, pero una fuente que de
+    # pronto no entiende la mitad de su propio feed SÍ está rota. Se vigila por
+    # RATIO en vez de por presencia, como las fechas. 0.5 = más de la mitad.
+    CORE_HARVEST_INVALID_RATIO_MAX: float = Field(default=0.5, ge=0.0, le=1.0)
     # T9: toda credencial del core nace con caducidad. 90 d es el periodo de
     # rotación; el solape que deja de serlo se alerta a los 7.
     CORE_CREDENTIAL_TTL_DAYS: int = Field(default=90, ge=1)

@@ -170,15 +170,16 @@ def test_a_real_offer_path_is_accepted(path):
     assert external_path_issue(path) is None
 
 
-def test_a_bad_path_degrades_only_that_item_and_is_reported(monkeypatch):
+def test_a_bad_path_degrades_only_that_item_and_is_counted(monkeypatch):
     rows = [posting(1), posting(2, path="?job=123"), posting(3, title="  ")]
     result, _requests = fetch({0: body(rows)}, monkeypatch=monkeypatch)
 
     assert [listing.external_id for listing in result.listings] == [
         "mosaic_geneva:JR213711"
     ]
-    assert result.next_cursor["degraded_items"] == 2
-    assert not result.complete and result.error == "degraded_isp_items"
+    assert result.next_cursor["invalid"] == 2
+    # DT-148 E1: el ilegible se cuenta en el cursor, el barrido sigue completo.
+    assert result.complete and result.error is None
 
 
 def test_a_degenerate_locations_field_does_not_take_the_batch_down(monkeypatch):
@@ -186,7 +187,7 @@ def test_a_degenerate_locations_field_does_not_take_the_batch_down(monkeypatch):
     result, _requests = fetch({0: body(rows)}, monkeypatch=monkeypatch)
 
     assert len(result.listings) == 1
-    assert result.next_cursor["degraded_items"] == 1
+    assert result.next_cursor["invalid"] == 1
 
 
 def test_a_degenerate_bulletfields_still_emits_the_offer(monkeypatch):

@@ -143,14 +143,16 @@ def test_only_legacy_first_three_hundred_receive_recent_order(monkeypatch):
     assert "job-301" not in result.next_cursor["descriptions"]
 
 
-def test_invalid_row_is_partial_and_private_salary_is_absent(monkeypatch):
+def test_invalid_row_is_counted_and_private_salary_is_absent(monkeypatch):
     result, _requests = fetch(
         [row(salary={"public": False, "from": 1}), None],
         cursor={"descriptions": {"job-1": "Cached"}},
         monkeypatch=monkeypatch,
     )
 
-    assert not result.complete and result.error == "invalid_dynamitejobs_items"
+    # DT-148 E1: un item ilegible viaja como recuento, no como error.
+    assert result.complete and result.error is None
+    assert result.next_cursor["invalid"] == 1
     content = result.listings[0].payload
     assert content["salary"]["from"] == 1
     from jobhunt_core.harvest.normalize import normalize_offer

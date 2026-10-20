@@ -192,10 +192,12 @@ class CHMediaProvider(BaseProvider):
             raise ProviderResponseError(
                 "CH Media nonempty feed has no usable identities"
             )
-        error = error or ("invalid_chmedia_items" if invalid else None)
+        # DT-148 E1: un item ilegible NO congela `last_complete_at` ni suma
+        # un fallo consecutivo. El recuento viaja en el cursor y
+        # `harvest/health.py` alerta por PROPORCIÓN de ilegibles.
         return FetchResult(
             tuple(listings),
-            {"items_seen": seen, "pages": pages},
+            {"items_seen": seen, "pages": pages, "invalid": invalid},
             pages_fetched=pages,
             complete=exhausted and error is None,
             error=error,

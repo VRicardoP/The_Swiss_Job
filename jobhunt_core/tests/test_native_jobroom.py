@@ -72,7 +72,7 @@ def test_request_identity_content_and_statistics_tags_are_exact():
     result, requests = fetch([original])
 
     assert result.complete and result.error is None and result.pages_fetched == 1
-    assert result.next_cursor == {"items_seen": 1}
+    assert result.next_cursor == {"items_seen": 1, "invalid": 0}
     assert len(requests) == 1
     request = requests[0]
     assert request.method == "POST"
@@ -161,10 +161,12 @@ def test_anonymous_company_location_and_single_workload_bound():
     assert content["remote"] is False
 
 
-def test_invalid_neighbor_is_partial_but_valid_row_survives():
+def test_invalid_neighbor_is_counted_but_valid_row_survives():
     result, _requests = fetch([row(), None])
     assert len(result.listings) == 1
-    assert not result.complete and result.error == "invalid_jobroom_items"
+    # DT-148 E1.
+    assert result.complete and result.error is None
+    assert result.next_cursor["invalid"] == 1
 
 
 def test_empty_board_is_a_success():

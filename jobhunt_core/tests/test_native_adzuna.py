@@ -71,7 +71,7 @@ def test_two_pages_request_and_public_content_are_exact(monkeypatch):
     result, requests = fetch([{"results": [original]}, {"results": []}], monkeypatch)
 
     assert result.complete and result.error is None and result.pages_fetched == 2
-    assert result.next_cursor == {"items_seen": 1}
+    assert result.next_cursor == {"items_seen": 1, "invalid": 0}
     assert len(requests) == 2
     assert [str(request.url.copy_with(query=None)) for request in requests] == [
         f"{ENDPOINT}/us/search/1",
@@ -198,13 +198,15 @@ def test_redirect_never_forwards_credentials_to_another_host(monkeypatch):
     assert requests[0].url.host == "api.adzuna.com"
 
 
-def test_invalid_neighbor_is_partial_but_valid_row_survives(monkeypatch):
+def test_invalid_neighbor_is_counted_but_valid_row_survives(monkeypatch):
     result, _requests = fetch(
         [{"results": [row(), None]}, {"results": []}], monkeypatch
     )
 
     assert len(result.listings) == 1
-    assert not result.complete and result.error == "invalid_adzuna_items"
+    # DT-148 E1: el ilegible se cuenta en el cursor, el barrido sigue completo.
+    assert result.complete and result.error is None
+    assert result.next_cursor["invalid"] == 1
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])

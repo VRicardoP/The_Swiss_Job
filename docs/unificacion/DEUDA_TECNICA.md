@@ -1295,7 +1295,7 @@ sólo imports). `hooks/useWatchlist.js` (`useWatchlist`, `useSetWatchlistStatus`
 
 ### E · Consistencia, legibilidad y rendimiento menor
 
-#### E1 · `complete = not invalid` en 17 proveedores: un ítem malformado permanente deja el scope «parcial para siempre» y bloquea el reset del kill-switch — MEDIA
+#### E1 · `complete = not invalid` en 17 proveedores: un ítem malformado permanente deja el scope «parcial para siempre» y bloquea el reset del kill-switch — **CERRADO 2026-10-21**
 
 **Dónde.** `complete=not invalid` / `not degraded` / `exhausted and not
 invalid` en `native_dynamitejobs, native_isp_workday, native_jobscout24,
@@ -1321,6 +1321,49 @@ malformado no impide `complete=True`; `items_seen` y `invalid` en el cursor).
 Añadir el setting con su comentario y regenerar el ejemplo de entorno del
 core si existe (`grep -rn "CORE_HARVEST_MISSING_DATE" jobhunt_core docs` para
 encontrar el patrón del ratio ya existente).
+
+**EJECUTADO el 2026-10-21.** Fueron **19** proveedores, no 17: el recuento del
+ledger omitía `native_thehub` (ponía `error = "invalid_thehub_items"` dentro del
+bucle) y `native_json`, que cubre además remotive/himalayas/swisstechjobs/
+ictjobs/workingnomads por composición. La política aplicada es la de
+jobgether/tes, idéntica en los diecinueve:
+
+1. `invalid` **ya no entra** ni en la expresión `complete=` ni en la de
+   `error=`. Esto último era imprescindible y el ledger no lo decía: la
+   invariante de `FetchResult` es «`error is not None` ⇒ `complete is False`»,
+   así que dejar el código `invalid_x_items` habría seguido congelando
+   `last_complete_at` por la otra puerta — y además sumaba un
+   `consecutive_failures` por cada barrido con un anuncio ilegible.
+2. El cursor transporta `{"invalid": n, "items_seen": m}` en los diecinueve.
+   `native_isp_workday` tenía la clave con otro nombre (`degraded_items`) y se
+   **renombró a `invalid`**: la vigilancia lee una sola clave, y dos nombres
+   para el mismo número son la forma de que uno deje de mirarse.
+   `native_tes` no exponía ninguna de las dos y ahora expone ambas.
+3. `jobhunt_core/harvest/health.py` → `_invalid_items_alert(row, ratio_max)`,
+   calcada de `_missing_date_alert`: código `cosecha_con_items_ilegibles`,
+   alerta si `invalid / items_seen > CORE_HARVEST_INVALID_RATIO_MAX`. Silencio
+   deliberado sin cursor, sin contadores o con `items_seen == 0` — un scope que
+   aún no ha cosechado no es un scope roto.
+4. `jobhunt_core/config.py` → `CORE_HARVEST_INVALID_RATIO_MAX: float = 0.5`
+   (`ge=0.0, le=1.0`). Medio feed ilegible es un cambio de forma; un anuncio de
+   cada cien es ruido conocido.
+
+**Pruebas.** No hizo falta un commit por proveedor: la política es una y el
+diff es mecánico. Se INVIRTIERON las 50 aserciones que fijaban la conducta
+vieja (`not result.complete` / `error == "invalid_x"`) a la nueva (`complete`,
+`error is None`, `next_cursor["invalid"] == n`) en 17 ficheros de test, y se
+añadió `test_harvest_health_alerts_by_ratio_of_unreadable_items` en
+`test_integration_harvest.py` con los dos controles negativos (el anuncio
+permanente 1/100 **no** alerta) y el umbral mandando en los dos sentidos.
+Suite del núcleo: **1.783 passed · 1 skipped**; los 3 rojos de
+`test_deploy_order.py` son el artefacto conocido del arnés (exige la raíz del
+repo montada) y pasan los 11 con `-v "$PWD:/repo" -w /repo`.
+
+**Lo que NO se tocó, a propósito.** `error` por causas reales (`page_fetch_failed`,
+`time_budget`, `budget_exhausted`, `soft_block`, el nombre de la excepción) sigue
+marcando el barrido incompleto en todos. Y `native_jobgether.py` conserva su
+segundo caso de barrido parcial (`ProviderResponseError` en la página k>1), que
+no es un item ilegible.
 
 #### E2 · Tres semánticas de «llegué al tope de páginas» — BAJA
 

@@ -103,9 +103,11 @@ def test_short_page_with_more_total_continues_and_late_error_preserves(monkeypat
     assert requests[1].url.params["from"] == "1"
 
 
-def test_invalid_neighbor_is_partial():
+def test_invalid_neighbor_is_counted():
     result, _ = fetch([page([hit(), {"_id": "../../bad", "_source": {}}])])
-    assert not result.complete and len(result.listings) == 1 and result.error
+    # DT-148 E1: el ilegible se cuenta en el cursor, el barrido sigue completo.
+    assert result.complete and len(result.listings) == 1 and not result.error
+    assert result.next_cursor["invalid"] == 1
 
 
 def test_empty_facet_and_invalid_remote():

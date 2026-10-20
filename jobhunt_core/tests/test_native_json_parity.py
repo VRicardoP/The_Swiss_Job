@@ -21,7 +21,9 @@ def test_invalid_neighbor_is_partial_error_not_complete():
         },
     )
     assert len(result.listings) == 1
-    assert result.complete is False and result.error == "invalid_json_items"
+    # DT-148 E1: un item sin identidad no marca el barrido incompleto.
+    assert result.complete is True and result.error is None
+    assert result.next_cursor["invalid"] == 1
 
 
 @pytest.mark.parametrize("source", ["remotive", "workingnomads", "jobicy", "remoteok"])

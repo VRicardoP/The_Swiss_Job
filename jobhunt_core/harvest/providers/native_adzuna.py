@@ -264,10 +264,13 @@ class AdzunaProvider(BaseProvider):
             raise ProviderResponseError(
                 f"{SOURCE_NAME}: nonempty feed has no usable jobs"
             )
-        error = fetch_error or ("invalid_adzuna_items" if invalid else None)
+        # DT-148 E1: un item ilegible NO congela `last_complete_at` ni suma
+        # un fallo consecutivo. El recuento viaja en el cursor y
+        # `harvest/health.py` alerta por PROPORCIÓN de ilegibles.
+        error = fetch_error
         return FetchResult(
             listings,
-            {"items_seen": len(rows)},
+            {"items_seen": len(rows), "invalid": invalid},
             pages_fetched=pages,
             complete=error is None,
             error=error,

@@ -96,7 +96,9 @@ def test_invalid_object_id_never_requests_detail(monkeypatch):
         [{"docs": [item(), {**item(2), "id": "../../admin"}], "pages": 1}],
         monkeypatch=monkeypatch,
     )
-    assert len(requests) == 2 and len(result.listings) == 1 and not result.complete
+    # DT-148 E1: el ilegible se cuenta en el cursor, el barrido sigue completo.
+    assert len(requests) == 2 and len(result.listings) == 1 and result.complete
+    assert result.next_cursor["invalid"] == 1
 
 
 def test_final_page_and_empty_contract(monkeypatch):
