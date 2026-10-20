@@ -370,15 +370,6 @@ export const matchApi = {
     return authRequest(`/match/results${query ? `?${query}` : ""}`);
   },
 
-  getHistory(params = {}) {
-    const qs = new URLSearchParams();
-    if (params.limit) qs.set("limit", params.limit);
-    if (params.offset !== undefined) qs.set("offset", params.offset);
-    if (params.translate === false) qs.set("translate", "false");
-    const query = qs.toString();
-    return authRequest(`/match/history${query ? `?${query}` : ""}`);
-  },
-
   submitFeedback(jobHash, feedback) {
     return authRequest(`/match/${jobHash}/feedback`, {
       method: "POST",
@@ -411,9 +402,6 @@ export const matchApi = {
 
 // Watchlist API — colegios suizos vigilados
 export const watchlistApi = {
-  listSchools() {
-    return authRequest("/watchlist/schools");
-  },
   setStatus(jobHash, applicationStatus) {
     return authRequest(`/watchlist/match/${jobHash}/status`, {
       method: "POST",
@@ -433,11 +421,6 @@ export const watchlistApi = {
     return authRequest(`/watchlist/match/${jobHash}/draft`, {
       raw: true, // text/plain, no JSON.parse
     });
-  },
-  calendarUrl(jobHash) {
-    // El endpoint requiere Authorization, así que en lugar de exponerlo
-    // como link directo el front lo descargará con fetch + blob.
-    return `/watchlist/match/${jobHash}/calendar.ics`;
   },
   // Descarga el .ics como Blob respetando los headers de auth + manejo
   // de errores estándar. Reemplaza al fetch() directo que existía en
