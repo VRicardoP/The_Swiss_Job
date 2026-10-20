@@ -54,7 +54,7 @@ jobs:
       - name: Tests de los scripts de CI y despliegue
         working-directory: ${{ github.workspace }}
         run: |
-          pip install pytest==8.4.2 pyyaml
+          pip install pytest==8.4.2
           python -m pytest scripts/test_check_no_secrets.py \
             scripts/test_check_core_release.py \
             scripts/test_ensure_swissjob_frontend.py \
