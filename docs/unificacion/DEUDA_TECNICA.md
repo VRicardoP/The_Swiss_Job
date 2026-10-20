@@ -926,6 +926,53 @@ ejecuta no protege nada. Comprobados: 11 pasan.
 Frontend: eslint limpio, 60 tests, build correcto. `ruff check` y
 `ruff format --check` limpios en los 663 ficheros del repo y los 247 del BFF.
 
+### Checkpoint de despliegue de E1 + sección B — 2026-10-21
+
+**Estado: CONSTRUIDO Y VERIFICADO, NO DESPLEGADO.** El bloqueo no es técnico:
+`main` está protegida (PR obligatorio + 9 checks) y `scripts/deploy_nas.sh`
+rechaza cualquier SHA que no sea EXACTAMENTE el de `github/main` —esa guarda es
+la que impide que `RELEASE_SHA` mienta, así que no se puentea—. Los seis
+commits están en la rama `dt148/e1-and-section-b` del remoto; el merge es del
+propietario, y `gh` no está instalado ni hay token en este entorno.
+
+**Los nueve checks del CI, ejecutados aquí antes de pedir el merge** (para que
+no sea una apuesta):
+
+| Job | Resultado local |
+|---|---|
+| source-ownership | `{"core_owned": 41, "local_pending": 0, "sources": 59}` |
+| backend-lint | ruff check + format limpios (247 ficheros) y `scripts docs tools` limpios |
+| backend-test | 672 passed |
+| frontend-lint | eslint limpio |
+| frontend-test | 60 passed |
+| core-lint | ruff limpio (372 ficheros) |
+| core-test | 1.784 passed · 1 skipped (incluye `tools/core/tests`) |
+| compose-config | los cuatro composes resuelven; `check_no_secrets deploy/nas` 0 hallazgos; C7 ninguno a la LAN |
+| docker-build | las seis imágenes construyen |
+
+Además: `alembic check` sin operaciones nuevas, y los cuatro tests de scripts
+nuevos del CI verificados en un `python:3.12-slim` limpio (11 passed, sólo
+stdlib + pytest).
+
+**Despliegue preparado.** Los tres ensayos en seco pasan y fijan las etiquetas:
+
+```
+core      → swissjob-core:point5-<sha>      compose core.configured.yml      proyecto swissjob-r5
+            recrea core-api core-worker core-harvest-worker core-ops-worker
+bff       → swissjob-backend:point5-<sha>   compose swissjob.configured.yml  proyecto swissjob
+            recrea backend worker
+frontend  → swissjob-frontend:point5-<sha>  compose swissjob.configured.yml  proyecto swissjob
+```
+
+**Orden obligatorio: core ANTES que BFF.** No es preferencia: E1 cambia el
+contrato del cursor de los 19 proveedores (`invalid` e `items_seen`) y la
+alerta por proporción, y las dos cosas viven en el núcleo. El frontend va al
+final: B7/B8 sólo tocan su árbol.
+
+**Nada que migrar.** Ni E1 ni la sección B añaden migración: la cabeza del
+núcleo sigue siendo la que ya corre. El único DROP pendiente es el de B6, y
+espera al propietario.
+
 ### C · Duplicación (consolidar sin cambiar comportamiento)
 
 #### C1 · Transporte HTTP de la cosecha copiado nueve veces (~410 LOC) — ALTA
