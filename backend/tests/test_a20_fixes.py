@@ -14,7 +14,6 @@ from models.job import Job
 from models.match_result import MatchResult
 from services import scheduler as sched_mod
 from services.sse_manager import SSEManager
-from tasks import maintenance_tasks
 from utils.redact import redact_credentials
 
 # ----------------------------------------------------------------- A20-01
@@ -107,24 +106,9 @@ def test_a20_15_userinfo_con_usuario_vacio(texto, esperado):
 
 
 # ----------------------------------------------------------------- A20-10
-
-
-def test_a20_10_check_job_urls_lanza_en_vez_de_devolver_error(monkeypatch):
-    async def revienta(_limit):
-        raise RuntimeError("bd caída")
-
-    monkeypatch.setattr(maintenance_tasks, "_check_job_urls_async", revienta)
-    with pytest.raises(Exception):
-        maintenance_tasks.check_job_urls(limit=1)
-
-
-def test_a20_10_cleanup_stale_jobs_lanza_en_vez_de_devolver_error(monkeypatch):
-    async def revienta(_days):
-        raise RuntimeError("bd caída")
-
-    monkeypatch.setattr(maintenance_tasks, "_cleanup_stale_jobs_async", revienta)
-    with pytest.raises(Exception):
-        maintenance_tasks.cleanup_stale_jobs(max_age_days=1)
+# (check_job_urls y cleanup_stale_jobs se retiraron en DT-148: la purga de
+# refresh conserva el mismo criterio —reintentar y luego LANZAR— y lo prueba
+# el test de la tarea.)
 
 
 # ----------------------------------------------------------------- A20-06

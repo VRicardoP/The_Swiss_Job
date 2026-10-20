@@ -243,26 +243,8 @@ class Settings(BaseSettings):
     # «nuevo» y notifica cientos de ofertas de hace meses.
     SAVED_SEARCH_INITIAL_LOOKBACK_DAYS: int = Field(default=1, ge=0)
 
-    # Digest diario de matches por email (opt-in, requiere SMTP_*). Resume los
-    # mejores matches NUEVOS de cada usuario desde el último envío (marca de agua
-    # en Redis, sin re-enviar). Distinto de la alerta de profesor (destinatario fijo).
-    DAILY_DIGEST_ENABLED: bool = False
-    DAILY_DIGEST_HOUR: int = 7  # hora fija CET del envío
-    DAILY_DIGEST_MIN_SCORE: float = 60.0
-    DAILY_DIGEST_MAX_JOBS: int = 20  # tope de ofertas por email y usuario
-    DAILY_DIGEST_INITIAL_LOOKBACK_HOURS: int = 24  # ventana en la primera corrida
-
-    # Health-check de URLs: nº máximo de ofertas comprobadas por corrida (rotación
-    # por check más antiguo). Acota peticiones salientes del job semanal.
-    # V.4 — caducidad real de ofertas. Sube de 200/SEMANA a 3000/DÍA porque la
-    # calibración anterior tardaba ~2,3 AÑOS en una pasada completa del corpus
-    # (19k ofertas / 200 por semana) y por eso solo 272 de 23.813 se habían
-    # comprobado nunca: el 43% del corpus llevaba >30 días sin re-verse pero
-    # seguía `is_active=true`. Con 3000/día una oferta caducada se cierra en
-    # <=7 días. NO se sustituye por una regla sobre `last_seen_at`: el % de
-    # refresco varía del 3% (jobgether) al 92% (schuljobs) según cómo pagine
-    # cada fuente, así que un umbral uniforme cerraría ofertas VIVAS.
-    MAINTENANCE_URL_CHECK_LIMIT: int = 3000
+    # DT-148: aquí vivía MAINTENANCE_URL_CHECK_LIMIT (chequeo nocturno de URLs
+    # sobre la tabla legacy `jobs`, retirado con la tarea).
 
     # Core service connection for transferred capabilities.
     # URL interna del /v1 del core (plan §21: puerto dedicado, SOLO red

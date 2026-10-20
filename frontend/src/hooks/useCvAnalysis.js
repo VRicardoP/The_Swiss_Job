@@ -50,8 +50,15 @@ export function useCvAnalysis() {
         ({ ticket } = await notificationsApi.streamTicket());
       } catch {
         // Sin vale no hay progreso. No se reintenta en bucle: el análisis
-        // termina igual en el servidor y la query ["profile"] se recarga al
-        // cerrar el banner. Un 401 ya lo gestiona el cliente de API.
+        // termina igual en el servidor. DT-148 A14: antes se volvía dejando el
+        // estado en "start", y el banner sólo pinta el botón de cerrar cuando
+        // NO está en progreso — se quedaba girando para siempre.
+        setState((s) => ({
+          ...s,
+          stage: "error",
+          message:
+            "Progress unavailable; your profile will refresh when the analysis finishes.",
+        }));
         return;
       }
       if (cancelado) return;
@@ -86,9 +93,21 @@ export function useCvAnalysis() {
     });
 
       // Un vale es de un solo uso, así que la reconexión automática de
-      // EventSource iría en bucle contra un 401: se corta.
+      // EventSource iría en bucle contra un 401: se corta. Y se DICE (A14):
+      // un banner sin salida es peor que un error visible.
       es.onerror = () => {
         es.close();
+        setState((s) =>
+          s.stage === "done"
+            ? s
+            : {
+                ...s,
+                stage: "error",
+                message:
+                  "Progress unavailable; your profile will refresh when the analysis finishes.",
+              },
+        );
+        qc.invalidateQueries({ queryKey: ["profile"] });
       };
     };
 

@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from models.match_result import MatchResult
 from services.matching.feedback import CoreFeedback
 from services.matching.port import CoreUnavailableError
-from tests.test_applications_contract import seeded  # noqa: F401
+from tests.seeds import seeded  # noqa: F401
 
 
 def writer(db, handler):

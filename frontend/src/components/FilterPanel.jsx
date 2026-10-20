@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { X, RotateCcw } from "lucide-react";
 import { useSearchStore } from "../stores/searchStore";
-import { jobsApi } from "../config/api";
 import { Button, Select, Input, IconButton, cn } from "./ui";
 
 const CANTONS = [
@@ -21,15 +20,6 @@ export default function FilterPanel() {
     setRemoteOnly, setSalaryMin, setSalaryMax,
     filtersOpen, setFiltersOpen, resetFilters,
   } = useSearchStore();
-
-  const [sources, setSources] = useState([]);
-
-  useEffect(() => {
-    jobsApi
-      .getSources()
-      .then((data) => setSources(data.map((s) => s.name)))
-      .catch(() => {});
-  }, []);
 
   // Cerrar con Escape
   useEffect(() => {
@@ -95,18 +85,17 @@ export default function FilterPanel() {
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-5">
           <div className="grid grid-cols-1 gap-4 sm:gap-5">
-            <Select
+            {/* DT-148 A11: era un desplegable alimentado por `/jobs/sources`,
+                que devolvia 501 desde el corte de la cosecha — la lista salia
+                SIEMPRE vacia y el `.catch(() => {})` lo ocultaba. El filtro
+                por fuente SI lo sirve el nucleo, asi que se escribe: una
+                fuente, o varias separadas por comas. */}
+            <Input
               label="Source"
+              placeholder="arbeitnow, ostjob…"
               value={source}
               onChange={(e) => setSource(e.target.value)}
-            >
-              <option value="">All sources</option>
-              {sources.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </Select>
+            />
 
             <div className="grid grid-cols-2 gap-3">
               <Select

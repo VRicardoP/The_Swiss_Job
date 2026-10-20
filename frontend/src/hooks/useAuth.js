@@ -96,8 +96,12 @@ export function useLogout() {
 
   return () => {
     logout();
-    qc.removeQueries({ queryKey: ["auth"] });
-    qc.removeQueries({ queryKey: ["profile"] });
+    // DT-148 A6: se borraban SOLO "auth" y "profile". Matches, candidaturas,
+    // documentos, notificaciones y borradores seguían en caché con su
+    // staleTime, así que la siguiente cuenta que entrase en el mismo navegador
+    // veía datos de la anterior. Se vacía todo: nada de la sesión que acaba
+    // sobrevive a su cierre.
+    qc.clear();
     navigate("/");
   };
 }

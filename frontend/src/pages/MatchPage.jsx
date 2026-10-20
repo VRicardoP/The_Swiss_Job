@@ -31,6 +31,13 @@ import {
   cn,
 } from "../components/ui";
 
+// Umbral de «match fuerte» de la pantalla principal; el servidor usa el
+// mismo valor al calcular `facets.strong_count`.
+const STRONG_SCORE = 70;
+// Tamaño de página de una categoría. En modo facetas es lo que se le pide al
+// servidor; en legacy, lo que se pinta de la categoría ya descargada.
+const PAGE_SIZE = 50;
+
 export default function MatchPage() {
   const { data: profile, isLoading: profileLoading } = useProfile();
   const [activeCategory, setActiveCategory] = useState(null);
@@ -44,7 +51,7 @@ export default function MatchPage() {
     isError,
     error,
   } = useMatchResults(
-    facetsEnabled ? 50 : 3000,
+    facetsEnabled ? PAGE_SIZE : 3000,
     facetsEnabled ? categoryOffset : 0,
     facetsEnabled ? activeCategory : null,
     legacyMode || (facetsEnabled && Boolean(activeCategory)),
@@ -141,22 +148,42 @@ export default function MatchPage() {
   }, [facets, facetsEnabled, grouped, watchlistMatches.length]);
 
   const activeTab = tabItems.find((item) => item.id === activeCategory);
-  const visibleMatches = facetsEnabled
+  const categoryMatches = facetsEnabled
     ? allMatches
     : activeCategory === "__watchlist"
       ? watchlistMatches
       : activeCategory
         ? grouped.get(activeCategory) ?? []
         : [];
+  // DT-148 A17: en modo facetas el servidor ya sirve la página; en legacy la
+  // categoría llega ENTERA y se pintaba completa — cientos de tarjetas con su
+  // SVG en cada cambio de estado de la página. Se pagina igual que con
+  // facetas, con los mismos botones.
+  const visibleMatches = facetsEnabled
+    ? categoryMatches
+    : categoryMatches.slice(categoryOffset, categoryOffset + PAGE_SIZE);
+  const categoryTotal = facetsEnabled
+    ? (activeTab?.count ?? 0)
+    : categoryMatches.length;
 
-  const topScore = facetsEnabled
-    ? Math.round(facets.top_score)
-    : allMatches.length > 0
-      ? Math.round(Math.max(...allMatches.map((match) => match.score_final)))
-      : 0;
-  const strongMatches = facetsEnabled
-    ? facets.strong_count
-    : allMatches.filter((match) => match.score_final >= 70).length;
+  // DT-148 A17: estos dos recorrían las 3.000 ofertas en CADA render (el
+  // resto de los agregados ya estaba memoizado desde L4/T7).
+  const topScore = useMemo(
+    () =>
+      facetsEnabled
+        ? Math.round(facets.top_score)
+        : allMatches.length > 0
+          ? Math.round(Math.max(...allMatches.map((match) => match.score_final)))
+          : 0,
+    [facetsEnabled, facets.top_score, allMatches],
+  );
+  const strongMatches = useMemo(
+    () =>
+      facetsEnabled
+        ? facets.strong_count
+        : allMatches.filter((match) => match.score_final >= STRONG_SCORE).length,
+    [facetsEnabled, facets.strong_count, allMatches],
+  );
 
   // L4/T7: estos tres se recreaban en CADA render, así que cambiaban de
   // identidad y el `memo(MatchCard)` no servía de nada: se repintaban las
@@ -345,7 +372,7 @@ export default function MatchPage() {
                 CATEGORY_MAP[activeCategory]?.label ??
                 "Other"}{" "}
               <span className="text-text-tertiary font-normal">
-                · {activeTab?.count ?? visibleMatches.length}
+                · {categoryTotal}
               </span>
             </h2>
           </header>
@@ -360,22 +387,22 @@ export default function MatchPage() {
               />
             ))}
           </div>
-          {facetsEnabled &&
-            (categoryOffset > 0 ||
-              categoryOffset + visibleMatches.length <
-                (activeTab?.count ?? 0)) && (
+          {(categoryOffset > 0 ||
+            categoryOffset + visibleMatches.length < categoryTotal) && (
             <div className="mt-4 flex justify-center gap-3">
               <Button
                 variant="outline"
                 disabled={categoryOffset === 0}
-                onClick={() => setCategoryOffset((offset) => Math.max(0, offset - 50))}
+                onClick={() =>
+                  setCategoryOffset((offset) => Math.max(0, offset - PAGE_SIZE))
+                }
               >
                 Previous
               </Button>
               <Button
                 variant="outline"
-                disabled={categoryOffset + visibleMatches.length >= (activeTab?.count ?? 0)}
-                onClick={() => setCategoryOffset((offset) => offset + 50)}
+                disabled={categoryOffset + visibleMatches.length >= categoryTotal}
+                onClick={() => setCategoryOffset((offset) => offset + PAGE_SIZE)}
               >
                 Next
               </Button>

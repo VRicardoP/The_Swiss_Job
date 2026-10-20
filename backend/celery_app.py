@@ -45,6 +45,5 @@ celery_app.conf.include = [
     "tasks.watchlist_tasks",
     "tasks.alert_tasks",
     "tasks.profile_tasks",
-    "tasks.digest_tasks",
     "tasks.language_tasks",
 ]

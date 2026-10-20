@@ -4,7 +4,6 @@ import {
   Search,
   Sparkles,
   Bookmark,
-  Kanban,
   Bell,
   User,
   LogOut,
@@ -24,7 +23,6 @@ const PRIMARY_NAV = [
   { to: "/",         label: "Search",   icon: Search,    end: true },
   { to: "/match",    label: "Matches",  icon: Sparkles },
   { to: "/saved",    label: "Saved",    icon: Bookmark },
-  { to: "/pipeline", label: "Pipeline", icon: Kanban },
 ];
 
 // Rutas secundarias (menú móvil + acciones desktop)

@@ -23,7 +23,7 @@ from services.documents.delivery import (
     operation_status,
 )
 from tests.conftest import TestSessionLocal
-from tests.test_applications_contract import seed_user
+from tests.seeds import seed_user
 
 
 @pytest.fixture

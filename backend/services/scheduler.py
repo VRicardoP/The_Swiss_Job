@@ -126,22 +126,19 @@ def setup_schedules() -> None:
         logger.info("Scheduler disabled via SCHEDULER_ENABLED=False")
         return
 
-    # URL health check: DIARIA a las 03:00 CET (antes: semanal los domingos).
-    # V.4 — con 3000 ofertas por ejecución, una pasada completa del corpus
-    # (~19k activas) tarda <=7 días. Semanal + 200/run tardaba ~2,3 años y
-    # dejaba el 43% del corpus marcado activo sin haberse comprobado jamás.
-    scheduler.add_job(
-        _dispatch_check_urls,
-        CronTrigger(hour=3, timezone="Europe/Zurich"),
-        id="check_job_urls",
-        replace_existing=True,
-    )
+    # DT-148: aquí vivían el chequeo de URLs (03:00) y la limpieza de
+    # caducadas (03:30). Las dos operaban sobre la tabla legacy `jobs`, sin
+    # escritores desde el corte de la cosecha nativa: la primera sondeaba
+    # 3.000 URLs por noche de un archivo congelado y la segunda habría
+    # borrado en masa todas sus filas a los 60 días. Retiradas.
 
-    # Limpieza de ofertas caducadas: diario a las 03:30 CET.
+    # Purga de refresh caducados: diaria a las 03:45 CET. La política T9
+    # conserva las filas REVOCADAS (memoria del robo) y borra por caducidad;
+    # sin esta cita nadie llamaba a `purgar_caducados` (DT-148 A3).
     scheduler.add_job(
-        _dispatch_cleanup_stale,
-        CronTrigger(hour=3, minute=30, timezone="Europe/Zurich"),
-        id="cleanup_stale_jobs",
+        _dispatch_purge_refresh_tokens,
+        CronTrigger(hour=3, minute=45, timezone="Europe/Zurich"),
+        id="purge_refresh_tokens",
         replace_existing=True,
     )
 
@@ -179,26 +176,14 @@ def setup_schedules() -> None:
         replace_existing=True,
     )
 
-    # Digest diario de matches por email (opt-in): hora fija CET.
-    if settings.DAILY_DIGEST_ENABLED:
-        scheduler.add_job(
-            _dispatch_daily_digest,
-            CronTrigger(hour=settings.DAILY_DIGEST_HOUR, timezone="Europe/Zurich"),
-            id="daily_digest",
-            replace_existing=True,
-        )
-
-    logger.info("Scheduler configured: URL check 03:00, stale cleanup 03:30")
+    logger.info(
+        "Scheduler configured: refresh purge 03:45, languages, watchlist, alert"
+    )
 
 
-def _dispatch_check_urls() -> None:
-    celery_app.send_task("tasks.check_job_urls")
-    logger.debug("Dispatched tasks.check_job_urls")
-
-
-def _dispatch_cleanup_stale() -> None:
-    celery_app.send_task("tasks.cleanup_stale_jobs")
-    logger.debug("Dispatched tasks.cleanup_stale_jobs")
+def _dispatch_purge_refresh_tokens() -> None:
+    celery_app.send_task("tasks.purge_refresh_tokens")
+    logger.debug("Dispatched tasks.purge_refresh_tokens")
 
 
 def _dispatch_resolve_languages() -> None:
@@ -219,8 +204,3 @@ def _dispatch_watchlist_digest() -> None:
 def _dispatch_teacher_alert() -> None:
     celery_app.send_task("tasks.alert_tasks.detect_teacher_alerts")
     logger.debug("Dispatched tasks.alert_tasks.detect_teacher_alerts")
-
-
-def _dispatch_daily_digest() -> None:
-    celery_app.send_task("tasks.digest_tasks.send_daily_digest")
-    logger.debug("Dispatched tasks.digest_tasks.send_daily_digest")

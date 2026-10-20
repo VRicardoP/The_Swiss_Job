@@ -1,5 +1,4 @@
 from models.enums import (
-    ApplicationStatus,
     ContractType,
     MatchFeedback,
     NotifyFrequency,
@@ -15,7 +14,6 @@ from models.generated_document import GeneratedDocument
 from models.document_delivery import DocumentDelivery
 from models.integration_inbox import IntegrationInbox
 from models.job import Job
-from models.job_application import JobApplication
 from models.job_filter import JobFilter, PatternSuggestion
 from models.jobhunt_profile_map import JobhuntProfileMap
 from models.match_result import MatchResult
@@ -28,7 +26,6 @@ from models.user_profile import UserProfile
 
 __all__ = [
     "ProfileErasure",
-    "ApplicationStatus",
     "ContractType",
     "GeneratedDocument",
     "DocumentDelivery",
@@ -36,7 +33,6 @@ __all__ = [
     "ExclusionSyncState",
     "ProfileSyncState",
     "Job",
-    "JobApplication",
     "JobFilter",
     "JobhuntProfileMap",
     "MatchFeedback",

@@ -19,11 +19,9 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import text, update
 
 from config import settings
 from core.security import hash_password
-from models.job import Job
 from models.user import User
 
 
@@ -51,6 +49,42 @@ class _FakeRedis:
 
     def close(self):
         pass
+
+
+class _FakeOffer:
+    """Oferta servida por el catálogo, con los campos que lee el aviso."""
+
+    def __init__(self, hash_, title, first_seen_at, *, tags=(), category="H"):
+        self.hash = hash_
+        self.title = title
+        self.first_seen_at = first_seen_at
+        self.tags = list(tags)
+        self.company = "Schule Bern"
+        self.canton = "BE"
+        self.location = None
+        self.url = f"https://example.com/{hash_}"
+        self.category = category  # sólo lo usa el doble para filtrar
+
+
+class _FakeCatalog:
+    """Doble del catálogo del core con SU contrato: devuelve las ofertas de la
+    categoría pedida cuya alta es posterior a `since`.
+
+    El filtro por `since` vive ahora en el /v1, así que el doble lo reproduce:
+    sin eso, los tests de la ventana solapada no probarían nada (DT-148 A1).
+    """
+
+    def __init__(self, offers=()):
+        self.offers = list(offers)
+        self.calls: list[tuple] = []
+
+    async def recent(self, *, category, since, limit=500):
+        self.calls.append((category, since, limit))
+        return [
+            offer
+            for offer in self.offers
+            if offer.category == category and offer.first_seen_at >= since
+        ][:limit]
 
 
 class _FakeEmail:
@@ -85,97 +119,77 @@ async def _make_user(db) -> uuid.UUID:
     return uid
 
 
-async def _make_job(db, hash_: str, *, title: str, category=None, first_seen_at=None):
-    db.add(
-        Job(
-            hash=hash_,
-            source="schuljobs",
-            title=title,
-            company="Schule Bern",
-            url=f"https://example.com/{hash_}",
-            category=category,
-            is_active=True,
-        )
-    )
-    await db.commit()
-    if first_seen_at is not None:
-        await db.execute(
-            update(Job)
-            .where(Job.hash == hash_)
-            .values(first_seen_at=first_seen_at, last_seen_at=text("NOW()"))
-        )
-        await db.commit()
-
-
 @pytest.mark.asyncio
 class TestP11AlertaProfesor:
     """La oferta persistida por una transacción larga DEBE acabar notificada."""
 
-    async def _run(self, db, fake_redis, email):
+    async def _run(self, catalog, fake_redis, email):
         from tasks import alert_tasks
 
         with (
             patch("redis.from_url", lambda *a, **k: fake_redis),
-            patch("database.task_session", new=lambda: _session_of(db)),
+            patch("services.catalog.core_client.CoreCatalog", lambda *a, **k: catalog),
             patch("services.email_service.EmailService", lambda *a, **k: email),
         ):
             return await alert_tasks._detect_and_notify()
 
-    async def test_oferta_bajo_la_marca_se_notifica(self, db_session, monkeypatch):
+    async def test_oferta_bajo_la_marca_se_notifica(self, monkeypatch):
         monkeypatch.setattr(settings, "TEACHER_ALERT_ENABLED", True)
         monkeypatch.setattr(settings, "TEACHER_ALERT_EMAIL", "aviso@example.com")
         fake = _FakeRedis()
         email = _FakeEmail()
 
         # T0 = la transacción de cosecha ya está ABIERTA (es la fecha que
-        # Postgres pondrá en `first_seen_at`), pero aún no ha commiteado.
+        # Postgres pondrá en el alta), pero aún no ha commiteado.
         t0 = datetime.now(timezone.utc) - timedelta(minutes=2)
+        catalog = _FakeCatalog()
 
         # Corrida 1: la tarea no ve nada (la cosecha sigue sin commitear) y
         # guarda su marca — el instante de esta corrida es POSTERIOR a T0.
-        first = await self._run(db_session, fake, email)
+        first = await self._run(catalog, fake, email)
         assert first["status"] == "success"
         assert fake.store.get("teacher_alert:watermark") is not None
 
         # La cosecha commitea: la oferta aparece fechada en T0, por debajo del
         # instante en que se guardó la marca.
-        await _make_job(
-            db_session,
-            "g3wm-teacher-1",
-            title="Primarlehrer/in gesucht",
-            category="H",
-            first_seen_at=t0,
+        catalog.offers.append(
+            _FakeOffer("g3wm-teacher-1", "Primarlehrer/in gesucht", t0)
         )
 
-        # Corrida 2: con la ventana solapada la oferta entra; sin el lag,
-        # `first_seen_at > marca` es falso para siempre.
-        second = await self._run(db_session, fake, email)
+        # Corrida 2: con la ventana solapada la oferta entra; sin el lag, el
+        # `since` que se pide al catálogo la deja fuera para siempre.
+        second = await self._run(catalog, fake, email)
         assert second["matched"] == 1, (
             "la oferta persistida bajo la marca quedó en el hueco permanente"
         )
         assert email.sent, "no se envió el email de alerta"
+        # Y se le pidió al catálogo la categoría de docencia, no el corpus.
+        assert {call[0] for call in catalog.calls} == {"H"}
 
-    async def test_el_solape_no_reenvia_la_misma_oferta(self, db_session, monkeypatch):
+    async def test_el_solape_no_reenvia_la_misma_oferta(self, monkeypatch):
         monkeypatch.setattr(settings, "TEACHER_ALERT_ENABLED", True)
         monkeypatch.setattr(settings, "TEACHER_ALERT_EMAIL", "aviso@example.com")
         fake = _FakeRedis()
         email = _FakeEmail()
-        await _make_job(
-            db_session,
-            "g3wm-teacher-2",
-            title="Primarschule — Lehrperson",
-            category="H",
+        catalog = _FakeCatalog(
+            [
+                _FakeOffer(
+                    "g3wm-teacher-2",
+                    "Primarschule — Lehrperson",
+                    datetime.now(timezone.utc),
+                )
+            ]
         )
 
-        first = await self._run(db_session, fake, email)
-        second = await self._run(db_session, fake, email)
+        first = await self._run(catalog, fake, email)
+        second = await self._run(catalog, fake, email)
 
         assert first["matched"] == 1
         assert second["matched"] == 0, "el solape de la ventana reenvió el aviso"
         assert second["already_sent"] == 1
         assert len(email.sent) == 1
 
-    async def test_fallo_de_envio_libera_el_marcador(self, db_session, monkeypatch):
+    async def test_fallo_de_envio_libera_el_marcador(self, monkeypatch):
         """G4/P1-2 — la oferta nace FUERA del lag de 15 min, que es el caso real.
 
         Este test nacía con `first_seen_at = ahora`, dentro de los 15 minutos
@@ -189,19 +203,21 @@ class TestP11AlertaProfesor:
         monkeypatch.setattr(settings, "TEACHER_ALERT_ENABLED", True)
         monkeypatch.setattr(settings, "TEACHER_ALERT_EMAIL", "aviso@example.com")
         fake = _FakeRedis()
-        await _make_job(
-            db_session,
-            "g3wm-teacher-3",
-            title="Primarlehrperson 60%",
-            category="H",
-            first_seen_at=datetime.now(timezone.utc) - timedelta(hours=3),
+        catalog = _FakeCatalog(
+            [
+                _FakeOffer(
+                    "g3wm-teacher-3",
+                    "Primarlehrperson 60%",
+                    datetime.now(timezone.utc) - timedelta(hours=3),
+                )
+            ]
         )
 
         with pytest.raises(RuntimeError):
-            await self._run(db_session, fake, _FakeEmail(fail=True))
+            await self._run(catalog, fake, _FakeEmail(fail=True))
 
         ok = _FakeEmail()
-        result = await self._run(db_session, fake, ok)
+        result = await self._run(catalog, fake, ok)
         assert result["matched"] == 1, (
             "tras un fallo de SMTP el aviso debe reintentarse, no perderse"
         )

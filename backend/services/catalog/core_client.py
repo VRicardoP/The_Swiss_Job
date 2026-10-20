@@ -26,8 +26,6 @@ from .port import (
 
 logger = logging.getLogger(__name__)
 
-_UNSUPPORTED_MSG = "el /v1 del core no expone esta operacion de catalogo"
-
 # Limite de longitud de los Query params del /v1 (Query(max_length=200)).
 _CORE_QUERY_MAX_LEN = 200
 
@@ -61,6 +59,12 @@ _PAYLOAD_ERRORS = (
 _ETAG_CACHE_MAX = 512
 _PAGE_FRESH_SECONDS = 60
 _etag_cache: dict[tuple, tuple[str, dict, float]] = {}
+
+# Recorrido por cursor de `recent` (avisos por correo). El tope de paginas es
+# una proteccion contra un cursor que no avanza, no el presupuesto normal: con
+# `limit` por defecto el recorrido para mucho antes.
+_RECENT_PAGE_LIMIT = 100
+_RECENT_MAX_PAGES = 20
 
 
 def clear_catalog_feed_cache() -> None:
@@ -247,6 +251,24 @@ def _cache_page(cache_key: tuple, resp: httpx.Response, body: dict) -> None:
     _etag_cache[cache_key] = (etag, body, time.monotonic())
 
 
+async def _recent_page(client: httpx.AsyncClient, query: dict):
+    """Una pagina del recorrido de `recent`: (ofertas, cursor siguiente).
+
+    Un 200 con forma incompatible es tan inutilizable como el core caido, asi
+    que se traduce a `CoreUnavailableError` como en el resto del cliente.
+    """
+    body = _parse_page_body(await _request_page(client, query, {}))
+    try:
+        items = body["items"]
+        if not isinstance(items, list):
+            raise TypeError("items del core no es una lista")
+        return [vacancy_to_job_response(v) for v in items], body.get("next_cursor")
+    except _PAYLOAD_ERRORS as exc:
+        raise CoreUnavailableError(
+            f"payload invalido del catalogo del core: {type(exc).__name__}: {exc}"
+        ) from exc
+
+
 class CoreCatalog:
     """Cliente /v1 del core detras del puerto CatalogPort."""
 
@@ -262,7 +284,7 @@ class CoreCatalog:
         # inyecta resolve_catalog) permite presentar el hash MD5 legacy en
         # vez del UUID del core cuando existe Job local de respaldo (por su
         # `url` UNIQUE, la misma resolucion determinista que matching). Sin
-        # ella, TODA accion sobre el feed (POST /applications, POST
+        # ella, TODA accion sobre el feed (POST
         # /documents/generate: `job_hash` max_length=32 + `Job.hash ==`)
         # moria con 422/404.
         self._db = db
@@ -375,7 +397,7 @@ class CoreCatalog:
         # G1/P2-17: identidad accionable en lote — cada item con Job local de
         # respaldo (url UNIQUE) se presenta con su MD5 legacy; sin respaldo
         # conserva el UUID (solo lectura, como los items core-nativos del
-        # matching). Sin esto, POST /applications y /documents/generate
+        # matching). Sin esto, /documents/generate
         # partiendo del buscador morian con 422 (36 chars > max_length=32)
         # o, aun pasando, con 404 (Job.hash == job_hash).
         by_url = await self._resolve_legacy_hashes([b.url for b in briefs])
@@ -391,11 +413,50 @@ class CoreCatalog:
             has_more=(params.offset + params.limit) < total,
         )
 
-    async def stats(self):
-        raise CatalogUnsupportedError(_UNSUPPORTED_MSG)
+    async def recent(self, *, category: str, since, limit: int = 500):
+        """Ofertas ACTIVAS de una categoria dadas de alta desde `since`.
 
-    async def sources(self):
-        raise CatalogUnsupportedError(_UNSUPPORTED_MSG)
+        Pagina por CURSOR (keyset), no por offset: aqui no hace falta el total
+        y el keyset es el camino indexado del feed. El feed del core sirve solo
+        vacantes activas y presentables, que es exactamente lo que la consulta
+        legacy pedia con `is_active AND duplicate_of IS NULL`.
+
+        COTA declarada: se devuelven como maximo `limit` ofertas, y si el
+        recorrido llega a ese tope se GRITA en el log — para un aviso, perder
+        la cola en silencio seria peor que avisar de menos.
+        """
+        self._guard_credential()
+        jobs: list[JobResponse] = []
+        vistos: set[str] = set()
+        cursor = None
+        async with self._client_factory() as client:
+            for _ in range(_RECENT_MAX_PAGES):
+                query = {
+                    "category": category,
+                    "since": since.isoformat(),
+                    "limit": min(_RECENT_PAGE_LIMIT, max(1, limit - len(jobs))),
+                }
+                if cursor is not None:
+                    query["cursor"] = cursor
+                pagina, cursor = await _recent_page(client, query)
+                jobs.extend(pagina)
+                if cursor is None:
+                    return jobs
+                if len(jobs) >= limit:
+                    logger.error(
+                        "catalogo: la categoria %r trae mas de %d ofertas desde %s; "
+                        "el aviso se queda en el tope",
+                        category,
+                        limit,
+                        since,
+                    )
+                    return jobs[:limit]
+                if not isinstance(cursor, str) or not cursor or cursor in vistos:
+                    raise CoreUnavailableError("cursor del core sin progreso")
+                vistos.add(cursor)
+        raise CoreUnavailableError(
+            "el catalogo del core no agoto la categoria en el tope de paginas"
+        )
 
     # ------------------------------------------------------------------ feed
 

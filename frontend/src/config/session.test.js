@@ -12,7 +12,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { applicationsApi, endsSession, profileApi } from "./api";
+import { endsSession, profileApi, searchesApi } from "./api";
 import useAuthStore from "../stores/authStore";
 import { resolverErrorDeSesion } from "../hooks/useAuth";
 
@@ -48,7 +48,7 @@ describe("renovación de la sesión ante un 401", () => {
       .mockResolvedValueOnce(Response.json({ data: [], total: 0 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(applicationsApi.list()).resolves.toEqual({ data: [], total: 0 });
+    await expect(searchesApi.list()).resolves.toEqual({ data: [], total: 0 });
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(autorizacionDe(fetchMock.mock.calls[0])).toBe("Bearer viejo");
@@ -68,7 +68,7 @@ describe("renovación de la sesión ante un 401", () => {
       .mockResolvedValueOnce(Response.json({}, { status: 401 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(applicationsApi.list()).rejects.toMatchObject({ status: 401 });
+    await expect(searchesApi.list()).rejects.toMatchObject({ status: 401 });
     expect(fetchMock).toHaveBeenCalledTimes(3); // no hay bucle infinito
   });
 
@@ -89,8 +89,8 @@ describe("renovación de la sesión ante un 401", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await Promise.all([
-      applicationsApi.list(),
-      applicationsApi.stats(),
+      searchesApi.list(),
+      profileApi.getProfile(),
       profileApi.getProfile(),
     ]);
 
@@ -110,7 +110,7 @@ describe("lo transitorio NO cierra la sesión", () => {
         .mockResolvedValue(Response.json({ detail: "caído" }, { status }));
       vi.stubGlobal("fetch", fetchMock);
 
-      await expect(applicationsApi.list()).rejects.toMatchObject({ status });
+      await expect(searchesApi.list()).rejects.toMatchObject({ status });
       expect(fetchMock).toHaveBeenCalledTimes(1); // ni refresh ni reintento
       expect(useAuthStore.getState().token).toBe("viejo");
     },
@@ -118,7 +118,7 @@ describe("lo transitorio NO cierra la sesión", () => {
 
   it("un fallo de red tampoco la cierra", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
-    await expect(applicationsApi.list()).rejects.toThrow("Failed to fetch");
+    await expect(searchesApi.list()).rejects.toThrow("Failed to fetch");
     expect(useAuthStore.getState().token).toBe("viejo");
   });
 
@@ -129,7 +129,7 @@ describe("lo transitorio NO cierra la sesión", () => {
       .mockResolvedValueOnce(Response.json({ detail: "db caída" }, { status: 500 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(applicationsApi.list()).rejects.toMatchObject({ status: 401 });
+    await expect(searchesApi.list()).rejects.toMatchObject({ status: 401 });
     expect(useAuthStore.getState().token).toBe("viejo");
     expect(useAuthStore.getState().refreshToken).toBe("rt-1");
   });
@@ -143,7 +143,7 @@ describe("lo definitivo SÍ la cierra", () => {
       .mockResolvedValueOnce(Response.json({ detail: "invalid" }, { status: 401 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(applicationsApi.list()).rejects.toMatchObject({ status: 401 });
+    await expect(searchesApi.list()).rejects.toMatchObject({ status: 401 });
     expect(useAuthStore.getState().token).toBeNull();
     expect(useAuthStore.getState().refreshToken).toBeNull();
   });
@@ -153,7 +153,7 @@ describe("lo definitivo SÍ la cierra", () => {
     const fetchMock = vi.fn().mockResolvedValue(Response.json({}, { status: 401 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(applicationsApi.list()).rejects.toMatchObject({ status: 401 });
+    await expect(searchesApi.list()).rejects.toMatchObject({ status: 401 });
     expect(fetchMock).toHaveBeenCalledTimes(1); // no se intenta refrescar
     expect(useAuthStore.getState().token).toBeNull();
   });

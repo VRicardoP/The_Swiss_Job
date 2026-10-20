@@ -11,7 +11,6 @@ const SearchPage = lazy(() => import('./pages/SearchPage'))
 const JobDetailPage = lazy(() => import('./pages/JobDetailPage'))
 const ProfilePage = lazy(() => import('./pages/ProfilePage'))
 const MatchPage = lazy(() => import('./pages/MatchPage'))
-const PipelinePage = lazy(() => import('./pages/PipelinePage'))
 const SavedSearchesPage = lazy(() => import('./pages/SavedSearchesPage'))
 const SavedJobsPage = lazy(() => import('./pages/SavedJobsPage'))
 const FiltersPage = lazy(() => import('./pages/FiltersPage'))
@@ -82,14 +81,6 @@ function App() {
               element={
                 <ProtectedRoute>
                   <SavedJobsPage />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/pipeline"
-              element={
-                <ProtectedRoute>
-                  <PipelinePage />
                 </ProtectedRoute>
               }
             />

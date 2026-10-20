@@ -20,7 +20,6 @@ from services.scheduler import run_scheduler_with_leader_lock
 from services.exclusions_sync import run_exclusion_delivery
 from services.sse_manager import SSEManager
 from routers.analytics import router as analytics_router
-from routers.applications import router as applications_router
 from routers.auth import router as auth_router
 from routers.documents import router as documents_router
 from routers.integration_inbox import router as integration_inbox_router
@@ -209,7 +208,6 @@ app.add_middleware(
 
 # Routers
 app.include_router(analytics_router)
-app.include_router(applications_router)
 app.include_router(auth_router)
 app.include_router(documents_router)
 app.include_router(integration_inbox_router)

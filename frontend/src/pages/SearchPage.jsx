@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Search, SlidersHorizontal, X, Briefcase } from "lucide-react";
 import { useSearchStore } from "../stores/searchStore";
 import { useJobSearch } from "../hooks/useJobSearch";
@@ -15,6 +15,9 @@ import {
 
 function useDebounce(callback, delay) {
   const timer = useRef(null);
+  // DT-148 A16: sin cleanup, el temporizador pendiente disparaba el callback
+  // después de desmontar la página.
+  useEffect(() => () => clearTimeout(timer.current), []);
   return useCallback(
     (value) => {
       clearTimeout(timer.current);
@@ -83,6 +86,19 @@ export default function SearchPage() {
 
   const sentinelRef = useRef(null);
   const debouncedSetQ = useDebounce(setQ, 300);
+  // DT-148 A16: la caja era `defaultValue`, o sea NO controlada: «Clear all» y
+  // «Clear filters» vaciaban el store y relanzaban la búsqueda, pero el texto
+  // seguía escrito en pantalla. Ahora la caja es controlada y se sincroniza
+  // con el store DURANTE EL RENDER (el patrón de ProfilePage: un `useEffect`
+  // con setState provoca un render en cascada y el lint lo rechaza). El
+  // espejo local existe para que el store —y con él la búsqueda— sólo se
+  // escriba con el debounce, no en cada tecla.
+  const [texto, setTexto] = useState(q);
+  const [qReflejada, setQReflejada] = useState(q);
+  if (qReflejada !== q) {
+    setQReflejada(q);
+    setTexto(q);
+  }
 
   useEffect(() => {
     const sentinel = sentinelRef.current;
@@ -120,8 +136,11 @@ export default function SearchPage() {
               />
               <input
                 type="text"
-                defaultValue={q}
-                onChange={(e) => debouncedSetQ(e.target.value)}
+                value={texto}
+                onChange={(e) => {
+                  setTexto(e.target.value);
+                  debouncedSetQ(e.target.value);
+                }}
                 placeholder="Search jobs, skills or companies"
                 className={cn(
                   "h-11 w-full rounded-lg border border-border bg-surface pl-10 pr-3 text-sm",

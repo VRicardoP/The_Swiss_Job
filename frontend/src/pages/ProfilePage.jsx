@@ -81,11 +81,20 @@ export default function ProfilePage() {
   const fileInputRef = useRef(null);
 
   const [form, setForm] = useState(null);
+  const [hydratedFor, setHydratedFor] = useState(null);
 
-  // Hidratamos el formulario una vez que llega el profile.
+  // Hidratamos el formulario con la revisión que llega del servidor.
   // setState durante render (sin useEffect) es el patrón recomendado para
   // derivar estado de props/queries — evita el flash y la regla del lint.
-  if (profile && !form) {
+  // Sólo re-hidrata si `updated_at` CAMBIÓ, así que un refetch por foco de
+  // ventana no se lleva por delante lo que el usuario esté escribiendo.
+  // DT-148 A5: la hidratación era ÚNICA (`profile && !form`). Cuando el
+  // análisis del CV terminaba, el hook invalidaba ["profile"] y el servidor ya
+  // traía título y skills autocompletados, pero el formulario conservaba los
+  // valores viejos — y «Save» los volvía a escribir encima. Se re-hidrata
+  // cuando cambia la revisión del perfil.
+  if (profile && hydratedFor !== profile.updated_at) {
+    setHydratedFor(profile.updated_at);
     setForm({
       title: profile.title || "",
       skills: profile.skills || [],
@@ -102,7 +111,10 @@ export default function ProfilePage() {
     });
   }
 
-  if (isLoading || !form) {
+  // El ORDEN importa (DT-148 A5): con `isLoading || !form` delante, un error
+  // de carga dejaba `form` sin hidratar para siempre y la rama de error era
+  // INALCANZABLE — spinner infinito. `useProfile` no reintenta (retry: false).
+  if (isLoading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-border border-t-ink" />
@@ -116,6 +128,14 @@ export default function ProfilePage() {
         <div className="rounded-xl border border-error-border bg-error-light p-4 text-sm text-error">
           Error loading profile: {error.message}
         </div>
+      </div>
+    );
+  }
+
+  if (!form) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-border border-t-ink" />
       </div>
     );
   }
@@ -149,8 +169,20 @@ export default function ProfilePage() {
   function handleUploadCV(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    // Al subir, arranca la barra de progreso del autocompletado (SSE).
-    uploadCV.mutate(file, { onSuccess: () => cvAnalysis.start() });
+    // Al subir, arranca la barra de progreso del autocompletado (SSE) y se
+    // mezclan las skills que la extracción ya devuelve, como en el onboarding
+    // (DT-148 A5: aquí se perdían hasta la siguiente recarga).
+    uploadCV.mutate(file, {
+      onSuccess: (result) => {
+        if (result?.skills_extracted?.length) {
+          setForm((prev) => ({
+            ...prev,
+            skills: [...new Set([...prev.skills, ...result.skills_extracted])],
+          }));
+        }
+        cvAnalysis.start();
+      },
+    });
   }
 
   const weightsSum = Object.values(form.score_weights).reduce(

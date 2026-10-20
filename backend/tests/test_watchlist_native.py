@@ -11,7 +11,7 @@ from config import settings
 from services.schools.http_client import SchoolClient
 from services.schools.watchlist_state import CoreWatchlist
 from services.schools.port import CoreUnavailableError
-from tests.test_applications_contract import seeded  # noqa: F401  (fixture de pytest: se importa para que la resuelva por nombre)
+from tests.seeds import seeded  # noqa: F401  (fixture de pytest: se importa para que la resuelva por nombre)
 
 
 @pytest.mark.asyncio
