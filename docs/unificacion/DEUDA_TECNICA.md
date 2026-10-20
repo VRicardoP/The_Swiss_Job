@@ -804,6 +804,28 @@ hasta que la tabla esté vacía y entonces (a). Recomendación: (a) ahora, con
 `SELECT count(*) FROM jobhunt.shadow_inbox` anotado en el checkpoint antes del
 DROP. Va junto con F3 (`legacy_shadow.py`).
 
+**MEDIDO el 2026-10-21, antes de decidir nada** (lo que el punto pedía):
+
+```
+$ docker exec swissjob-postgres psql -U jobhunt_core \
+    -d swissjobhunter_r5_rehearsal \
+    -c 'SELECT count(*) FROM jobhunt.shadow_inbox;'
+ filas
+-------
+     0
+```
+
+La tabla está **VACÍA en producción**, así que la condición de la vía (b)
+—«dejar la purga hasta que la tabla esté vacía y entonces (a)»— ya se cumple y
+las dos vías convergen en la misma: la migración que la dropea.
+
+**NO SE EJECUTÓ, a propósito.** Es un DROP sobre una tabla de producción y el
+propio punto lo reserva al propietario, no al ejecutor. Lo único que faltaba
+para decidir era este número, y ya está. Cuando el propietario lo autorice, el
+trabajo es: migración `core00NN` con el DROP en `upgrade()` y el CREATE en
+`downgrade()`, fuera `jobhunt_core/retention.py:96-97,130` (la purga) y fuera
+`CORE_SHADOW_INBOX_RETENTION_DAYS` de `config.py:142`.
+
 #### B7 · Frontend — exportaciones sin importador — **CERRADO 2026-10-21**
 
 **Dónde** (`grep -rnw <nombre> frontend/src` excluyendo tests da sólo la
