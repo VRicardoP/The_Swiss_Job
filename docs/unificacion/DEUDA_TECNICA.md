@@ -25,10 +25,12 @@
 
 ## DT-148 · Auditoría de refactorización 2026-10-20 — bugs, código muerto, duplicación y principios
 
-**Estado: SECCIÓN A EJECUTADA Y COMMITEADA el 2026-10-20 en la rama
-`fix/dt148-auditoria-seccion-a` (4 commits: `1d16b44` cosecha del núcleo,
-`2ed72cd` dominio y API del núcleo, `922439f` BFF y frontend, y este de
-documentación). SIN desplegar. Secciones B a F ABIERTAS.** El inventario sigue siendo el plan de
+**Estado: SECCIÓN A + F1 + F2 EJECUTADAS, FUSIONADAS y DESPLEGADAS en
+producción el 2026-10-20** (PR #24, merge `8ffb8b3`; seis commits desde
+`1d16b44`). Núcleo y BFF corren `point5-8ffb8b3`, con el aviso de profesor
+verificado extremo a extremo contra el catálogo del núcleo. **Siguen ABIERTAS
+las secciones B, C, D y E**, más la reescritura de la sección 3 de COTAS que
+quedó de F2. El inventario sigue siendo el plan de
 ejecución por ítem; el acta de la sección A, al final de esta entrada, recoge
 lo hecho, lo medido y los NUEVE puntos en que el código desmintió al plan.
 
@@ -1750,6 +1752,7 @@ tocado aquí.
 | Fecha | Ítem | Estado | SHA | Pruebas ejecutadas | Desviaciones / evidencia |
 |---|---|---|---|---|---|
 | 2026-10-20 | Apertura | COMPLETADO | `8d01c50` | radon, vulture, ruff; verificación manual de A1, A2, A3, A4, A5, A6, A7, A9, B1 | Inventario escrito; nada aplicado. |
+| 2026-10-20 (noche) | **DESPLIEGUE en producción** | COMPLETADO | `8ffb8b3` (PR #24) | Núcleo: 4 contenedores en `swissjob-core:point5-8ffb8b3`, API healthy, `/v1/ready` publicando el SHA y `authoritative: true` (lo exige el script o aborta); migración del núcleo ejecutada ANTES de recrear en contenedor desechable. BFF: `swissjob-backend:point5-8ffb8b3` en backend y worker, healthy + Celery pong, Alembic en `a7c3d9e2f5b1` y `job_applications` y `public.application_status` ya no existen. **Prueba extremo a extremo con la credencial REAL**: el aviso de profesor ve 300 ofertas de docencia en 7 días y **2 de primaria** («Senior Primary Teacher … Zurich», «Primarlehrerin 60%»); en la ventana de 6 h que usa la tarea, 18 de docencia y 0 de primaria, que es lo esperable | Núcleo antes que BFF, como exige el contrato. `deploy/nas/` refrescado (T13 §7) y de paso corregida la etiqueta del frontend, que llevaba semanas desfasada en el versionado. Vuelta atrás: los `.before-core-8ffb8b3` y `.before-bff-8ffb8b3` quedan en el NAS |
 | 2026-10-20 (noche) | Punto 2: retirada del vertical de candidaturas | EJECUTADO y commiteado (`922439f`) | sobre `8d01c50` | Migración `a7c3d9e2f5b1` ida/vuelta/ida + `alembic check`; BFF 750 pasan · 0 fallan (los 19 menos son los dos ficheros de test del vertical); frontend eslint + 59 vitest + build; cuentas de producción en solo lectura (0 candidaturas) | −1.201 líneas BFF, −357 frontend; `tests/seeds.py` nuevo con las siembras compartidas. Desplegar: migración del BFF ANTES de recrear el contenedor (la ruta y el modelo ya no existen). |
 | 2026-10-20 (tarde) | Puntos abiertos 1 y 3 | EJECUTADO y commiteado (`922439f`) | sobre `8d01c50` | BFF 769 pasan · 0 fallan (los 20 menos que antes son exactamente los tests de las tareas retiradas: 11+4+1+2+2); lint limpio; prueba extremo a extremo de la alerta contra `core-api` real (`candidates=500, matched=11`) | Punto 1: tres tareas retiradas (597 líneas de ficheros + recortes, 6 settings). Punto 2: sin cambio de autoridad por el gate de DT-144; contradicción documentada para el propietario. Hallazgo nuevo: URL `0.0.0.0:3000` en el corpus de zebis. |
 | 2026-10-20 | Sección A (fases 1 y 2) | EJECUTADO y commiteado (`1d16b44`, `2ed72cd`, `922439f`) | sobre `8d01c50` | **Core 1.785 pasan · 1 omitido · 0 fallan** y **BFF 789 pasan · 0 fallan**, las dos corridas sobre el árbol FINAL (una corrida intermedia del BFF arrancó antes de A11 y se descartó; 3 rojos de `test_deploy_order` en una corrida del core eran artefacto del arnés —necesita la raíz del repo montada— y con ella pasan los 11). Frontend: eslint + 59 vitest + build. Controles negativos en A2, A7 y A15 | 64 ficheros. Nueve desmentidos del plan en el acta de arriba (A2 son 8 providers; A1 exige barrera `OFFSET 0` y rechaza `offset`; A4 bloqueado por `varchar(32)`+FK). A1 paso 4 y el fondo de A4 siguen siendo decisión del propietario. |
