@@ -1,7 +1,8 @@
 # Topología REAL de producción en el NAS — core.configured.yml
 # Copia semántica de /share/CACHEDEV1_DATA/Public/unification-e15-20260914/core.configured.yml,
 # con 8 valores sensibles sustituidos por marcadores.
-# Refrescado el 2026-10-19 tras desplegar y sondear DT-147 en c990131.
+# Refrescado el 2026-10-20 tras desplegar DT-148 (sección A + F1/F2) en 8ffb8b3:
+# filtros `category`/`since` del catálogo y kill-switch de bloqueos parciales.
 name: unification-e15-20260914
 services:
   core-api:
@@ -27,7 +28,7 @@ services:
       PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
       PYTHON_VERSION: 3.12.14
       PYTHONDONTWRITEBYTECODE: '1'
-    image: swissjob-core:point5-c990131
+    image: swissjob-core:point5-8ffb8b3
     logging:
       driver: json-file
       options:
@@ -92,7 +93,7 @@ services:
       PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
       PYTHON_VERSION: 3.12.14
       PYTHONDONTWRITEBYTECODE: '1'
-    image: swissjob-core:point5-c990131
+    image: swissjob-core:point5-8ffb8b3
     logging:
       driver: json-file
       options:
@@ -146,7 +147,7 @@ services:
       PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
       PYTHON_VERSION: 3.12.14
       PYTHONDONTWRITEBYTECODE: '1'
-    image: swissjob-core:point5-c990131
+    image: swissjob-core:point5-8ffb8b3
     logging:
       driver: json-file
       options:
@@ -197,7 +198,7 @@ services:
       PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
       PYTHON_VERSION: 3.12.14
       PYTHONDONTWRITEBYTECODE: '1'
-    image: swissjob-core:point5-c990131
+    image: swissjob-core:point5-8ffb8b3
     logging:
       driver: json-file
       options:

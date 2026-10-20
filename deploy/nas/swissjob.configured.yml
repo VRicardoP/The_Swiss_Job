@@ -3,9 +3,13 @@
 # con los valores sensibles sustituidos por ${VARIABLE} (19). Verificado sin secretos por
 # scripts/check_no_secrets.py (también en CI). Refrescado el 2026-09-28 tras aplicar
 # healthchecks a 60 s y límites de memoria (A19-25, A19-11).
+# Refrescado el 2026-10-20 tras desplegar DT-148 en 8ffb8b3 (aviso de profesor
+# leyendo el núcleo, purga de refresh, dos verticales retirados y la migración
+# a7c3d9e2f5b1). La etiqueta del frontend se corrige de paso: el versionado
+# decía 254e826 y lo que corre desde hace semanas es acf48b2.
 services:
   backend:
-    image: swissjob-backend:point5-4017081
+    image: swissjob-backend:point5-8ffb8b3
     mem_limit: 1536m
     container_name: swissjob-backend
     environment:
@@ -88,7 +92,7 @@ services:
         soft: 65535
         hard: 65535
   worker:
-    image: swissjob-backend:point5-4017081
+    image: swissjob-backend:point5-8ffb8b3
     mem_limit: 1g
     container_name: swissjob-worker
     environment:
@@ -150,7 +154,7 @@ services:
         soft: 65535
         hard: 65535
   frontend:
-    image: swissjob-frontend:point5-254e826
+    image: swissjob-frontend:point5-acf48b2
     mem_limit: 128m
     container_name: swissjob-frontend
     environment:
