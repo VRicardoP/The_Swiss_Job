@@ -40,6 +40,7 @@ from jobhunt_core.api.http_contract import (
 )
 from jobhunt_core.api.idempotency import run_idempotent
 from jobhunt_core.erasure import ProfileErasedError
+from jobhunt_core.match_categories import content_search_text_sql, sql_case
 
 # Los errores del contrato quedan DOCUMENTADOS en OpenAPI (auditoría A-09:
 # ErrorDTO debe aparecer en components, no ser código muerto).
@@ -115,12 +116,31 @@ def decode_vacancy_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
         ) from exc
 
 
+def _category_join() -> str:
+    """LATERAL que calcula UNA vez por fila el texto que clasifica el CASE.
+
+    `OFFSET 0` es una BARRERA de optimización, no paginación: sin ella el
+    planificador sube la subconsulta y evalúa el texto una vez por CADA
+    predicado del CASE (13 categorías × decenas de palabras cada una). Medido
+    sobre 19.575 activas, ventana de 120 días y página de 21: **25,861 s** sin
+    barrera frente a **0,020 s** con ella. Quitarla no rompe nada visible —
+    sólo multiplica el coste por mil trescientos (DT-148 A1).
+    """
+    return (
+        "CROSS JOIN LATERAL (SELECT "
+        + content_search_text_sql()
+        + " AS search_text OFFSET 0) cat "
+    )
+
+
 def _catalog_filter_sql(
     q: str | None,
     source: str | None,
     remote: bool | None,
     country: str | None,
     city: str | None,
+    category: str | None = None,
+    since: datetime | None = None,
 ) -> tuple[str, list[str], dict]:
     """(join_sql, condiciones WHERE, params) de los filtros del feed de
     catálogo (cierre de cota C-API-R: el BFF dejaba de servir — 501 en
@@ -140,6 +160,21 @@ def _catalog_filter_sql(
     COTA que PERMANECE (documentada): salary_min/max y employment_type — el
     content solo tiene `salary` texto libre y no modela employment_type;
     filtrar números contra texto libre sería inventarse el resultado.
+
+    - `category`: la taxonomía de `match_categories` aplicada al título y los
+      tags de la canónica — la MISMA regla que las facetas del feed, que ahora
+      comparten la expresión del texto clasificado. Se evalúa en un LATERAL
+      (una vez por fila): inlinearla en el CASE la ejecutaría una vez por
+      palabra clave.
+    - `since`: `created_at >= :since` sobre la vacante, apoyado en el keyset
+      core0012.
+    COTA de `category`, medida: no hay índice por categoría y no se promete
+    que lo haya. Con la barrera del LATERAL, clasificar sale barato por fila
+    (página de 21 en 0,015-0,057 s sobre 19.575 activas), pero el RECUENTO
+    clasifica todas las filas que casan (1,6 s) y crece con el corpus: por eso
+    `category` + `offset` se rechaza en el endpoint. Existe porque el aviso de
+    profesor de primaria del BFF necesita «la docencia nueva» y la tabla
+    legacy de la que la leía dejó de tener escritores (DT-148 A1).
 
     Remote=true usa el índice parcial core0044; título/empresa, los trigram
     core0045. Location conserva su coste por fila."""
@@ -183,7 +218,31 @@ def _catalog_filter_sql(
             "(o.content->>'remote')::boolean = " + ("true" if remote else "false")
         )
     _location_conditions(where, params, country=country, city=city)
+    join += _classified_conditions(where, params, category=category, since=since)
     return join, where, params
+
+
+def _classified_conditions(
+    where: list[str], params: dict, *, category: str | None, since: datetime | None
+) -> str:
+    """Filtros derivados de la canónica: categoría y alta. Muta where/params.
+
+    Devuelve el JOIN que la categoría necesita (vacío si no se pidió), con el
+    mismo estilo mutador que `_location_conditions`.
+    """
+    join = ""
+    if category is not None:
+        # El texto clasificado se calcula UNA vez por fila; el CASE sólo lee su
+        # alias (misma estructura que el `raw`/`feed` de las facetas).
+        join = _category_join()
+        category_case, category_params = sql_case("cat.search_text")
+        where.append("(" + category_case + ") = :category")
+        params.update(category_params)
+        params["category"] = category
+    if since is not None:
+        where.append("v.created_at >= :since")
+        params["since"] = since
+    return join
 
 
 def _location_conditions(where: list[str], params: dict, **values: str | None) -> None:
@@ -332,6 +391,8 @@ async def list_vacancies(
     remote: bool | None = Query(None),
     country: str | None = Query(None, max_length=200),
     city: str | None = Query(None, max_length=200),
+    category: str | None = Query(None, pattern=r"^(?:[A-M]|otros)$"),
+    since: datetime | None = Query(None),
 ):
     """Feed/búsqueda de catálogo (C-API-R): corpus GLOBAL (cualquier credencial
     con vacancies:read; sin ownership) — solo vacantes ACTIVAS y presentables
@@ -356,13 +417,28 @@ async def list_vacancies(
     FILTROS ESTRUCTURADOS (cierre de cota C-API-R — semántica y cotas
     restantes en `_catalog_filter_sql`): `source` (CSV ci, primary listing),
     `remote` (igualdad, NULL no casa), `country`/`city` (substring ci sobre
-    location). El keyset (created_at, id) es independiente de los filtros: el
+    location), `category` (taxonomía de match_categories, la misma de las
+    facetas) y `since` (alta de la vacante, para pedir sólo lo nuevo). El keyset (created_at, id) es independiente de los filtros: el
     WHERE solo estrecha filas y el orden no cambia, así que el cursor sigue
     siendo estable bajo el MISMO juego de filtros página a página."""
     if offset is not None and cursor is not None:
         raise ApiError(400, "invalid_pagination", "offset y cursor son excluyentes")
+    if category is not None and offset is not None:
+        # El recuento de un feed CLASIFICADO tiene que clasificar todas las
+        # filas que casan, así que crece con el corpus; el keyset para al
+        # llenar la página. Medido sobre 19.575 activas: página de 21 en
+        # 0,015-0,057 s y de 101 en 0,39-0,42 s, frente a 1,56-1,60 s para el
+        # recuento. No se promete un total que no está indexado (DT-148 A1).
+        raise ApiError(
+            400,
+            "invalid_pagination",
+            "category no admite offset: usa cursor (el total de un feed "
+            "clasificado no está indexado)",
+        )
     cur = decode_vacancy_cursor(cursor) if cursor else None
-    join_sql, where, params = _catalog_filter_sql(q, source, remote, country, city)
+    join_sql, where, params = _catalog_filter_sql(
+        q, source, remote, country, city, category, since
+    )
     where = ["v.archived_at IS NULL", "v.merged_into IS NULL"] + where
     # Se pide UNA fila de más (limit+1) SOLO para saber si hay página siguiente
     # (P2 rev. externa C-API-R): emitir cursor cuando len(rows)==limit mentía en

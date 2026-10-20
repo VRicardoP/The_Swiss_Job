@@ -1033,6 +1033,74 @@ def test_catalog_filter_remote_and_location(db):
     assert (r.status_code, r.json()["code"]) == (400, "invalid_request")
 
 
+def test_catalog_filter_category_and_since(db):
+    """DT-148 A1: `category` (la taxonomía de las facetas) y `since` (el alta).
+
+    Existen porque el aviso de profesor de primaria del BFF leía
+    `jobs.category='H'` de una tabla legacy que dejó de tener escritores: sin
+    poder pedir «la docencia nueva» al catálogo, el aviso no vuelve a disparar.
+    La categoría se deriva del título Y de los tags de la canónica, igual que
+    en las facetas del feed — las dos comparten ya la expresión del texto.
+    """
+    factory, created = db
+    token, vacs, auth = _seed_catalog(factory, created, n=3)
+    v0, v1, v2 = (str(vacs[f"{token}v{i}"]) for i in range(3))
+    _enrich_content(factory, v0, {"title": f"{token}v0 primary teacher"})
+    _enrich_content(factory, v1, {"tags": ["tutor"]})  # los tags también clasifican
+    base = f"/v1/vacancies?q={token}"
+
+    docencia = {
+        i["id"] for i in _api(factory, base + "&category=H", token=auth).json()["items"]
+    }
+    assert docencia == {v0, v1}
+    otros = _api(factory, base + "&category=otros", token=auth).json()["items"]
+    assert [i["id"] for i in otros] == [v2]
+    assert _api(factory, base + "&category=A", token=auth).json()["items"] == []
+    # Fuera de la taxonomía ⇒ 400 del contrato, no 500 ni página silenciosa.
+    r = _api(factory, base + "&category=unknown", token=auth)
+    assert (r.status_code, r.json()["code"]) == (400, "invalid_request")
+    # `offset` con `category` se RECHAZA: el total de un feed clasificado
+    # clasifica todo lo que casa y crece con el corpus (1,6 s medidos).
+    r = _api(factory, base + "&category=H&offset=0", token=auth)
+    assert (r.status_code, r.json()["code"]) == (400, "invalid_pagination")
+
+    # `since` corta por el alta de la vacante, y compone en AND con category.
+    assert (
+        _api(factory, base + "&since=2099-01-01T00:00:00Z", token=auth).json()["items"]
+        == []
+    )
+    nuevas = {
+        i["id"]
+        for i in _api(
+            factory, base + "&category=H&since=2000-01-01T00:00:00Z", token=auth
+        ).json()["items"]
+    }
+    assert nuevas == {v0, v1}
+
+
+def test_catalog_category_classifies_once_per_row(db):
+    """El texto clasificado se evalúa en un LATERAL, no por palabra clave.
+
+    MUERDE si alguien inlinea la expresión dentro del CASE: son 13 categorías
+    con decenas de palabras cada una, así que el subselect de los tags se
+    ejecutaría cientos de veces por fila.
+    """
+    from jobhunt_core.api.v1 import _catalog_filter_sql
+
+    factory, _created = db
+    join, where, params = _catalog_filter_sql(None, None, None, None, None, "H", None)
+    assert join.count("CROSS JOIN LATERAL") == 1
+    assert join.count("jsonb_array_elements") == 1
+    condicion = where[0]
+    assert "jsonb_array_elements" not in condicion
+    assert condicion.count("cat.search_text") >= 13
+    assert params["category"] == "H"
+    # La BARRERA de optimización: sin `OFFSET 0` el planificador sube la
+    # subconsulta y vuelve a evaluar el texto por cada predicado del CASE.
+    # Medido: 25,861 s frente a 0,020 s para la misma página de 21.
+    assert "OFFSET 0) cat" in join
+
+
 def test_catalog_filter_keyset_stable(db):
     """El cursor keyset sigue siendo ESTABLE bajo filtros: paginar filtrado en
     trozos == la página filtrada completa, sin huecos ni solapes aunque filas

@@ -38,7 +38,11 @@ def run_one_task(self, search_id: str):
     sid = uuid.UUID(search_id)
     try:
         result = asyncio.run(_run(search_id=sid))
-    except Exception:
+    except Exception as exc:
+        # DT-148 A10: se reintentaba y la causa real se perdía SIN RASTRO —
+        # su hermana `run_due_task` sí la registra. Nunca el texto (puede
+        # arrastrar preferencias del usuario), sólo el tipo.
+        logger.error("saved-search execution failed: %s", type(exc).__name__)
         raise self.retry(
             exc=RuntimeError("saved-search execution failed"), countdown=120
         ) from None

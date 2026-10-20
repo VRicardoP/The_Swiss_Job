@@ -261,6 +261,19 @@ async def record_observation(
                     "m": json.dumps(metadata),
                 },
             )
+        elif enriched:
+            # DT-148 A7: el enriquecimiento se calculaba y se TIRABA. La URL o
+            # la descripción nuevas sólo se guardaban si además había que
+            # re-enlazar, y `record_shared_observation` pasa siempre
+            # `publish_missing=False` a los monitores que no son la fuente: una
+            # fila ya enlazada perdía el dato en silencio, cosecha tras cosecha.
+            await session.execute(
+                sa.text(
+                    "UPDATE school_job_details SET metadata=CAST(:m AS jsonb),"
+                    "updated_at=clock_timestamp() WHERE id=:id"
+                ),
+                {"id": existing["id"], "m": json.dumps(metadata)},
+            )
         return existing["id"], False
     vacancy_id, reason = (
         await link_observation(
