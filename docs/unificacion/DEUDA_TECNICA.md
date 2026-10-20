@@ -674,7 +674,7 @@ Procedimiento común a todos los B: (1) la búsqueda de consumidores de la regla
 (3) `ruff check` (F401 de imports que quedan huérfanos); (4) suite focal del
 fichero; (5) si se tocó `Settings`, regenerar `.env.prod.example`.
 
-#### B1 · Rama de re-ranking LLM de `groq_service.py` — 442 LOC + 721 de tests, cero llamadores
+#### B1 · Rama de re-ranking LLM de `groq_service.py` — **CERRADO 2026-10-21**
 
 **Dónde.** `backend/services/groq_service.py:21-61` (`_solo_textos`,
 `_CACHE_SCHEMA_VERSION`, `_sanear_veredicto`), `:62-105` (`RERANK_SYSTEM_PROMPT`,
@@ -703,7 +703,7 @@ letter_generator, warm.
 **Verificación.** `test_groq_service.py`, `test_translation_service.py`,
 `test_env_example_covers_settings.py`.
 
-#### B2 · `backend/utils/text.py` es una copia literal de `rss_text.py` del core y sólo se usa una función
+#### B2 · `backend/utils/text.py`, copia literal de `rss_text.py` — **CERRADO 2026-10-21** (264 → 21 LOC)
 
 **Dónde.** `backend/utils/text.py` (264 LOC): `SWISS_CANTONS`, `JOB_TAGS`,
 `strip_html_tags`, `extract_job_skills`, `extract_canton`.
@@ -715,7 +715,7 @@ letter_generator, warm.
 `backend/tests/test_utils.py` a sus casos. No importar desde el core: la
 frontera BFF↔core es HTTP, no imports (plan §21).
 
-#### B3 · Módulos, métodos y settings del BFF sin consumidor de producción
+#### B3 · Módulos, métodos y settings del BFF sin consumidor de producción — **CERRADO 2026-10-21**
 
 | Símbolo | Dónde | Consumidores fuera de tests | Acción |
 |---|---|---|---|
@@ -729,7 +729,7 @@ frontera BFF↔core es HTTP, no imports (plan §21).
 | `tasks/example_task.py` (`tasks.ping`) | — | sólo `celery_app.conf.include:43` | borrar fichero y la línea del include |
 | Settings `MATCH_SCORE_THRESHOLD`, `MATCH_LLM_RERANK_TOP`, `MATCH_LLM_RERANK_MAX`, `SEMANTIC_DEDUP_THRESHOLD`, `SEMANTIC_DEDUP_TITLE_OVERLAP_MIN`, `ALERTS_MAX_PUSH_PER_DAY`, `ALERTS_MIN_SCORE_THRESHOLD`, `SCHEDULER_SEARCH_INTERVAL_MINUTES`, `SAVED_SEARCH_INITIAL_LOOKBACK_DAYS` | `backend/config.py:111-165, 244` | 0 lectores fuera de `config.py`/tests (medido con `grep -rnw`) | borrar campo y su comentario; regenerar `.env.prod.example`; `CLAUDE.md:456` cita `MATCH_SCORE_THRESHOLD` (F1) |
 
-#### B4 · Símbolos muertos del core
+#### B4 · Símbolos muertos del core — **CERRADO 2026-10-21**
 
 | Símbolo | Dónde | Evidencia | Acción |
 |---|---|---|---|
@@ -745,7 +745,7 @@ frontera BFF↔core es HTTP, no imports (plan §21).
 | `evaluate_profile(with_corpus_generation=…)` | `matching.py:2069-2071` | `gen_snapshot` se lee SIEMPRE en `:2048` en la misma transacción; el flag sólo elige entre dos lecturas equivalentes, y con `target == 0` devuelve None | `corpus_gen = gen_snapshot`; quitar el parámetro y sus dos usos en `tasks/matching.py:281,312`; mantener `compute_policy_feed(with_corpus_generation=...)` si lo usa alguien más (comprobar) |
 | Settings `CORE_EMBEDDING_MODEL_NAME`, `CORE_ENV`, `CORE_LOCK_PREFIX` | `jobhunt_core/config.py` | 0 lectores fuera de config/tests | borrar |
 
-#### B5 · Herramientas de desarrollo que viajan en la imagen de producción
+#### B5 · Herramientas de desarrollo que viajan en la imagen de producción — **PASOS 1-2 CERRADOS 2026-10-21; 3-4 NO EJECUTADOS (ver acta)**
 
 **Dónde.** `jobhunt_core/dev_eval.py` (777 LOC; `evaluate_dev` D28,
 `_validate_universe_seal` D22; `open()` sin context manager en `:716`),
@@ -804,7 +804,7 @@ hasta que la tabla esté vacía y entonces (a). Recomendación: (a) ahora, con
 `SELECT count(*) FROM jobhunt.shadow_inbox` anotado en el checkpoint antes del
 DROP. Va junto con F3 (`legacy_shadow.py`).
 
-#### B7 · Frontend — exportaciones sin importador
+#### B7 · Frontend — exportaciones sin importador — **CERRADO 2026-10-21**
 
 **Dónde** (`grep -rnw <nombre> frontend/src` excluyendo tests da sólo la
 definición): `useCreateApplication` (`hooks/useApplications.js:18`) y
@@ -823,7 +823,7 @@ si A4 se cierra y el propietario quiere la acción «guardar candidatura» en la
 UI, se conserva y se conecta; si no, se borra. Anotar la decisión.
 **Verificación.** `npm run lint && npx vitest run && npm run build`.
 
-#### B8 · Clases Tailwind sin efecto y paleta fuera del tema
+#### B8 · Clases Tailwind sin efecto y paleta fuera del tema — **CERRADO 2026-10-21**
 
 **Dónde.** `frontend/src/pages/JobDetailPage.jsx:146` usa `prose prose-sm
 prose-headings:…` sin `@tailwindcss/typography` (no está en `package.json` ni
@@ -834,6 +834,75 @@ otras páginas para texto largo (mirar `DocumentGenerator.jsx:38`
 `MarkdownRenderer`), o instalar el plugin SOLO si el propietario lo aprueba
 (regla «no introducir dependencias sin justificarlo»). `bg-gray-50` →
 `bg-surface-secondary`. Se cierra junto con C8 (AuthShell).
+
+### Acta de ejecución de la sección B — 2026-10-21
+
+**Resultado.** B1, B2, B3, B4, B7 y B8 CERRADOS. B5 cerrado en sus pasos 1-2
+(el objetivo: las herramientas fuera de la imagen) y NO ejecutado en 3-4. B6
+sigue esperando la decisión del propietario, que es lo que el propio punto dice.
+Balance de los commits `f1439fc`, `1b64c31`, `e3b8a5c` y el de B5: **2.811
+líneas netas fuera** sólo en B1-B4.
+
+**Cuatro cosas que el inventario tenía mal y hubo que corregir ejecutando:**
+
+1. **B1 omitía el doble de LLM.** `tests/llm_stub.py` importaba
+   `RERANK_SYSTEM_PROMPT` para despachar su handler de rerank, y
+   `tests_live/test_llm_contract_live.py` ejercitaba `_rerank_prompt` y
+   `_parse_llm_response`. Sin tocarlos, borrar la rama dejaba la suite entera
+   sin recolectar. Se fueron el handler y el caso en vivo.
+2. **B3 decía que `clear_profile_cache` lo usan tres módulos.** Lo usa UNO
+   (`profile_erasure.clear_erased_caches`) y existía para invalidar la caché de
+   ETag de `CoreProfile`. Al irse el adaptador, la función vaciaba un
+   diccionario que nadie escribe: eso no protege ningún dato, sólo lo parece.
+   Se fue con la caché, y la prueba de borrado conserva la mitad que importa
+   (la caché del FEED, que sí sirve contenido del sujeto).
+3. **B4 daba `CORE_ENV` por muerto.** Lo lee `jobhunt_core/config.py:161`, en
+   el validador que exige el aislamiento del DoD en producción. NO se tocó.
+   Sí se fueron `CORE_LOCK_PREFIX` (prometía un namespace de locks que no daba:
+   los locks son `pg_advisory_xact_lock` sobre claves hasheadas) y
+   `CORE_EMBEDDING_MODEL_NAME` (activamente engañoso: el backend carga el
+   `(name, version)` de cada encoder REGISTRADO en la base, nunca este valor).
+4. **B5 buscaba consumidores excluyendo los tests, y eso ocultó una
+   dependencia real.** Dos tests del NÚCLEO dependen de `dev_eval`:
+   `test_integration_cross_encoder.py` construye sobre cinco de sus helpers y
+   `test_review_evidence_20260907.py` reproduce con él la regresión del sello.
+   `dev_eval` es el INSTRUMENTO DE MEDIDA del gate de matching, así que esos
+   tests están en su sitio. Se movieron los dos MÓDULOS a `tools/core/` —que es
+   el objetivo: la imagen reconstruida ya no los contiene, comprobado con
+   `ls /app/jobhunt_core`— y `test_integration_dev_eval.py` se quedó donde
+   están sus consumidores, con la costura declarada UNA vez en
+   `jobhunt_core/tests/dev_tools.py`. El perfil de DESARROLLO monta `./tools`
+   de solo lectura, exactamente como ya montaba `./scripts` por el mismo
+   motivo; el perfil operativo no, que es el punto.
+
+**Dos desviaciones deliberadas del plan, con su motivo:**
+
+- **No se borró `scripts/set_match_facets_flag.py`.** El inventario lo
+  justificaba con «0 referencias», pero edita `CORE_MATCH_FACETS_ENABLED` en el
+  compose de producción, que hoy está en `true`. Cero referencias no es lo
+  mismo que ningún propósito: es herramienta de OPERADOR, de la familia de
+  `rotate_credential.py` y `policy_ctl.py`, que el propio B5 dice no mover. En
+  su lugar su test entró al CI.
+- **No se ejecutaron los pasos 3 y 4 de B5** (reagrupar los 18
+  `provision_*.py` en un subpaquete y mudar las sondas de un solo uso a
+  `tools/probes/`). Son reorganización pura: cambian rutas citadas en actas y
+  los `python -m jobhunt_core.provision_x` de un runbook de operación
+  (`DT144_RELEVO.md`) a cambio de CERO efecto en producción. Equivocarse ahí
+  rompe un procedimiento operativo por ninguna ganancia. Quedan abiertos.
+
+**Lo que sí entró al CI** (parte de B5 paso 4, la que protege algo): `tools` al
+`ruff check` junto a `scripts` y `docs` —un árbol nuevo fuera del linter es
+exactamente cómo esos dos acumularon 53 avisos—, la invocación de
+`tools/core/tests`, y los cuatro tests de scripts que nadie lanzaba
+(`check_no_secrets`, que impide que vuelva un literal a `deploy/nas`;
+`check_core_release`, que es el ritual de verificación tras desplegar;
+`ensure_swissjob_frontend` y `set_match_facets_flag`). Un test que nadie
+ejecuta no protege nada. Comprobados: 11 pasan.
+
+**Pruebas.** BFF 672 passed. Núcleo 1.784 passed · 1 skipped (incluye
+`test_deploy_order` y `tools/core/tests`, con la raíz del repo montada).
+Frontend: eslint limpio, 60 tests, build correcto. `ruff check` y
+`ruff format --check` limpios en los 663 ficheros del repo y los 247 del BFF.
 
 ### C · Duplicación (consolidar sin cambiar comportamiento)
 

@@ -39,11 +39,26 @@ jobs:
       # A19-23: `scripts/` y los .py de `docs/` estaban FUERA del linter y nadie
       # lo sabia — este job corre con working-directory: backend, asi que el
       # `ruff check .` de arriba nunca los alcanzo. Acumulaban 22 y 31 avisos.
-      - name: Lint de scripts/ y docs/
+      # DT-148 B5: `tools/` se suma el 2026-10-21, cuando nació con las dos
+      # herramientas de desarrollo del núcleo. Un árbol nuevo fuera del linter
+      # es exactamente cómo `scripts/` y `docs/` acumularon 53 avisos.
+      - name: Lint de scripts/, docs/ y tools/
         working-directory: ${{ github.workspace }}
         run: |
-          ruff check scripts docs
-          ruff format --check scripts docs
+          ruff check scripts docs tools
+          ruff format --check scripts docs tools
+      # DT-148 B5: estos tres tests protegen scripts de CI y de DESPLIEGUE
+      # —check_no_secrets impide que vuelva un literal a deploy/nas, y
+      # check_core_release es el ritual de verificación tras desplegar— y no
+      # los ejecutaba nada. Un test que nadie lanza no protege nada.
+      - name: Tests de los scripts de CI y despliegue
+        working-directory: ${{ github.workspace }}
+        run: |
+          pip install pytest==8.4.2 pyyaml
+          python -m pytest scripts/test_check_no_secrets.py \
+            scripts/test_check_core_release.py \
+            scripts/test_ensure_swissjob_frontend.py \
+            scripts/test_set_match_facets_flag.py -q
 
   backend-test:
     runs-on: ubuntu-latest
@@ -185,6 +200,11 @@ jobs:
       - name: Bootstrap del rol y migraciones (lo que hace core-migrate al arrancar)
         run: python -m jobhunt_core.migrate
       - run: python -m pytest jobhunt_core/tests -q
+      # DT-148 B5: el test de `train_cross_encoder` salió con la herramienta a
+      # `tools/core/tests`. Va en invocación APARTE porque su conftest pone
+      # `tools/core` en sys.path. El de `dev_eval` se quedó en la suite de
+      # arriba: dos tests del núcleo construyen sobre sus helpers.
+      - run: python -m pytest tools/core/tests -q
 
   compose-config:
     # Los composes de despliegue (prod/qnap/rehearsal) no se validaban

@@ -14,7 +14,8 @@ from types import SimpleNamespace
 
 import sqlalchemy as sa
 
-from jobhunt_core import cross_encoder as ce, dev_eval, embeddings, matching, profiles
+from jobhunt_core import cross_encoder as ce, embeddings, matching, profiles
+from jobhunt_core.tests.dev_tools import dev_eval
 from jobhunt_core.tasks import materialize
 from jobhunt_core.tasks.embedding import _run_pending_impl
 from jobhunt_core.tests.test_integration_cross_encoder import _StubEngine, _xenc_policy

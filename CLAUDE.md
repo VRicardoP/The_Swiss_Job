@@ -439,8 +439,13 @@ docker compose exec -T backend python -m pytest tests/ -q
 # OJO 3 — `test_deploy_order.py` lee composes de la RAÍZ del repo, que el override
 # de desarrollo no monta: añade `-v "$PWD:/repo" -w /repo` o sus 3 casos fallan
 # por `FileNotFoundError`, no por una regresión.
+# OJO 2: desde DT-148 B5 el perfil dev monta ADEMÁS `./tools` (solo lectura).
+# `dev_eval.py` y `train_cross_encoder.py` salieron del paquete para no viajar
+# en la imagen de producción, pero dos tests del núcleo dependen de `dev_eval`
+# (es el instrumento de medida del gate de matching) y lo alcanzan por
+# `jobhunt_core/tests/dev_tools.py`. Sin el montaje, esos dos NO se recogen.
 docker compose -f docker-compose.yml -f docker-compose.dev.yml \
-  run --rm core-migrate python -m pytest jobhunt_core/tests
+  run --rm core-migrate python -m pytest jobhunt_core/tests tools/core/tests
 
 # Linting — ruff FIJADO a 0.15.14 en CI: subir la versión es una decisión, no un
 # accidente. OJO al orden si tocas ambos: formatear parte firmas largas y deja los

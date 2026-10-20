@@ -1,5 +1,10 @@
 """Reproducciones externas; ejecutar montado bajo jobhunt_core/tests.
 
+DT-148 B5 (2026-10-21): `dev_eval` salió de `jobhunt_core/` a `tools/core/` (no
+es producción y viajaba en la imagen del núcleo). Su test se quedó donde está —
+dos tests del núcleo construyen sobre sus helpers— y la costura hacia la
+herramienta es `jobhunt_core.tests.dev_tools`, que es lo que importan abajo.
+
 Este fichero son TRES sondas independientes pegadas una tras otra —líneas 1, 75
 y 116, cada una con su docstring y su propio bloque de imports—. No es un módulo:
 nada lo importa y cada bloque se ejecuta por separado montado bajo los tests del
@@ -17,7 +22,8 @@ from types import SimpleNamespace
 
 import sqlalchemy as sa
 
-from jobhunt_core import matching, dev_eval
+from jobhunt_core.tests.dev_tools import dev_eval  # DT-148 B5
+from jobhunt_core import matching
 from jobhunt_core.tests.test_integration_matching import db, _setup, _evaluate
 from jobhunt_core.tests.test_integration_cross_encoder import _xenc_policy, _StubEngine
 
@@ -179,7 +185,7 @@ def test_real_cv_edit_reopens_unbudgeted_inference(db, monkeypatch):
 import asyncio
 import os
 
-from jobhunt_core import dev_eval
+from jobhunt_core.tests.dev_tools import dev_eval  # DT-148 B5
 from jobhunt_core.tests.test_integration_matching import db, _setup
 from jobhunt_core.tests.test_integration_dev_eval import _judgments_file
 

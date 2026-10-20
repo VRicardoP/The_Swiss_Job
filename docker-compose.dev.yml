@@ -20,7 +20,7 @@
 #
 # Los tests del core se ejecutan con este perfil (montan el árbol de trabajo):
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
-#     run --rm core-migrate python -m pytest jobhunt_core/tests -q
+#     run --rm core-migrate python -m pytest jobhunt_core/tests tools/core/tests -q
 
 services:
   core-migrate:
@@ -29,6 +29,13 @@ services:
       # Regression tests import maintained operational contracts only.
       - ./scripts:/app/scripts:ro
       - ./backend/scripts:/app/backend/scripts:ro
+      # DT-148 B5: las herramientas de desarrollo del núcleo (`dev_eval`,
+      # `train_cross_encoder`) salieron del paquete para no viajar en la imagen
+      # de producción. Dos tests del núcleo dependen de `dev_eval` —es el
+      # instrumento de medida del gate de matching—, así que la suite necesita
+      # verlas. SOLO en este perfil y de SOLO LECTURA: la imagen operativa
+      # sigue sin contenerlas, que es el punto.
+      - ./tools:/app/tools:ro
 
   core-api:
     environment:

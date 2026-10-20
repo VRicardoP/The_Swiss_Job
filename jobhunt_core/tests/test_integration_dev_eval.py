@@ -19,7 +19,8 @@ import uuid
 import pytest
 import sqlalchemy as sa
 
-from jobhunt_core import dev_eval, embeddings, matching
+from jobhunt_core import embeddings, matching
+from jobhunt_core.tests.dev_tools import dev_eval
 from jobhunt_core.harvest.sink import RawListingSink
 from jobhunt_core.tests.test_integration_matching import (  # noqa: F401
     DirectionalBackend,
