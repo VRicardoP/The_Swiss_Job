@@ -11,6 +11,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { matchApi, watchlistApi } from "../config/api";
+import { useMatchFacets } from "../hooks/useMatch";
 import {
   Badge,
   Button,
@@ -50,22 +51,36 @@ export default function WatchlistPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [openDraft, setOpenDraft] = useState(null); // job_hash with open drawer
 
+  // DT-148 A12: la watchlist se derivaba de los 500 matches MEJOR PUNTUADOS y
+  // se filtraba en el cliente (`.filter(m => m.school_id)`), así que un
+  // colegio por debajo del puesto 500 no existía para esta página. El core ya
+  // sirve la faceta `__watchlist`: cuando está disponible se le pide a él y no
+  // se filtra nada local. Sin facetas se conserva el recorrido anterior.
+  const facets = useMatchFacets();
+  const conFacetas = facets.isSuccess;
   // Consistente con useMatch.js: queryKey con { limit, offset } para que
   // invalidaciones genéricas con prefix ["match-results"] alcancen también.
-  const watchlistQueryArgs = { limit: 500, offset: 0, translate: false };
+  const watchlistQueryArgs = useMemo(
+    () =>
+      conFacetas
+        ? { limit: 500, offset: 0, category: "__watchlist", translate: false }
+        : { limit: 500, offset: 0, translate: false },
+    [conFacetas],
+  );
   const { data: results, isLoading } = useQuery({
     queryKey: ["match-results", watchlistQueryArgs],
     queryFn: () => matchApi.getResults(watchlistQueryArgs),
   });
 
   const watchlist = useMemo(() => {
-    const all = (results?.data ?? []).filter((m) => m.school_id);
-    return all.sort(
+    const servidas = results?.data ?? [];
+    const all = conFacetas ? servidas : servidas.filter((m) => m.school_id);
+    return [...all].sort(
       (a, b) =>
         b.score_final + (b.urgency_score || 0) -
         (a.score_final + (a.urgency_score || 0)),
     );
-  }, [results]);
+  }, [results, conFacetas]);
 
   const byStatus = useMemo(() => {
     const m = new Map();
@@ -93,6 +108,9 @@ export default function WatchlistPage() {
     mutationFn: ({ jobHash }) => watchlistApi.generateDraft(jobHash),
     onSuccess: (data, vars) => {
       qc.invalidateQueries({ queryKey: ["match-results"] });
+      // DT-148 A13: el drawer monta con la clave ["draft", hash], que seguía
+      // cacheada y fresca — tras «Re-generar» se veía el borrador ANTERIOR.
+      qc.invalidateQueries({ queryKey: ["draft", vars.jobHash] });
       setOpenDraft(vars.jobHash);
     },
   });

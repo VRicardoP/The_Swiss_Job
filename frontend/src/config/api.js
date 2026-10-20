@@ -135,13 +135,6 @@ export const jobsApi = {
     return request(`/jobs/${hash}`);
   },
 
-  getStats() {
-    return request("/jobs/stats");
-  },
-
-  getSources() {
-    return request("/jobs/sources");
-  },
 };
 
 export const profileApi = {
@@ -203,41 +196,6 @@ export const authApi = {
 
   getMe() {
     return authRequest("/auth/me");
-  },
-};
-
-export const applicationsApi = {
-  list(params = {}) {
-    const qs = new URLSearchParams();
-    if (params.status) qs.set("status", params.status);
-    if (params.limit) qs.set("limit", params.limit);
-    if (params.offset !== undefined) qs.set("offset", params.offset);
-    const query = qs.toString();
-    return authRequest(`/applications${query ? `?${query}` : ""}`);
-  },
-
-  create(jobHash, notes = null) {
-    const body = { job_hash: jobHash };
-    if (notes) body.notes = notes;
-    return authRequest("/applications", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-  },
-
-  update(id, data) {
-    return authRequest(`/applications/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify(data),
-    });
-  },
-
-  remove(id) {
-    return authRequest(`/applications/${id}`, { method: "DELETE" });
-  },
-
-  stats() {
-    return authRequest("/applications/stats");
   },
 };
 

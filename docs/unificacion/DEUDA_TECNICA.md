@@ -1,6 +1,13 @@
 # Deuda técnica — proyecto jobhunting (SwissJob + jobhunt-core)
 
-> **Lectura vigente — 2026-10-19.** Este fichero es un ledger técnico
+> **Lectura vigente — 2026-10-20.** DT-148 (abajo) es la auditoría de
+> refactorización con plan de ejecución por ítem. Su **sección A está
+> ejecutada y commiteada** (rama `fix/dt148-auditoria-seccion-a`, sin
+> desplegar); **B a F siguen abiertas** y su fase 0 (F1) corrige el
+> `CLAUDE.md`, que todavía describe providers, scrapers, `job_matcher` y la
+> sombra retirados el 13-15 de octubre.
+>
+> **Lectura anterior — 2026-10-19.** Este fichero es un ledger técnico
 > cronológico. Para estado global y releases manda
 > [MEMORIA_PROYECTO.md](MEMORIA_PROYECTO.md); aquí mandan las marcas
 > **ABIERTO/PARCIAL/COTA** más recientes de cada identificador. Los bloques
@@ -15,6 +22,1743 @@
 > Nueva cota aceptada: el `canton` del histórico legacy no se repara (~4.500
 > canónicas por un campo que hoy consume una sola búsqueda semanal); lo nuevo sí
 > lo lleva.
+
+## DT-148 · Auditoría de refactorización 2026-10-20 — bugs, código muerto, duplicación y principios
+
+**Estado: SECCIÓN A EJECUTADA Y COMMITEADA el 2026-10-20 en la rama
+`fix/dt148-auditoria-seccion-a` (4 commits: `1d16b44` cosecha del núcleo,
+`2ed72cd` dominio y API del núcleo, `922439f` BFF y frontend, y este de
+documentación). SIN desplegar. Secciones B a F ABIERTAS.** El inventario sigue siendo el plan de
+ejecución por ítem; el acta de la sección A, al final de esta entrada, recoge
+lo hecho, lo medido y los NUEVE puntos en que el código desmintió al plan.
+
+Auditoría de lectura del árbol `8d01c50` (main, 2026-10-20) con cinco
+revisiones paralelas (core, cosecha, BFF, frontend, transversal), radon 6.0.1,
+vulture (≥ 60 %), ruff 0.15.x (`F,B,E7,E9,PLW,PLE,SIM,RUF`) y verificación
+manual de cada hallazgo grave leyendo el código, no los informes. Cifras del
+árbol auditado: 50.800 LOC de producción Python (BFF 17.900 · core 32.900),
+57.000 de tests, 8.000 de frontend. Radon: ningún E/F en código vivo salvo dos
+`fetch_new` de proveedores; `jobhunt_core/matching.py` es el único fichero con
+índice de mantenibilidad C.
+
+**Lo que el encargo presuponía y ya no existe.** Entre el 13 y el 15 de octubre
+(`3ed6462`, `42ecf96`, `7441e0e`) se retiraron el módulo sombra, los providers
+y scrapers legacy, `job_matcher.py`, normalizador, dedup, clasificador,
+circuit breaker y compliance del BFF: unas 82.000 líneas. `backend/providers/`
+está vacío y `backend/scrapers/` sólo conserva `swiss_schools_config.py`. El
+`CLAUDE.md` del proyecto sigue describiendo ese árbol (ítem F1). Consecuencia
+no documentada y la más grave de esta auditoría: **la tabla legacy `jobs` ya no
+tiene ningún escritor** y tres tareas programadas la siguen leyendo (A1).
+
+Esta entrada está escrita para que la ejecute **un agente con menos contexto
+que el auditor**: cada ítem lleva dónde está, qué evidencia lo sostiene, el
+cambio exacto, la prueba que lo fija y el comando que lo verifica. Si un paso
+no cuadra con el código al leerlo, el código manda y el desacuerdo se anota en
+el checkpoint — nunca se improvisa una variante «parecida».
+
+### Reglas imperativas para el ejecutor
+
+1. **Leer antes de tocar.** Antes de editar un fichero se lee ENTERO (no sólo
+   las líneas citadas). Los números de línea de esta entrada son del árbol
+   `8d01c50`; se recalculan con `grep -n` antes de cada edición.
+2. **Verificar, no creer.** Toda afirmación de esta entrada se re-comprueba con
+   `grep -rn` / lectura antes de actuar (regla de oro del proyecto). Si un
+   hallazgo resulta falso, se anota «NO REPRODUCIDO» con la evidencia y se
+   salta; no se «arregla» algo que no está roto.
+3. **Un ítem, un commit, una prueba.** Cada ítem termina con su prueba
+   (nueva o adaptada) en verde, los tests focales citados en verde, `ruff
+   check` + `ruff format --check` limpios en los ficheros tocados, y `radon cc
+   -s -n C` sin grado nuevo ≥ C en las funciones tocadas. **Nunca** commit sin
+   aprobación explícita del propietario (CLAUDE.md global).
+4. **Retirada = consumidores a cero.** Antes de borrar un símbolo:
+   `grep -rnw "<nombre>" --include='*.py' backend jobhunt_core scripts docs` y
+   `grep -rn "<nombre>" frontend/src`. Sólo se borra lo que tiene cero
+   consumidores de producción; lo que sólo usan tests se borra CON sus tests.
+   La búsqueda se anota en el checkpoint (regla 4 de DT-145).
+5. **Objetivos de monkeypatch** (lección registrada en la memoria del
+   proyecto): si se mueve una función, el nombre que los tests parchean debe
+   seguir existiendo EN EL MÓDULO DONDE SE LLAMA, o se re-apuntan los tests en
+   el mismo commit. Comprobar siempre con
+   `grep -rn "monkeypatch.setattr" backend/tests jobhunt_core/tests | grep "<módulo>"`.
+6. **Cotas.** Antes de tocar algo que parezca deliberado, `grep -n "<módulo o
+   función>" docs/COTAS_Y_DECISIONES.md`. Lo que esté ahí no se cierra sin
+   decisión del propietario. Ninguno de los ítems A de abajo está en COTAS
+   (comprobado el 2026-10-20).
+7. **Mínimo que satisface.** Sin abstracciones no pedidas, sin renombrados en
+   masa, sin «ya que estoy». El diff debe parecerse al fichero donde aterriza
+   (idioma de comentarios: español; nombres: inglés en código nuevo).
+8. **Nada de producción se despliega desde aquí.** Esta entrada es código y
+   docs; el despliegue sigue `scripts/deploy_nas.sh` y requiere al propietario.
+9. **Al cerrar cada ítem** se añade una fila a la tabla de checkpoints del
+   final con fecha, SHA, pruebas ejecutadas y desviaciones.
+
+### Comandos de verificación (copiar tal cual)
+
+```bash
+# Pruebas del BFF (contenedor backend; NUNCA dos pytest a la vez contra la misma base)
+docker compose exec -T backend python -m pytest tests/<fichero>.py -q
+docker compose exec -T backend python -m pytest tests/ -q          # suite completa, ~12 min
+
+# Pruebas del core: SIEMPRE con el override de desarrollo (sin él se prueba la IMAGEN)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+  run --rm core-migrate python -m pytest jobhunt_core/tests/<fichero>.py -q
+docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+  run --rm core-migrate python -m pytest jobhunt_core/tests -q    # ~16 min
+
+# Lint (ruff FIJADO a 0.15.14 en CI; comprobar `ruff --version` dentro del contenedor)
+docker compose exec -T backend ruff check --no-cache . && docker compose exec -T backend ruff format --check --no-cache .
+docker compose run --rm --no-deps -v "$PWD:/repo" -w /repo backend \
+  sh -c "ruff check --no-cache jobhunt_core scripts && ruff format --check --no-cache jobhunt_core scripts"
+
+# Complejidad y código muerto (host; radon y vulture están en ~/.local/bin)
+radon cc -s -n C <fichero.py>
+vulture backend jobhunt_core --min-confidence 60 --exclude "tests,alembic,migrations"
+
+# Frontend
+cd frontend && npm run lint && npx vitest run && npm run build
+
+# .env.prod.example es GENERADO: tras tocar Settings
+docker compose exec -T backend python scripts/gen_env_example.py
+docker compose exec -T backend python -m pytest tests/test_env_example_covers_settings.py -q
+```
+
+### Orden de ejecución
+
+| Fase | Ítems | Por qué en este orden |
+|---|---|---|
+| 0 | F1, F2 | Corregir el `CLAUDE.md` y COTAS primero: es lo que lee cada sesión y hoy induce a buscar fantasmas. Una sesión. |
+| 1 | A2, A1, A3, A4, A7, A8, A9, A10 | Bugs de servidor con efecto sobre datos o sobre el parque de fuentes. Independientes entre sí; A2 antes que A8 (A8 reutiliza `blocked_with`). |
+| 2 | A5, A6, A12, A13, A14, A15, A16, A17 | Bugs de frontend. Independientes; cada uno cabe en una tarde. |
+| 3 | B1–B9 | Borrado puro con tests que lo fijan. B1 y B2 primero (mayor volumen, riesgo nulo). |
+| 4 | C1–C8 | Duplicación. C2 y C3 antes de D1 (reducen `matching.py` y `v1.py` antes de partirlos). |
+| 5 | D1–D7 | Particiones por SRP. D1 (matching) y D3 (sink) son los de más valor y más coste; uno por sesión. |
+| 6 | E1–E9, F3 | Consistencia, legibilidad y lo que caduca con el corpus legacy. |
+
+Dependencias duras: A8 → A2 · D6 → D1 · C6 antes que C7 (comparten
+`core_http`) · B4 antes que D1 (menos ficheros en el paquete al partirlo).
+
+### A · Bugs (verificados en el código el 2026-10-20)
+
+#### A1 · La alerta de profesor de primaria, el digest diario y el chequeo de URLs leen una tabla que nadie escribe — ALTA
+
+**Dónde.** `backend/tasks/alert_tasks.py:72-84` (`select(Job)... Job.first_seen_at > watermark`),
+`backend/tasks/digest_tasks.py:60-100`, `backend/tasks/maintenance_tasks.py:38-110`
+(`tasks.check_job_urls`) y `:183-220` (`tasks.cleanup_stale_jobs`); programados en
+`backend/services/scheduler.py:133-190`.
+
+**Evidencia.** `grep -rnE "Job\(|insert\(Job\)|INSERT INTO jobs\b" --include='*.py'
+backend jobhunt_core | grep -v tests | grep -v alembic` devuelve SOLO la definición
+de la clase (`backend/models/job.py:25`). El último escritor se fue con `7441e0e`.
+La alerta de profesor es funcionalidad pedida por el propietario (COTAS línea 187
+la describe como opt-in «para NO perder la vacante») y hoy no puede disparar: lee
+`jobs.category='H'` de filas que dejaron de llegar el 15 de octubre. El `CLAUDE.md`
+(líneas 19-21) dice que `zebis` y `publicjobs` la alimentan; ya no existen en el BFF.
+Lectores de `models.job.Job` fuera de tests (11): `match_result_service`,
+`pattern_analysis_service`, `applications/local`, `schools/watchlist_state`,
+`matching/core_client`, `models/__init__`, `routers/documents`, `maintenance_tasks`,
+`digest_tasks`, `watchlist_tasks`, `alert_tasks`.
+
+**Cambio exacto (alerta: reimplementar sobre el feed del core; el core no tiene SMTP, así que el correo sigue en el BFF).**
+
+1. *Core — filtro por categoría y fecha en el catálogo público.* En
+   `jobhunt_core/api/v1.py:118` ampliar `_catalog_filter_sql(q, source, remote,
+   country, city, category=None, since=None)`:
+   - `category`: construir el texto de búsqueda EXACTAMENTE como
+     `_facet_feed_sql` (`matching.py:2400-2407`: `lower(concat_ws(' ',
+     COALESCE(o.content->>'title',''), <string_agg de tags>))`) y añadir a `where`
+     `"(" + case_sql + ") = :category"` donde `case_sql, case_params =
+     match_categories.sql_case(<esa expresión>)`; fusionar `case_params` en
+     `params` y `params["category"] = category`.
+   - `since`: `where.append("v.created_at >= :since")`, `params["since"] = since`.
+   En `list_vacancies` (`v1.py:323`) añadir `category: str | None =
+   Query(None, pattern=r"^[A-M]$")` y `since: datetime | None = Query(None)`;
+   pasarlos a `_catalog_filter_sql`. El keyset no cambia (el WHERE sólo
+   estrecha; mismo argumento que el docstring de la ruta). Actualizar el
+   docstring de la ruta con los dos filtros.
+   - Prueba: en el fichero que ya prueba `country`/`city` de `/vacancies`
+     (`grep -rln '"city"' jobhunt_core/tests`), dos casos: `category=H` devuelve
+     sólo vacantes cuyo título/tags casan la categoría H del `match_categories.json`
+     y excluye una de categoría A; `since=<ts>` excluye una vacante creada antes.
+2. *BFF — método de catálogo.* En `backend/services/catalog/port.py` añadir al
+   `CatalogPort` `async def recent(self, *, category: str, since: datetime,
+   limit: int = 500) -> list[JobResponse]`. En
+   `backend/services/catalog/core_client.py` implementarlo en `CoreCatalog`:
+   `_guard_credential()`; GET `/vacancies` con `{"category": category, "since":
+   since.isoformat(), "limit": 100}` y seguir `next_cursor` hasta agotar o hasta
+   `limit` items (cursor y offset son excluyentes: usar cursor); mapear con
+   `vacancy_to_job_response` (ya existe, `:107`). Reutilizar `_request_page` y
+   `_parse_page_body` (`:231-259`). Errores → `CoreUnavailableError` como el resto.
+   - Prueba: `backend/tests/test_catalog_contract.py` — con `MockTransport`
+     que sirve dos páginas, `recent()` devuelve los items de ambas y para en
+     `next_cursor=None`.
+3. *BFF — la tarea.* En `backend/tasks/alert_tasks.py:_detect_and_notify`
+   sustituir el bloque `async with task_session() as db: stmt = select(Job)...`
+   por:
+   ```python
+   from services.catalog.core_client import CoreCatalog
+   catalog = CoreCatalog()
+   candidates = [
+       j for j in await catalog.recent(category="H", since=watermark)
+       if j.first_seen_at <= now
+   ]
+   ```
+   Conservar INTACTOS: la cota superior `<= now` (G1/P2-15), `filter_unsent`
+   por `j.hash`, el `unmark_sent` ante fallo de SMTP y `save_watermark` tras
+   el envío (G4/P1-2). `is_primary_teacher_job("H", j.title, j.tags)` sigue
+   igual. `build_alert_email` lee `.canton/.location/.company/.url/.title`:
+   `JobResponse` los tiene todos (`canton` será None → cae a `location`).
+   Un `CoreUnavailableError` se deja subir: el decorador ya reintenta una vez
+   con `countdown=120`. Quitar `from models.job import Job` y `task_session`.
+   - Prueba: `backend/tests/test_teacher_alert.py` — sustituir la siembra en
+     `jobs` por un `CoreCatalog(client_factory=...)` con `MockTransport`
+     (patrón de `test_catalog_contract.py`); inyectarlo con
+     `monkeypatch.setattr("tasks.alert_tasks.CoreCatalog", lambda: catalog)`.
+     Casos: oferta H con marcador de primaria → 1 email; oferta H sin marcador
+     → 0; segunda corrida → 0 (marcador `sent`); fallo SMTP → `unmark_sent`.
+4. *Digest diario y mantenimiento — DECISIÓN DEL PROPIETARIO (no la toma el
+   ejecutor).* Recomendación: **retirar** `tasks.digest_tasks.send_daily_digest`
+   (lee `match_results` legacy de usuarios NO vinculados al core, y hoy todos
+   lo están: `core_profile_unlinked_sql` deja 0 filas), `tasks.check_job_urls`
+   (hasta 3.000 `HEAD` nocturnos contra portales para desactivar filas de un
+   archivo congelado) y `tasks.cleanup_stale_jobs`. Pasos si se aprueba:
+   quitar los tres `add_job` y sus `_dispatch_*` de `scheduler.py`; borrar
+   `tasks/digest_tasks.py`, `services/daily_digest.py` (comprobar nombre con
+   `grep -rn daily_digest backend --include=*.py`) y las dos tareas de
+   `maintenance_tasks.py`; quitar `"tasks.digest_tasks"` de
+   `celery_app.conf.include` (`backend/celery_app.py:48`); borrar settings
+   `DAILY_DIGEST_*` (comprobar lectores con la regla 4) y regenerar
+   `.env.prod.example`; adaptar `backend/tests/test_scheduler.py:25-46` (ids
+   esperados) y borrar los tests de digest/mantenimiento. Si el propietario
+   prefiere conservar el digest, reimplementarlo sobre `/match/results` del
+   core como A1.3; no dejarlo como está.
+   **No** tocar `match_result_service`, `pattern_analysis_service`,
+   `watchlist_state` ni `matching/core_client`: usan `Job` como overlay
+   opcional (`job if job else None`) y siguen correctos con la tabla congelada.
+
+**Verificación.** `test_teacher_alert.py`, `test_catalog_contract.py`,
+`test_scheduler.py`; en el core, el fichero de pruebas de `/vacancies`;
+`check_compose_exposure.py` no aplica. Desplegar el core ANTES que el BFF
+(contrato nuevo). **Criterio de cierre:** una corrida manual de
+`tasks.alert_tasks.detect_teacher_alerts` contra el core local devuelve
+`candidates > 0` cuando existe una vacante H reciente.
+
+#### A2 · El kill-switch de bloqueos es ciego a los 429/403 que llegan desde la página 2 — ALTA
+
+**Dónde.** `jobhunt_core/harvest/runner.py:131-148` (sólo cuenta bloqueo si
+`fetch_new` LANZA) y `:222-248` (el upsert del parcial sólo pone
+`consecutive_blocks` a cero). Diez proveedores preservan el parcial y degradan
+la excepción a texto: `native_nav.py:190-198` (`error = f"http_{status}"`),
+`native_myscience.py:373-377`, `native_gastrojob.py:518-522`,
+`native_irishjobs`, `native_thehub.py`, `native_chmedia`, `native_jobgether`,
+`native_financejobs`, `native_isp_workday`, `native_swiss_schools` (lista
+exacta: `grep -ln "if not listings:\|first_failure" jobhunt_core/harvest/providers/*.py`).
+
+**Evidencia.** `FetchResult` (`types.py:18-37`) no transporta el estatus del
+bloqueo; `_record_failure_safe` (`runner.py:346-400`) es el único camino que
+incrementa `consecutive_blocks` y sólo corre en el `except` del fetch. Un
+portal que limite desde la segunda página en cada barrido suma fallos pero
+nunca bloqueos: el apagado de `core0055` no llega. Es exactamente la lección
+del cutover (los bloqueos eran nuestro patrón de petición).
+
+**Cambio exacto.**
+
+1. `jobhunt_core/harvest/types.py`: añadir a `FetchResult` el campo
+   `blocked_with: int | None = None` con una línea de docstring: «estatus HTTP
+   de bloqueo (`BLOCK_STATUSES`) que cortó un barrido parcial; invariante:
+   `blocked_with is not None ⇒ error is not None`».
+2. `jobhunt_core/harvest/runner.py`, bloque `:222-248`: el upsert pasa a
+   escribir también bloqueos y a devolver el contador:
+   ```sql
+   INSERT INTO source_scope_state
+     (scope_id, cursor, last_complete_at, consecutive_failures,
+      consecutive_blocks, last_blocked_at)
+   VALUES (:sid, CAST(:cur AS jsonb), CASE WHEN :complete THEN now() END,
+           CASE WHEN :failed THEN 1 ELSE 0 END,
+           CASE WHEN :blocked THEN 1 ELSE 0 END,
+           CASE WHEN :blocked THEN now() END)
+   ON CONFLICT (scope_id) DO UPDATE SET
+     cursor = EXCLUDED.cursor,
+     last_complete_at = CASE WHEN :complete THEN now() ELSE source_scope_state.last_complete_at END,
+     consecutive_failures = CASE WHEN :complete THEN 0
+                            WHEN :failed THEN source_scope_state.consecutive_failures + 1
+                            ELSE source_scope_state.consecutive_failures END,
+     consecutive_blocks = CASE WHEN :complete THEN 0
+                          WHEN :blocked THEN source_scope_state.consecutive_blocks + 1
+                          ELSE source_scope_state.consecutive_blocks END,
+     last_blocked_at = CASE WHEN :blocked THEN now() ELSE source_scope_state.last_blocked_at END
+   RETURNING consecutive_blocks
+   ```
+   con `"blocked": result.blocked_with is not None`. Tras el `execute`, ANTES
+   del `commit` de la misma transacción:
+   `if result.blocked_with is not None and blocks >= int(settings.CORE_HARVEST_BLOCK_THRESHOLD): await _disable_for_blocks(session, scope_id, result.blocked_with, blocks)`.
+   Conservar el comentario «una cosecha COMPLETA es la prueba…» y añadir uno
+   de dos líneas sobre el parcial bloqueado. No tocar `_record_failure_safe`.
+3. En cada uno de los diez proveedores, en el `except` que preserva el
+   parcial, capturar el estatus y pasarlo. Patrón (nav, `:190-198`):
+   ```python
+   except (httpx.HTTPError, ProviderResponseError, TimeoutError) as exc:
+       if not listings:
+           raise
+       blocked_with = blocking_status(exc)
+       error = (...)  # igual que hoy
+       break
+   ...
+   return FetchResult(..., error=error, blocked_with=blocked_with)
+   ```
+   `blocked_with = None` se inicializa junto a `error`. Importar
+   `blocking_status` de `jobhunt_core.harvest.provider` (ya existe, `:53`).
+   En myscience/gastrojob el `except` guarda `first_failure`: `blocked_with =
+   blocking_status(first_failure)` al construir el resultado.
+4. Pruebas. (a) `jobhunt_core/tests/test_integration_block_killswitch.py`:
+   nuevo caso `test_un_bloqueo_en_la_pagina_dos_tambien_cuenta` — un `_Portal`
+   cuyo `fetch_new` DEVUELVE `FetchResult((listing,), {}, complete=False,
+   error="http_429", blocked_with=429)` tres veces → `consecutive_blocks == 3`,
+   `enabled is False`, `disabled_by_blocks_at` no nulo, mensaje
+   `harvest_block_killswitch` en caplog; y un cuarto run devuelve `skipped`.
+   (b) `test_native_nav.py`: `MockTransport` que responde 200 en la página 1 y
+   429 en la 2 → el resultado trae `error == "http_429"` y `blocked_with == 429`.
+   (c) Mismo caso (b) para myscience y thehub (sus tests ya tienen transporte
+   simulado).
+
+**Verificación.** Los tres ficheros de prueba citados +
+`test_integration_native_swiss_schools.py` (lee `consecutive_blocks`).
+**Criterio de cierre:** el caso (a) en verde y `radon cc` de `run_scope` no sube
+de su D actual (se reduce en D-fase E9).
+
+#### A3 · Los refresh tokens caducados nunca se purgan — MEDIA
+
+**Dónde.** `backend/services/token_store.py:157-167` (`purgar_caducados`),
+docstring del módulo `:17-18` («La purga va por caducidad»).
+
+**Evidencia.** `grep -rnw purgar_caducados --include='*.py' backend` sólo da la
+definición y el docstring. Ni `scheduler.py`, ni tarea Celery, ni test.
+`refresh_tokens` crece una fila por rotación y nunca decrece.
+
+**Cambio exacto.**
+1. `backend/tasks/maintenance_tasks.py`: nueva tarea con el patrón del módulo
+   (`def` + `asyncio.run`):
+   ```python
+   @celery_app.task(name="tasks.purge_refresh_tokens", bind=True, max_retries=1)
+   def purge_refresh_tokens(self) -> dict[str, Any]:
+       try:
+           return asyncio.run(_purge_refresh_tokens_async())
+       except Exception as exc:
+           logger.error("purge_refresh_tokens failed: %s", type(exc).__name__)
+           raise self.retry(exc=exc, countdown=300)
+
+   async def _purge_refresh_tokens_async() -> dict[str, Any]:
+       from services.token_store import purgar_caducados
+       async with task_session() as db:
+           borrados = await purgar_caducados(db)
+           await db.commit()
+       return {"status": "success", "deleted": borrados}
+   ```
+2. `backend/services/scheduler.py:setup_schedules`: `scheduler.add_job(
+   _dispatch_purge_refresh_tokens, CronTrigger(hour=3, minute=45,
+   timezone="Europe/Zurich"), id="purge_refresh_tokens", replace_existing=True)`
+   y su `_dispatch_*` con `celery_app.send_task("tasks.purge_refresh_tokens")`.
+   Actualizar la línea `logger.info("Scheduler configured: …")`.
+3. Pruebas: `backend/tests/test_scheduler.py:25-34` añadir
+   `assert "purge_refresh_tokens" in job_ids`; en el fichero que prueba
+   `token_store` (`grep -rln "token_store" backend/tests`), caso: dos filas,
+   una con `expires_at = now - 8 d` y otra vigente → `purgar_caducados` devuelve
+   1 y la vigente sigue. Si la tarea se prueba, parchear `task_session` como
+   hace `test_g3_fix_marcas_agua.py`.
+
+**Verificación.** `test_scheduler.py`, el test de `token_store`. **Criterio:**
+`SELECT count(*) FROM refresh_tokens WHERE expires_at < now() - interval '7 days'`
+es 0 tras una corrida manual en local.
+
+#### A4 · Crear una candidatura sobre una oferta del core devuelve 404 — MEDIA — CERRADO POR RETIRADA (ver acta, punto 2)
+
+**Dónde.** `backend/services/applications/local.py:104-113` (`select(Job).where(Job.hash == job_hash)` → `ApplicationJobNotFoundError`).
+
+**Evidencia.** El catálogo sirve `hash=str(vacancy["id"])` (UUID,
+`catalog/core_client.py:120`); `ApplicationCreate.job_hash` admite 36
+caracteres; `routers/documents.py:86-99` (`_load_job`) ya resuelve `len > 32`
+por catálogo; `applications` no. Atenuante: el frontend no llama a
+`POST /applications` (`useCreateApplication` no tiene importadores, ítem B8), así
+que hoy no lo ve ningún usuario de SwissJob; el endpoint sigue público.
+
+**Cambio exacto.**
+1. En `LocalApplications.create`: si `len(job_hash) > 32`, resolver con
+   `catalog = await resolve_catalog(db)`; `await db.commit()` antes del HTTP
+   (misma disciplina que `_load_job`); `job = await catalog.get(job_hash)`;
+   `CoreUnavailableError` del catálogo → relanzar como
+   `applications.port.CoreUnavailableError` (el router ya lo traduce a 503);
+   `None` → `ApplicationJobNotFoundError`. Si `len <= 32`, el camino actual.
+   `_to_response(app, job)` sólo lee `.title/.company/.location/.source`:
+   `JobResponse` los tiene, no hace falta adaptador.
+2. `stats()` (`:150-160`) y `list()` hacen `JOIN Job`: una candidatura con UUID
+   no aparece en `by_source` y sale sin `job_title`. Documentarlo en el
+   docstring de la clase como cota conocida (no se amplía el alcance aquí).
+3. Prueba: `backend/tests/test_applications.py` — `POST /applications` con un
+   UUID y `resolve_catalog` parcheado a un `CoreCatalog(client_factory=
+   MockTransport 200 VacancyDTO)` → 201 con `job_title` del core; con 404 del
+   core → 404.
+
+**Verificación.** `test_applications.py`, `test_applications_contract.py`.
+
+#### A5 · ProfilePage: spinner infinito ante error y formulario que no se re-hidrata tras el análisis del CV — ALTA
+
+**Dónde.** `frontend/src/pages/ProfilePage.jsx:88-121` y `:148-153`;
+`frontend/src/hooks/useCvAnalysis.js:77-80`.
+
+**Evidencia.** `if (isLoading || !form)` (`:106`) va ANTES de `if (error)`
+(`:114`); con `retry: false` en `useProfile`, un error deja `profile`
+indefinido, `form` nunca se hidrata y la rama de error es inalcanzable.
+Además la hidratación es única (`profile && !form`): cuando el análisis del
+CV termina, el hook invalida `["profile"]` y el servidor ya trae skills y título
+autocompletados, pero `form` conserva los valores viejos; «Save» (`:137-147`)
+los pisa. `OnboardingPage.jsx:121-123` sí mezcla `result.skills_extracted`.
+
+**Cambio exacto.**
+1. Orden de guardas: `if (isLoading) return <Spinner/>; if (error) return
+   <ErrorBox/>; if (!form) return <Spinner/>;`.
+2. Re-hidratar cuando cambie la revisión del perfil: sustituir `profile &&
+   !form` por un marcador `const [hydratedFor, setHydratedFor] = useState(null);
+   if (profile && hydratedFor !== profile.updated_at) { setForm({...igual...});
+   setHydratedFor(profile.updated_at); }` (`ProfileResponse.updated_at` existe:
+   `backend/schemas/profile.py:116`). Mantener el comentario que justifica el
+   setState durante el render.
+3. En `handleUploadCV`: `uploadCV.mutate(file, { onSuccess: (result) => {
+   if (result.skills_extracted?.length) setField("skills", [...new
+   Set([...form.skills, ...result.skills_extracted])]); cvAnalysis.start(); } })`
+   (`skills_extracted` existe en la respuesta: `schemas/profile.py:128`).
+4. Prueba: si `@testing-library/react` está en `devDependencies` (comprobar con
+   `grep testing-library frontend/package.json`), `ProfilePage.test.jsx` con
+   `useProfile` simulado en estado error → se renderiza «Error loading
+   profile»; y con dos valores sucesivos de `updated_at` → el input de título
+   cambia. Si no está instalada, no añadir la dependencia: verificar a mano y
+   anotarlo en el checkpoint.
+
+**Verificación.** `npm run lint && npx vitest run && npm run build`.
+
+#### A6 · El logout deja en caché las consultas del usuario anterior — MEDIA
+
+**Dónde.** `frontend/src/hooks/useAuth.js:92-103`.
+**Evidencia.** Sólo se eliminan `["auth"]` y `["profile"]`; `match-results`,
+`saved-jobs`, `applications`, `notifications`, `draft`, `analytics-*` quedan
+con `staleTime` y se sirven a la cuenta siguiente en el mismo navegador.
+`useDocuments.js:17-19` mete `userId` en la clave como parche local.
+**Cambio.** Sustituir los dos `removeQueries` por `qc.clear()` después de
+`logout()`. Opcional: dejar `userId` en las claves de documents (inocuo).
+**Prueba.** En `api.test.js` o un test nuevo de `useAuth`: tras `useLogout()()`
+`qc.getQueryCache().getAll()` está vacío.
+
+#### A7 · El enriquecimiento de una observación escolar ya enlazada se calcula y se tira — MEDIA
+
+**Dónde.** `jobhunt_core/school_ingest.py:224-264` (`record_observation`).
+**Evidencia.** `enriched` y `metadata["content_hash"]` se calculan en memoria
+(`:229-237`), pero el único `UPDATE` (`:250-262`) vive dentro de `if
+source_active and same_identity and (publish_missing or quarantine_reason in
+(...))`. Una fila ya enlazada (`quarantine_reason IS NULL`) con
+`publish_missing=False` —lo que `record_shared_observation` (`:358`) pasa
+SIEMPRE a los monitores que no son la fuente— pierde la URL o la descripción
+nueva en silencio.
+**Cambio exacto.** Reestructurar el bloque `existing is not None`:
+```python
+relink = source_active and same_identity and (
+    publish_missing or existing["quarantine_reason"] in ("source_inactive", "awaiting_corpus")
+)
+if relink:
+    ... (link_observation + UPDATE vacancy_id, quarantine_reason, metadata — igual que hoy)
+elif enriched:
+    await session.execute(
+        sa.text("UPDATE school_job_details SET metadata=CAST(:m AS jsonb),"
+                "updated_at=clock_timestamp() WHERE id=:id"),
+        {"id": existing["id"], "m": json.dumps(metadata)},
+    )
+return existing["id"], False
+```
+**Prueba.** `jobhunt_core/tests/test_integration_school_jobs.py`: una
+observación enlazada sin `description_snippet`; segunda llamada para el mismo
+`url` con snippet y `publish_missing=False` → `metadata->>'description_snippet'`
+persistido y `content_hash` actualizado; `vacancy_id` y `quarantine_reason`
+intactos.
+
+#### A8 · Un CAPTCHA se reintenta cuatro veces y nunca cuenta como bloqueo — MEDIA (depende de A2)
+
+**Dónde.** `jobhunt_core/harvest/providers/native_jobscout24.py:191` y
+`:316-324`; `native_dynamitejobs.py:274-282`;
+`jobhunt_core/harvest/providers/html_response.py:65-69`
+(`job_posting_description` lanza `ValueError("detail page is a soft block")`).
+**Evidencia.** `_read` captura `(httpx.HTTPError, UnicodeError, ValueError)` y
+calcula `retryable = not isinstance(exc, httpx.HTTPStatusError) or ...` → un
+`ValueError` es SIEMPRE reintentable: hasta 4 peticiones y 7 s de espera
+contra una página que dice «para». Al agotar, sale `ProviderResponseError(
+"request failed (ValueError)")`: el mensaje de CAPTCHA se pierde y, al ser HTTP
+200, `blocking_status` devuelve None.
+**Cambio exacto.**
+1. `jobhunt_core/harvest/provider.py`: `SOFT_BLOCK_STATUS = 403` (constante
+   documentada: «un 200 con página de desafío se cuenta como el 403 que
+   representa») y `class SoftBlocked(ProviderResponseError): status =
+   SOFT_BLOCK_STATUS`. En `blocking_status`, primera línea del bucle:
+   `if isinstance(exc, SoftBlocked): return SOFT_BLOCK_STATUS`.
+2. `html_response.py:69` y `native_jobscout24.py:191`: lanzar `SoftBlocked(...)`
+   en vez de `ValueError`. Como `_read` ya hace `except ProviderResponseError:
+   raise` antes del `except (..., ValueError)`, el soft-block sale sin reintento
+   sin tocar `_read`.
+3. En `fetch_new` de jobscout24 y dynamitejobs (leer el bucle de detalles
+   completo antes): en la pasada de listado, `SoftBlocked` sin listings → se
+   relanza (el runner lo contará como bloqueo vía `blocking_status`); con
+   listings → `error = "soft_block"`, `blocked_with = SOFT_BLOCK_STATUS`, `break`.
+   En la pasada de detalles, un `SoftBlocked` corta el bucle con el mismo par
+   `error/blocked_with` (hoy un detalle fallido sólo se loguea y se sigue
+   pidiendo).
+4. Pruebas: `test_native_jobscout24.py` — `MockTransport` que devuelve una
+   página con marcador de CAPTCHA (ver `looks_like_soft_block`,
+   `html_response.py:52`) y contador de peticiones → exactamente 1 petición,
+   `blocking_status(exc) == 403`. `test_block_killswitch.py` —
+   `blocking_status(SoftBlocked("x")) == 403`.
+
+#### A9 · Una ventana de dedup menor de 30 min se redondea a 0 y lanza la pasada léxica sobre todo el corpus — BAJA
+
+**Dónde.** `jobhunt_core/dedup.py:788-789` (`window_hours = round(...)`),
+`:664-677` (`_finish_scan` interpreta `window_hours > 0` como «hay ventana»),
+`:418-423` (`_lex_sql` usa `make_interval(hours => :ventana)`).
+**Evidencia.** `round(0.4) == 0` → `_lex_sql(window=False)` = pasada completa
+(los 67 s/24k de OPT-ALTA-1). En producción la ventana es 48 h; muerde en un
+relanzamiento manual estrecho o en tests.
+**Cambio exacto.** La ventana viaja como instante, no como horas redondeadas:
+`_lex_sql(window: bool)` pasa a filtrar con `created_at >= :desde` (timestamp);
+`_finish_scan(session, window_start: datetime | None)` pone
+`lex_params["desde"] = window_start` cuando no es None; en
+`scan_semantic_candidates_batch` llamar `_finish_scan(session, window_start)`
+y borrar el `round`. `scan_semantic_candidates` (no batch) desaparece en B5;
+si sigue vivo al hacer A9, convertir su `window_hours` en `now() - timedelta(hours=...)`.
+**Prueba.** `test_dedup_task_batches.py`: parchear `_lex_sql` para registrar
+`window`; un lote con ventana de 10 minutos debe llamar `_lex_sql(window=True)`.
+
+#### A10 · `run_one_task` reintenta sin dejar rastro de la excepción real — BAJA
+
+**Dónde.** `jobhunt_core/tasks/searches.py:39-45`.
+**Evidencia.** `except Exception: raise self.retry(exc=RuntimeError(...)) from
+None` sin `logger`; su hermana `run_due_task` (`:26-29`) sí loguea
+`type(exc).__name__`. El `ValueError("saved-search execution requires a real
+HTTP inbox")` de `:56-57` se reintenta una vez y se pierde.
+**Cambio.** Antes del `raise`: `logger.error("saved-search execution failed:
+%s", type(exc).__name__)` (nunca el texto: puede llevar preferencias).
+**Prueba.** Test unitario con `monkeypatch.setattr(searches, "_run", raising
+ValueError)` y `caplog` → el mensaje contiene `ValueError`.
+
+#### A11 · `/jobs/stats` y `/jobs/sources` devuelven 501 incondicional y el buscador ofrece filtros que siempre acaban en 501 — MEDIA
+
+**Dónde.** `backend/services/catalog/core_client.py:394-398` (`stats`/`sources`
+lanzan siempre), `backend/routers/jobs.py:85-101`; `frontend/src/config/api.js:138-144`,
+`frontend/src/components/FilterPanel.jsx:27-32` (`getSources().catch(() => {})`);
+`routers/jobs.py:48-60` expone `canton/language/seniority/contract_type/salary_*/sort≠newest`
+que `unsupported_search_reason` (`catalog/core_client.py:171-186`) rechaza con 501;
+`frontend/src/stores/searchStore.js` los modela y la UI no maneja 501.
+**Evidencia.** El desplegable de fuentes está vacío para siempre y nadie lo ve
+por el `.catch` silencioso; `jobsApi.getStats` no tiene importadores.
+**Cambio exacto (honesto: la UI sólo ofrece lo que el core sirve).**
+1. BFF: borrar `stats()`/`sources()` de `CoreCatalog` y de `CatalogPort`, los
+   dos endpoints del router y los esquemas `JobStats`/`SourceInfo`
+   (`grep -rnw "JobStats\|SourceInfo" backend` → sólo esos tres sitios + tests).
+   En `search_jobs` dejar `q, source, remote_only, limit, offset`; borrar los
+   otros `Query` y los campos correspondientes de `CatalogSearchParams`,
+   `_UNSUPPORTED_FILTER_FIELDS` y la rama `sort` de `unsupported_search_reason`
+   (queda sólo la cota del CSV de fuentes > 200). Adaptar
+   `test_catalog_contract.py` y `test_catalog_native_links.py`.
+2. Frontend: `jobsApi.getStats/getSources` fuera; `FilterPanel` pierde el
+   desplegable de fuentes y pasa `source` a un input de texto (o se retira el
+   filtro si el propietario lo prefiere); `searchStore` queda con `q, source,
+   remoteOnly`; `useActiveFilterChips` (`SearchPage.jsx:28`) se recorta igual.
+   `FiltersPage.test.jsx` se adapta.
+**Verificación.** `test_catalog_*`, vitest, `npm run build`.
+
+#### A12 · La watchlist se deriva en cliente de los 500 primeros matches — MEDIA
+
+**Dónde.** `frontend/src/pages/WatchlistPage.jsx:55-68`.
+**Evidencia.** `limit: 500` + `filter(m => m.school_id)`: un colegio por debajo
+del puesto 500 no existe para esta página. `MatchPage` ya pide
+`category: "__watchlist"` al core cuando hay facetas (`useMatchFacets`), y
+`matchApi.getResults` acepta `category` (`api.js:409`).
+**Cambio.** `const facets = useMatchFacets(); const args = facets.isSuccess ?
+{ limit: 500, offset: 0, category: "__watchlist", translate: false } : {limit:
+500, offset: 0, translate: false}`; con facetas, sin `.filter(m =>
+m.school_id)` (el core ya filtra); sin facetas, comportamiento actual (modo
+legacy, igual que MatchPage). Mantener el orden por `score_final + urgency`.
+**Prueba.** vitest con `matchApi.getResults` simulado: con facetas la llamada
+lleva `category: "__watchlist"`.
+
+#### A13 · Tras «Re-generar carta» el drawer enseña el borrador anterior — MEDIA
+
+**Dónde.** `WatchlistPage.jsx:92-98` (`generateDraft.onSuccess` invalida
+`["match-results"]` pero no `["draft", jobHash]`) y `:295-299` (`DraftDrawer`
+monta con esa clave, cacheada y fresca → no refetchea).
+**Cambio.** En `onSuccess(data, vars)`: leer en `backend/routers/watchlist.py`
+qué devuelve `POST /watchlist/match/{hash}/draft`; si devuelve el texto del
+borrador, `qc.setQueryData(["draft", vars.jobHash], <texto>)`; si no,
+`qc.invalidateQueries({ queryKey: ["draft", vars.jobHash] })`. En ambos casos
+mantener la invalidación de `["match-results"]`.
+**Prueba.** vitest: tras la mutación, `getDraft` se vuelve a llamar (o el
+dato cacheado coincide con la respuesta del POST).
+
+#### A14 · El banner del análisis del CV se queda «en progreso» sin salida — MEDIA
+
+**Dónde.** `frontend/src/hooks/useCvAnalysis.js:48-56` (fallo del vale →
+`return` sin tocar el estado) y `:90-92` (`es.onerror` cierra sin estado);
+`CvAnalysisBanner.jsx:54-63` sólo pinta «Dismiss» con `!inProgress`.
+**Cambio.** En los dos fallos: `setState((s) => ({ ...s, active: true, stage:
+"error", message: "Progress unavailable; your profile will refresh when the
+analysis finishes." }))` y `qc.invalidateQueries({ queryKey: ["profile"] })`
+en el `onerror`. El banner ya pinta `stage === "error"` con botón de cierre.
+**Prueba.** vitest: `notificationsApi.streamTicket` rechazando → `stage ===
+"error"`.
+
+#### A15 · `CategoryTabs` pinta `__watchlist` y `otros` como prefijo — BAJA
+
+**Dónde.** `frontend/src/components/CategoryTabs.jsx:38-40` (`cat.id &&
+cat.id !== cat.label`). Los ítems sintéticos de `MatchPage.jsx:98,120,139` y
+`SavedJobsPage.jsx:47` se ven como «__watchlist Watchlist 5».
+**Cambio.** Condición `cat.id && cat.id.length === 1`.
+**Prueba.** vitest de render: con `{id:"__watchlist", label:"Watchlist"}` no
+aparece el texto `__watchlist`.
+
+#### A16 · El buscador no refleja «Clear all» y el debounce no limpia su temporizador — BAJA
+
+**Dónde.** `frontend/src/pages/SearchPage.jsx:16-25` (`useDebounce` sin
+cleanup), `:121-125` (`<input defaultValue={q}>`, no controlado), `:192-198` y
+`:246-248` (`resetFilters` vacía el store, la caja conserva el texto).
+**Cambio.** Estado local controlado: `const [text, setText] = useState(q);
+useEffect(() => setText(q), [q]);` `value={text}` y `onChange={(e) => {
+setText(e.target.value); debouncedSetQ(e.target.value); }}`. En `useDebounce`:
+`useEffect(() => () => clearTimeout(timer.current), [])`.
+**Prueba.** vitest: tras «Clear all» el input está vacío.
+
+#### A17 · `MatchPage` legacy recalcula dos agregados sobre 3.000 filas en cada render y pinta la categoría entera; `Pipeline`/`SavedJobs` anulan su `memo` — MEDIA (rendimiento)
+
+**Dónde.** `MatchPage.jsx:153-160` (`topScore`, `strongMatches` sin `useMemo`;
+el resto, `:72-142`, sí está memoizado), `:353-383` (la paginación de 50 sólo
+existe en modo facetas); `PipelinePage.jsx:146-154` (`useCallback(…,
+[updateApp])` depende del objeto de mutación, que cambia por render);
+`SavedJobsPage.jsx:56-64` (handlers sin `useCallback` → `memo(MatchCard)` inútil).
+**Cambio.** (1) `const topScore = useMemo(...)` y `strongMatches = useMemo(...)`
+con `[facetsEnabled, facets, allMatches]`. (2) En legacy, `visibleMatches.slice(
+categoryOffset, categoryOffset + 50)` y los mismos botones Previous/Next que en
+facetas (quitar la condición `facetsEnabled &&` del bloque de paginación).
+(3) `const { mutate: updateMutate } = updateApp;` y depender de `updateMutate`
+(patrón ya documentado en `MatchPage.jsx:161-183`); en SavedJobsPage, los tres
+handlers en `useCallback` con el `mutate` extraído.
+**Prueba.** Lint limpio (react-hooks/exhaustive-deps) y render manual de la
+categoría más grande en legacy sin congelación. Anotar la medición.
+
+#### A18 · Un cursor que el propio provider escribió se declara «corrupto» y deja el scope en fallo permanente sin contabilizar — MEDIA
+
+**Dónde.** `native_jobscout24.py:328-343`, `native_dynamitejobs.py:286-301`,
+`native_swissdevjobs.py` (`_cached_descriptions`), `arbeitnow.py` (`_cursor_int`,
+`grep -n "_cursor_int" jobhunt_core/harvest/providers/arbeitnow.py`).
+**Evidencia.** Lanzan `ProviderConfigError` si una descripción guardada supera
+`MAX_DESCRIPTION_LENGTH` o está vacía. El cursor lo escribe el propio código:
+bajar la constante en una release deja el scope fallando en cada ventana SIN
+`consecutive_failures` (el runner relanza `ProviderConfigError` antes de
+`_record_failure_safe`, `runner.py:133-136`), el dispatcher lo reencola y
+`health` sólo lo ve días después como «rancio». No hay vía de operador para
+reiniciar el cursor salvo cambiar un parámetro semántico.
+**Cambio.** Un cursor ilegible es CACHÉ, no configuración: en los cuatro sitios,
+`logger.error("%s: cursor ilegible, se descarta y se parte de cero", SOURCE_NAME)`
+y devolver `{}` (o `0` en arbeitnow). `ProviderConfigError` queda reservado a
+`params`. Añadir una línea al docstring de `ProviderConfigError` (`provider.py:22`).
+**Prueba.** En cada `test_native_*.py` afectado: un cursor con una descripción
+de `MAX_DESCRIPTION_LENGTH + 1` → `fetch_new` no lanza, loguea `cursor
+ilegible` y vuelve a pedir detalles.
+
+### B · Código muerto o sólo sostenido por tests (borrado puro)
+
+Procedimiento común a todos los B: (1) la búsqueda de consumidores de la regla
+4, pegada en el checkpoint; (2) borrar símbolo + tests que SOLO lo prueban;
+(3) `ruff check` (F401 de imports que quedan huérfanos); (4) suite focal del
+fichero; (5) si se tocó `Settings`, regenerar `.env.prod.example`.
+
+#### B1 · Rama de re-ranking LLM de `groq_service.py` — 442 LOC + 721 de tests, cero llamadores
+
+**Dónde.** `backend/services/groq_service.py:21-61` (`_solo_textos`,
+`_CACHE_SCHEMA_VERSION`, `_sanear_veredicto`), `:62-105` (`RERANK_SYSTEM_PROMPT`,
+`_SYSTEM_PROMPT_FINGERPRINT`), `:166-519` (`rerank_jobs`, `_rerank_call`,
+`_parse_llm_response`, `_fallback_results`, `_job_view`, `_rerank_prompt`,
+`_profile_fingerprint`, `_verdict_key`, `_get_cached_verdicts`, `_set_cached`).
+**Evidencia.** `grep -rn "rerank_jobs\|\.rerank(" --include='*.py' backend |
+grep -v tests` → vacío. El Stage 3 murió con `job_matcher.py` (`42ecf96`). Lo
+vivo de `GroqService` es `__init__`, `is_available`, `get_chat_response`
+(`:107-165`), usados por translation_service, document_generator, cv_analyzer,
+letter_generator, warm.
+**Pasos.**
+1. Dejar el módulo en ~80 LOC: docstring, imports necesarios, `GroqService`
+   con los tres miembros vivos. **Conservar** `GROQ_RERANK_MODEL` y
+   `GROQ_RERANK_REASONING_EFFORT`: `get_chat_response` (`:150-152`) los usa para
+   la traducción.
+2. Borrar de `backend/config.py` `GROQ_RERANK_BATCH_SIZE`, `GROQ_RERANK_TEMPERATURE`,
+   `GROQ_RERANK_MAX_TOKENS`, `GROQ_CACHE_TTL_DAYS` (sus únicos lectores están
+   en la rama borrada: comprobar con la regla 4). Regenerar `.env.prod.example`.
+3. Borrar `backend/tests/test_g1_fix_groq_rerank.py` y
+   `test_g2_fix_rerank_fallback.py`; en `test_groq_service.py` conservar sólo
+   los casos de `get_chat_response`/`is_available`; comprobar quién más usa
+   `backend/tests/llm_stub.py` antes de tocarlo.
+4. `docs/COTAS_Y_DECISIONES.md:186` («Tamaño de lote de rerank = 10»): marcar
+   la fila como RETIRADA con fecha y SHA (no borrar la fila: es historia).
+**Verificación.** `test_groq_service.py`, `test_translation_service.py`,
+`test_env_example_covers_settings.py`.
+
+#### B2 · `backend/utils/text.py` es una copia literal de `rss_text.py` del core y sólo se usa una función
+
+**Dónde.** `backend/utils/text.py` (264 LOC): `SWISS_CANTONS`, `JOB_TAGS`,
+`strip_html_tags`, `extract_job_skills`, `extract_canton`.
+`jobhunt_core/harvest/providers/rss_text.py:123-150` tiene `strip_html_tags` y
+`extract_job_skills` byte a byte iguales.
+**Evidencia.** `grep -rn "from utils.text import\|utils\.text" backend
+--include='*.py' | grep -v tests` → sólo `routers/match.py:44` (`strip_html_tags`).
+**Pasos.** Reducir el fichero a `strip_html_tags` (~10 LOC) y podar
+`backend/tests/test_utils.py` a sus casos. No importar desde el core: la
+frontera BFF↔core es HTTP, no imports (plan §21).
+
+#### B3 · Módulos, métodos y settings del BFF sin consumidor de producción
+
+| Símbolo | Dónde | Consumidores fuera de tests | Acción |
+|---|---|---|---|
+| `services/skill_synonyms.py` (`filter_missing_skills`, 140 LOC) | — | 0 | borrar + su test |
+| `services/urgency_scorer.py` (`compute_urgency_score`, 96 LOC) | — | 0 (la urgencia ya viene del core: `schools/presentation.py:107`) | borrar + su test; es el único consumidor de `resolve_school_from_job` y `_URGENT_KEYWORDS` de `swiss_schools_config` → borrarlos también |
+| `scrapers/swiss_schools_config.schools_by_strategy` | `:342` | 0 | borrar |
+| `models/job.Job.exclude_student_conditions` | `:137-147` | 0 (se fue con el runtime en `42ecf96`) | borrar |
+| `services/catalog/core_client._resolve_legacy_hashes` + los dos bloques `by_url` | `:299-301`, `:351-354`, `:381-384` | stub que devuelve `{}` | borrar método y bloques; borrar los comentarios G1/P2-17 que describen un comportamiento que ya no ocurre; conservar `_get_local_backed` (sí tiene camino) |
+| `services/profiles/core_client.CoreProfile`, `_ProjectedContentDTO`, `CoreProfileView`, `_view`, caché ETag | `:30-61`, `:88-244` | sólo `tests/test_profiles_contract.py` y `test_profile_erasure_delivery.py` | borrar la clase y DTOs; dejar en el módulo `default_client_factory` (`:77`) y `clear_profile_cache` (`:62`), que SÍ usan `profile_sync`, `exclusions_sync` y `profile_erasure`; borrar `test_profiles_contract.py` y adaptar el de erasure |
+| `services/sse_manager.broadcast_to_all`, `get_active_connections` | `:112`, `:223` | sólo `tests/test_services.py:54,102` | borrar método y casos |
+| `tasks/example_task.py` (`tasks.ping`) | — | sólo `celery_app.conf.include:43` | borrar fichero y la línea del include |
+| Settings `MATCH_SCORE_THRESHOLD`, `MATCH_LLM_RERANK_TOP`, `MATCH_LLM_RERANK_MAX`, `SEMANTIC_DEDUP_THRESHOLD`, `SEMANTIC_DEDUP_TITLE_OVERLAP_MIN`, `ALERTS_MAX_PUSH_PER_DAY`, `ALERTS_MIN_SCORE_THRESHOLD`, `SCHEDULER_SEARCH_INTERVAL_MINUTES`, `SAVED_SEARCH_INITIAL_LOOKBACK_DAYS` | `backend/config.py:111-165, 244` | 0 lectores fuera de `config.py`/tests (medido con `grep -rnw`) | borrar campo y su comentario; regenerar `.env.prod.example`; `CLAUDE.md:456` cita `MATCH_SCORE_THRESHOLD` (F1) |
+
+#### B4 · Símbolos muertos del core
+
+| Símbolo | Dónde | Evidencia | Acción |
+|---|---|---|---|
+| `applications.bookmark_item` | `jobhunt_core/applications.py:508-525` | 0 llamadores (ni tests) | borrar |
+| `dedup.exact_intra_backfill` | `dedup.py:599` | sólo `test_integration_dedup.py:372-378` | borrar función y test |
+| `dedup.scan_semantic_candidates` (no batch, 40 LOC) | `dedup.py:680-720` | sólo tests (5 usos en `test_integration_dedup.py`); producción usa `_batch` | moverla a `jobhunt_core/tests/_dedup_helpers.py` como helper de prueba (misma firma) y re-apuntar los 5 imports; `maintenance.py` no la cablea |
+| `cross_encoder.ACTIVATION` | `cross_encoder.py:39` («compat: la de v1») | `grep -rnw ACTIVATION jobhunt_core backend scripts` → 0 | borrar |
+| `harvest/sink.content_hash` | `sink.py:178-180` | sólo `test_harvest_task.py:11,280-281`; producción usa `canonical_payload` | borrar función, import y caso |
+| `native_schuljobs._Listing.stubs` y `_Listing._open` | `native_schuljobs.py:127,131` | `stubs` nunca se escribe (`rows()` usa `_cards`); `_open` SOMBREA la pila `_open` de `TagStackParser` con otra lista vacía | borrar ambas líneas; correr `test_integration_native_schuljobs`/`test_native_schuljobs` |
+| `native_gastrojob` `verbatim` | `native_gastrojob.py:210` | ruff RUF059 | `name, _depth, _ = self._field` |
+| `portfolio_vacancies.PORTFOLIO_IMPORT_SCOPE_ID` duplicado y mapeo identidad | `:33` y `:38`; `:349` `{_Q_NO_TITLE: "no_title", _Q_LIMIT: "limit"}.get(reason, "malformed")` | las constantes valen su propia cadena | borrar la segunda definición; `skipped[reason] += grp["count"]` |
+| `tasks/matching._drain_embeddings(max_rounds)` y `_recovery_targets(limit)` | `tasks/matching.py:127-143` | `min(max_rounds, RECOVERY_EMBEDDING_ROUNDS)` con la constante = 1: los parámetros nunca superan 1; `evaluated` siempre `set()` | quitar los parámetros y el argumento `evaluated`; adaptar `test_native_runtime.py:47` |
+| `evaluate_profile(with_corpus_generation=…)` | `matching.py:2069-2071` | `gen_snapshot` se lee SIEMPRE en `:2048` en la misma transacción; el flag sólo elige entre dos lecturas equivalentes, y con `target == 0` devuelve None | `corpus_gen = gen_snapshot`; quitar el parámetro y sus dos usos en `tasks/matching.py:281,312`; mantener `compute_policy_feed(with_corpus_generation=...)` si lo usa alguien más (comprobar) |
+| Settings `CORE_EMBEDDING_MODEL_NAME`, `CORE_ENV`, `CORE_LOCK_PREFIX` | `jobhunt_core/config.py` | 0 lectores fuera de config/tests | borrar |
+
+#### B5 · Herramientas de desarrollo que viajan en la imagen de producción
+
+**Dónde.** `jobhunt_core/dev_eval.py` (777 LOC; `evaluate_dev` D28,
+`_validate_universe_seal` D22; `open()` sin context manager en `:716`),
+`jobhunt_core/train_cross_encoder.py` (371 LOC; `io.open` sin `with` en
+`:68,73,323,324`), sus tests `test_integration_dev_eval.py` (1.057 LOC) y
+`test_train_cross_encoder.py` (159), ambos tras `skipif(not CORE_ADMIN_DATABASE_URL)`.
+`jobhunt_core/Dockerfile:38` copia el paquete entero.
+**Evidencia.** `grep -rln "dev_eval\|train_cross_encoder" jobhunt_core backend
+scripts --include=*.py | grep -v tests` → sólo ellos mismos; no están en
+`celery_app.conf.include`; su único uso es `python -m` manual citado en actas.
+P3 de DT-145 conservó explícitamente `migrate.py`, Alembic y `erasure_restore`,
+y no dijo nada de estos dos: sobrevivieron sin decisión.
+**NO mover:** `cross_encoder.py` (lo importa `matching.py:679,734,794`),
+`ce_runtime.py` (`materialization.py:9`), `erasure_restore.py`
+(`scripts/nas_backup_daily.sh:53`), `rotate_credential.py`, `policy_ctl.py`
+(operación), ni los 18 `provision_*.py` (se ejecutan DENTRO del contenedor con
+`python -m jobhunt_core.provision_x`, ver `docs/unificacion/DT144_RELEVO.md`).
+**Pasos.**
+1. Crear `tools/core/` en la raíz del repo; mover allí `dev_eval.py`,
+   `train_cross_encoder.py` y sus dos tests (`tools/core/tests/`, con el mismo
+   `skipif`). Ajustar imports absolutos (`from jobhunt_core import …` siguen
+   válidos: el paquete queda instalado). Arreglar los cinco `open` sin `with`
+   al mover (cambio mecánico, mismo comportamiento).
+2. Añadir `tools` a la línea de `ruff check scripts docs` del CI
+   (`.github/workflows/ci.yml:45-46`) para que no vuelva a quedar sin lint.
+3. Reagrupar los 18 `provision_*.py` en `jobhunt_core/provision/` (subpaquete,
+   mismos nombres de módulo) y actualizar los `python -m jobhunt_core.provision_x`
+   citados en docs a `python -m jobhunt_core.provision.x`. Esto NO los saca de
+   la imagen (deben estar), pero deja la raíz del paquete con los ~27 módulos
+   de dominio. Hacerlo en un commit aparte de 1-2.
+4. `scripts/`: mover a `tools/probes/` las sondas de un solo uso ya ejecutadas
+   y citadas sólo por actas: `measure_point5.py`, `mutation_test_probe.py`,
+   `nas_portfolio_read_benchmark.py`, `probe_served_endpoints.py`,
+   `measure_nas_resources.py` (+ `test_measure_nas_resources.py`),
+   `probe_postgres_orphan_isolation.sh`, `document_inbox_contract_server.py` +
+   `swiss_document_export_contract_client.py` (sólo se citan entre sí). Borrar
+   `set_match_facets_flag.py` + `test_set_match_facets_flag.py` (0 referencias).
+   De los `scripts/test_*.py` que nadie ejecuta, añadir al job de CI los que
+   protegen scripts de CI/despliegue: `python -m pytest scripts/test_check_no_secrets.py
+   scripts/test_check_core_release.py scripts/test_ensure_swissjob_frontend.py -q`
+   (requieren un `conftest.py` o `__init__` mínimo en `scripts/`: comprobar
+   ejecutándolos primero). Actualizar las rutas en las actas que los citan
+   (`grep -rl "<nombre>" docs`).
+**Verificación.** CI verde; `docker compose build core-api` y
+`python3 scripts/check_core_release.py` tras el build; `ls /app/jobhunt_core`
+dentro del contenedor no contiene `dev_eval.py`.
+
+#### B6 · Residuo de la sombra: purga diaria de una tabla sin productor
+
+**Dónde.** `jobhunt_core/config.py:142` (`CORE_SHADOW_INBOX_RETENTION_DAYS`),
+`jobhunt_core/retention.py:96-97,130` (`DELETE FROM shadow_inbox`).
+**Evidencia.** El productor (`jobhunt_core/shadow/`) se retiró en `3ed6462`.
+**Decisión del propietario** (no del ejecutor): (a) migración `core00NN` que
+dropea `shadow_inbox` + borrar la purga y el setting; o (b) dejar la purga
+hasta que la tabla esté vacía y entonces (a). Recomendación: (a) ahora, con
+`SELECT count(*) FROM jobhunt.shadow_inbox` anotado en el checkpoint antes del
+DROP. Va junto con F3 (`legacy_shadow.py`).
+
+#### B7 · Frontend — exportaciones sin importador
+
+**Dónde** (`grep -rnw <nombre> frontend/src` excluyendo tests da sólo la
+definición): `useCreateApplication` (`hooks/useApplications.js:18`) y
+`applicationsApi.create` (`config/api.js:219`); `jobsApi.getStats` (`:138`,
+cae con A11); `matchApi.getHistory` (`:415`); `watchlistApi.listSchools`
+(`:456`) y `watchlistApi.calendarUrl` (`:479`, su propio comentario dice que
+lo sustituyó `downloadIcs`); `CardHeader/CardTitle/CardDescription/CardContent/
+CardFooter` (`ui/Card.jsx:49-92`, sólo re-exportados por `ui/index.js`);
+comentario huérfano `hooks/useMatch.js:38` («Carga de una página de resultados
+con traducciones»: `useMatchResultsPage` ya no existe). `App.test.jsx` sólo
+comprueba `typeof App === "function"`.
+**Pasos.** Borrar cada símbolo y su línea en `ui/index.js`; borrar el
+comentario huérfano; en `App.test.jsx` o se afirma algo del render (p. ej. que
+`/login` monta el formulario) o se borra. ATENCIÓN con `applicationsApi.create`:
+si A4 se cierra y el propietario quiere la acción «guardar candidatura» en la
+UI, se conserva y se conecta; si no, se borra. Anotar la decisión.
+**Verificación.** `npm run lint && npx vitest run && npm run build`.
+
+#### B8 · Clases Tailwind sin efecto y paleta fuera del tema
+
+**Dónde.** `frontend/src/pages/JobDetailPage.jsx:146` usa `prose prose-sm
+prose-headings:…` sin `@tailwindcss/typography` (no está en `package.json` ni
+en `index.css`): clases inertes. `LoginPage.jsx:21` y `RegisterPage.jsx:25`
+usan `bg-gray-50` cuando el tema define `surface-secondary`.
+**Pasos.** Sustituir el bloque `prose` por las clases del tema que ya usan las
+otras páginas para texto largo (mirar `DocumentGenerator.jsx:38`
+`MarkdownRenderer`), o instalar el plugin SOLO si el propietario lo aprueba
+(regla «no introducir dependencias sin justificarlo»). `bg-gray-50` →
+`bg-surface-secondary`. Se cierra junto con C8 (AuthShell).
+
+### C · Duplicación (consolidar sin cambiar comportamiento)
+
+#### C1 · Transporte HTTP de la cosecha copiado nueve veces (~410 LOC) — ALTA
+
+**Dónde.** `async def _read` + `async def _pause` en `native_myscience.py:302-343`,
+`native_schuljobs`, `native_gastrojob`, `native_jobscout24.py:283-326`,
+`native_dynamitejobs`, `native_tes`, `native_stelle_admin`, `native_isp_workday`,
+`native_swiss_schools`, `native_swissdevjobs` (lista: `grep -ln "^async def _read"
+jobhunt_core/harvest/providers/*.py`). Dos variantes: (a) siete copias
+«2 reintentos, 5xx, jitter 0,5, decode replace» idénticas salvo `SOURCE_NAME`
+y un parámetro extra (`params=`, `ajax=`, `Referer`); (b) jobscout24 y
+dynamitejobs «3 reintentos, 429 incluido, callback `parser`, todo →
+`ProviderResponseError`». Además `_cached_descriptions` ×3 (48 LOC), ~20
+helpers `_text/_s/_object/_dict` (~60 LOC) y el bloque «stream + `aiter_bytes`
++ presupuesto de bytes» sin reintento en 12 ficheros más (~145 LOC).
+**Lo que NO se unifica (deliberado, no tocar):** la POLÍTICA de reintento es
+dato por proveedor — nav no reintenta 429 a propósito (`native_nav.py:35-37`),
+arbeitnow obedece `Retry-After` acotado (`:392-410`), jobgether «no retry of
+access blocks»; y la persona (UA `SwissJobHunter/1.0` en rss/json/thehub/
+publicjobs/jobroom/swissdevjobs frente a `BROWSER_HEADERS` en 13) es
+intencional (`browser_headers.py:1-9`). COTAS §4 sólo cota la serialización de
+scrapers y el gating de detalles, no el transporte.
+**Costura de tests que MUERDE.** Varios `test_native_*.py` e
+`test_integration_native_json.py` parchean nombres a nivel de MÓDULO del
+proveedor (`monkeypatch.setattr(native_x, "_page"|"_fetch_body"|"_json"|"_rows"|
+"_feed", …)`). Listarlos antes: `grep -rn "monkeypatch.setattr(native_\|
+monkeypatch.setattr(arbeitnow\|providers\.native_[a-z0-9_]*\._" jobhunt_core/tests`.
+`arbeitnow.py:170-174` lo documenta («la suite los fija con rebind del módulo»).
+**Pasos.**
+1. Nuevo `jobhunt_core/harvest/providers/transport.py`:
+   ```python
+   @dataclass(frozen=True)
+   class RetryPolicy:
+       attempts: int            # reintentos ADEMÁS del primer intento
+       statuses: frozenset[int] # estatus que se reintentan
+       backoff_s: float         # base de la espera exponencial
+       cap_s: float = 30.0      # tope de la espera
+       jitter_ratio: float = 0.0
+
+   async def pause(seconds: float, jitter_ratio: float = 0.0) -> None: ...
+   async def read_text(http, url, *, byte_limit: int, policy: RetryPolicy,
+                       source: str, headers=BROWSER_HEADERS, params=None,
+                       timeout_s=30, decode_errors="replace",
+                       wrap_errors: bool = False) -> str: ...
+   ```
+   `read_text` reproduce EXACTAMENTE el cuerpo de la variante (a) (stream,
+   presupuesto de bytes → `ProviderResponseError(f"{source}: response exceeds
+   byte budget")`, `raise_for_status`, reintento sólo si `policy.statuses` o
+   error de transporte, `pause(policy.backoff_s * 2**attempt, policy.jitter_ratio)`).
+   `wrap_errors=True` reproduce la variante (b): al agotar, `raise
+   ProviderResponseError(f"{source}: request failed ({type(exc).__name__})")
+   from None`; `decode_errors="strict"` para (b) (hoy decodifica sin `replace`).
+   Un `ProviderResponseError` (incluido `SoftBlocked` de A8) sale sin reintento.
+2. En cada proveedor, `_read` se queda como ENVOLTORIO de 3-5 líneas que llama
+   a `read_text` con su `RetryPolicy` de módulo (`_POLICY = RetryPolicy(
+   attempts=MAX_RETRIES, statuses=RETRY_STATUSES, backoff_s=RETRY_BACKOFF_S,
+   jitter_ratio=JITTER_RATIO)`) y aplica su `parser` si lo tenía. Así los
+   nombres parcheados por los tests siguen existiendo en el módulo y el diff
+   de cada proveedor es «borrar 40 líneas, dejar 5». `_pause` → `pause(seconds,
+   JITTER_RATIO)` igualmente envuelto.
+3. `_cached_descriptions` ×3 → `transport.cached_descriptions(cursor, *, source,
+   max_len)` (con el cambio de A18 ya aplicado: cursor ilegible = `{}` + log).
+4. Los helpers `_s/_text/_object/_dict` → `transport.text_of(value)`,
+   `object_or_empty(value)`; sustituir sólo donde la semántica sea idéntica
+   (leer cada uno: algunos recortan, otros no).
+5. El bloque «stream sin reintento» de los 12 restantes se sustituye por
+   `read_text(..., policy=RetryPolicy(attempts=0, statuses=frozenset(),
+   backoff_s=0))` SOLO si el cuerpo es idéntico; si un proveedor tiene una
+   diferencia (p. ej. `Retry-After` de arbeitnow), se deja como está y se
+   anota.
+6. Pruebas: `test_transport.py` nuevo (reintento en 503, no reintento en 404,
+   `ProviderResponseError` sale limpio, presupuesto de bytes, jitter acotado,
+   `wrap_errors`); y la suite completa de `test_native_*` + `test_integration_native_*`
+   sin tocar NINGÚN test existente (si uno se rompe, es que la extracción
+   cambió comportamiento: revertir y comparar cuerpo a cuerpo).
+**Criterio de cierre.** `grep -c "async with http.stream" jobhunt_core/harvest/providers/*.py`
+baja de ~21 ocurrencias a 1 (la de `transport.py`) más las excepciones
+anotadas; ningún test existente modificado.
+
+#### C2 · Las cuatro consultas del feed del core reconstruyen el mismo FROM/JOIN/WHERE — MEDIA
+
+**Dónde.** `jobhunt_core/matching.py` — `feed` (`:2325-2383`),
+`_facet_feed_sql` (`:2385-2427`), `feed_total_sql` (`:2528-2565`),
+`feed_version_sql` (`:2577-2641`). El `tenant_join` está 3 veces byte-idéntico
+(`:2340, :2545, :2618`) y el predicado `NOT IN ('thumbs_down','dismissed')` 4
+veces. UNA diferencia deliberada: `feed()` NO exige
+`current_offer_revision_id IS NOT NULL` (comentario `:2357-2362`: es el feed que
+mide el nDCG del gate) y usa el feedback correlacionado, no el batch.
+**Cotas que NO se tocan.** El recuento usa `effective_feedback_batch_sql` y se
+apoya en el índice parcial `ix_pvs_feed_current_eval` con el `current_eval_id
+IS NOT NULL` redundante (CLAUDE.md, invariante 2); `test_matches_total.py`
+fija el plan. No cambiar el SQL de `feed()`.
+**Pasos (nivel constantes, sin cambiar ningún plan).**
+1. Tres constantes de módulo junto a `CANDIDATES_SQL`:
+   `_FEED_EVAL_JOIN = "JOIN match_evaluations e ON e.id = s.current_eval_id AND e.profile_id = s.profile_id AND e.vacancy_id = s.vacancy_id "`,
+   `_FEED_VACANCY_JOIN = "JOIN vacancies v ON v.id = s.vacancy_id AND v.archived_at IS NULL AND v.merged_into IS NULL "`,
+   `_NEGATIVE_FEEDBACK = "NOT IN ('thumbs_down','dismissed')"`;
+   y `def _tenant_join(consumer_id, params) -> str` que añade `cid` a `params`
+   y devuelve el JOIN o `""`.
+2. Sustituir en las cuatro funciones las cadenas literales por las constantes
+   (el `AND v.current_offer_revision_id IS NOT NULL` se concatena donde hoy
+   está). Comparar el SQL resultante con el anterior con un test que
+   `assert feed_total_sql(pid, cid)[0] == <cadena previa guardada>` ANTES de
+   refactorizar (prueba de caracterización temporal, se borra al cerrar).
+3. Pruebas: `test_matches_total.py`, `test_matches_version.py`,
+   `test_empty_feed_recovery.py`, `test_integration_api_feedback.py`.
+
+#### C3 · `api/v1.py`: comprobación de tenencia ×4 y helpers HTTP reimplementados — MEDIA
+
+**Dónde.** Tenencia: `:899-906`, `:922-929`, `:957-964` (idénticos) y
+`:825-835` (variante con `str(...)` y `ApiError(404,"not_found","perfil no
+encontrado")` en vez de `error_404`). Helpers: `:525-527` y `:605-609` (hash
+manual ≡ `http_contract.request_hash`), `:634-645` (≡ `check_if_match`),
+`:548-552` y `:680-695` (≡ `json_response`, que ya hace el `sort_keys` que el
+comentario G7-P3-2 explica). `v1_applications.py` SÍ usa los helpers.
+**Pasos.**
+1. En `jobhunt_core/api/deps.py`: `async def require_owned_profile(session,
+   profile_id, consumer_id, *, for_update=False) -> None` que ejecuta
+   `SELECT consumer_id FROM profiles WHERE id = :pid [FOR UPDATE]` y lanza
+   `error_404("perfil")` si no hay fila o no coincide. Sustituir los cuatro
+   bloques (en `:825-835` se necesitan más columnas → dejar esa SELECT y usar
+   sólo `error_404` para unificar el mensaje). No tocar
+   `v1_profile_snapshot.py:70-80` (necesita cuatro columnas bajo el mismo lock).
+2. Sustituir los cinco bloques de hash/If-Match/Response por `request_hash`,
+   `check_if_match`, `json_response` importados de `http_contract`; retirar
+   los alias `_etag_of`/`_if_match_matches` si quedan sin uso (`_with_etag`
+   sigue usándose en `:435,455,569`).
+3. Pruebas: las de contrato de perfiles (`grep -rln "If-Match\|Idempotency-Key"
+   jobhunt_core/tests`) sin modificar; el replay idempotente debe seguir siendo
+   byte a byte (`sort_keys`).
+
+#### C4 · Outbox escrito dos veces y dependencia invertida — BAJA
+
+**Dónde.** `matching._persist_eval_rows` (`:1947-1976`) y `outbox.emit`
+(`outbox.py:18-57`): mismos dos INSERT (`integration_outbox` +
+`integration_outbox_deliveries`, mismo `ON CONFLICT`). `outbox.py:15` importa
+`matching.event_id_for` (el helper genérico depende del dominio).
+**Pasos.** Mover `EVENTS_NAMESPACE` y `event_id_for` a `outbox.py`; en
+`matching.py` dejar `from jobhunt_core.outbox import EVENTS_NAMESPACE,
+event_id_for` (re-export: comprobar `grep -rn "matching.event_id_for\|from
+jobhunt_core.matching import.*event_id_for" jobhunt_core backend scripts`).
+Añadir `outbox.emit_many(session, events: list[dict], destination: str)` con
+`executemany` y usarlo desde `_persist_eval_rows` (misma transacción, mismo
+orden por `eid`). Prueba: `test_integration_outbox*` / la que cubre
+`match.evaluated` (`grep -rln "match.evaluated" jobhunt_core/tests`).
+
+#### C5 · Reintento por deriva duplicado en `tasks/matching.py` — BAJA
+
+**Dónde.** `:273-287` vs `:302-318`: `es_canonico` (4 líneas) y la llamada a
+`evaluate_profile` (10 líneas) están dos veces.
+**Pasos.** `async def _canonical(session_factory, profile_id, model, policy,
+policies) -> bool` y un bucle `for intento in range(2): es_canonico = await
+_canonical(...); r = await matching.evaluate_profile(...); if r.get("status")
+!= "descartado_por_deriva": break; logger.warning(...)`. Mantener el texto del
+warning. Prueba: `test_native_runtime.py` y la que cubre la deriva
+(`grep -rln descartado_por_deriva jobhunt_core/tests`).
+
+#### C6 · Transporte HTTP del BFF al core repetido en cinco clientes; seis `CoreUnavailableError` — MEDIA
+
+**Dónde.** `default_client_factory` ×6 idénticas (`services/matching/core_client.py:215`,
+`catalog/core_client.py:83`, `profiles/core_client.py:77`,
+`documents/core_client.py:59`, `schools/http_client.py:39`,
+`saved_searches.py:57`); `_PAYLOAD_ERRORS` ×3 (`matching:46`, `profiles:49`,
+`catalog:48`); guard de credencial en 4 formas (`catalog._guard_credential:303`,
+tres `if` inline en `CoreMatching:506,552` y `feedback.py:91`,
+`SchoolClient.request:50`); `class CoreUnavailableError` en los 6 `port.py`
+(`matching:16`, `applications:23`, `documents:17`, `profiles:16`, `schools:15`,
+`catalog:17`), 10 `except` que deben importar la del puerto correcto.
+Presupuesto de tiempo inconsistente: documents/schools acotan con
+`asyncio.timeout(CORE_HTTP_TIMEOUT*2)`, matching sólo el recorrido del feed,
+catálogo ninguno.
+**Costuras de tests.** `monkeypatch.setattr(sync, "default_client_factory", …)`
+(`test_profile_snapshot_delivery.py:86`), `test_core_saved_search_handover.py:73,134`,
+`test_schools_core.py:150`, `test_document_core_workflow.py:66`
+(`"services.documents.core_client.default_client_factory"`). Cada módulo
+DEBE conservar un nombre `default_client_factory`.
+**Pasos.**
+1. `backend/services/core_http.py`: `class CoreError(Exception)`, `class
+   CoreUnavailableError(CoreError)`, `PAYLOAD_ERRORS = (ValueError, KeyError,
+   TypeError, AttributeError, IndexError, ValidationError)`, `def
+   client_factory() -> httpx.AsyncClient` (el cuerpo de las seis), `def
+   guard_credential(factory) -> None` (lanza `CoreUnavailableError("CORE_CONSUMER_KEY
+   no configurada")` si `factory is client_factory and not settings.CORE_CONSUMER_KEY`).
+2. En cada módulo: `default_client_factory = client_factory` (alias que las
+   pruebas parchean; comprobar que el código del módulo compara con
+   `default_client_factory`, no con `client_factory`, para que el parche siga
+   surtiendo efecto) y `guard_credential(self._client_factory)` en vez del
+   `if` inline. Borrar las copias de `_PAYLOAD_ERRORS` (catálogo tiene
+   `ValidationError` extra: la base la incluye).
+3. Las seis excepciones pasan a herencia múltiple:
+   `class CoreUnavailableError(CatalogError, core_http.CoreUnavailableError)` —
+   así `except CatalogError` y `except core_http.CoreUnavailableError` funcionan
+   ambos y no cambia ningún router. Los 10 `except` existentes no se tocan.
+4. Presupuesto: NO unificar en este ítem (cambia comportamiento medido del
+   punto 5); anotar como E-ítem si el propietario quiere un `asyncio.timeout`
+   común.
+5. Pruebas: las cuatro de la costura + `test_catalog_contract.py`,
+   `test_applications_contract.py`, `test_schools_core.py`,
+   `test_document_core_workflow.py`.
+
+#### C7 · `profile_sync.sync_profile_snapshot` y `exclusions_sync.sync_exclusions_to_core` son el mismo algoritmo — MEDIA (CC 22 y 15)
+
+**Dónde.** `backend/services/profile_sync.py:77-170` y
+`backend/services/exclusions_sync.py:82-175`: leer fila versionada → marcar
+`last_attempt_at` → commit → `PUT /profiles/{pid}/…` → validar ack
+(`type(ack) is not int or ack < sent_version` / `core_version_ahead`) → update
+condicional `delivered_version` → `except` de saneado idéntico (incluido el
+`except Exception: pass` del rollback-del-rollback).
+**Diferencias a preservar (leer ambos antes):** profile usa
+`func.clock_timestamp()`, exclusions `func.now()`; profile resuelve el perfil
+con `_ensure_core_profile_id` (enrola) y exige `CORE_CONSUMER_KEY` con
+`not_configured`, exclusions con `resolve_core_profile_id` (None →
+`sin_vinculo`); conjuntos `safe_errors` distintos; el cuerpo del PUT y la ruta.
+**Pasos.** `backend/services/versioned_delivery.py`:
+```python
+async def deliver_versioned_snapshot(
+    db, *, state_model, user_id, version_col, delivered_col, build_body,
+    resolve_profile_id, path, client_factory, safe_errors, now_expr, log_prefix,
+) -> dict: ...
+```
+que contiene el algoritmo UNA vez; cada módulo queda en ~15 líneas pasando sus
+particularidades. Mantener en cada módulo el nombre `default_client_factory`
+(costura de C6). Pruebas: `test_profile_snapshot_delivery.py` y las de
+exclusions (`grep -rln exclusions_sync backend/tests`) SIN modificar; si una se
+rompe, la extracción cambió comportamiento.
+
+#### C8 · Frontend — tres `formatSalary`, Login/Register al 80 %, click-outside ×3, caja de error ×10 — BAJA
+
+**Dónde.** `formatSalary` en `MatchCard.jsx:18-24` y `JobCard.jsx:6-12`
+(idénticas) y `JobDetailPage.jsx:8-17` (`Intl` de-CH con literales alemanes
+«ab»/«bis» en una UI inglesa); `JobCard.jsx:14-25` reimplementa
+`Intl.RelativeTimeFormat`. `LoginPage.jsx` (94 LOC) y `RegisterPage.jsx` (111)
+comparten logo SVG inline, inputs y botón con la misma cadena de 10 clases, y
+son los únicos que no usan `Input`/`Button` del kit. Click-outside + Escape en
+`Navbar.jsx:79-93`, `NotificationBell.jsx:17-33` y variante en
+`FilterPanel.jsx:35-46`. Caja de error `border-error-border bg-error-light …`
+×10, spinner `animate-spin rounded-full border-2` ×4, wrapper `mx-auto max-w-*
+px-4 py-6 sm:px-6 sm:py-8` ×7. `api.js` construye el error HTTP tres veces
+fuera de `request()` (`uploadCV:168-173`, `deleteFilter:380-388`,
+`downloadIcs:489-495`); `deleteFilter` usa `authFetch` «por el 204» cuando
+`request()` ya devuelve `undefined` en 204 (`:103`).
+**Pasos.** `utils/format.js` (`formatSalary` con la semántica de MatchCard,
+`formatRelative` con `Intl.RelativeTimeFormat`, `formatDate`); `components/AuthShell.jsx`
++ kit en Login/Register; `hooks/useDismissOnOutside(ref, open, onClose)`;
+`ui/ErrorBox.jsx`, `ui/Spinner.jsx`, `ui/PageContainer.jsx`; en `api.js`,
+`function httpError(res, body)` usado por `request()` y los tres sitios, y
+`deleteFilter` → `authRequest(..., { method: "DELETE" })` como
+`applicationsApi.remove`. Un commit por bloque. Verificación: lint, vitest,
+build, y revisión visual de Login/Register/Match/Watchlist.
+
+### D · Responsabilidad única y acoplamiento (particiones)
+
+Regla de todas las D: **movimiento puro**. Ninguna sentencia SQL cambia, ningún
+orden de locks cambia, ningún nombre público cambia. Si al partir aparece una
+«mejora», se anota como ítem nuevo y NO se hace en el mismo commit.
+
+#### D1 · `jobhunt_core/matching.py` (2.684 LOC, MI grado C) contiene diez responsabilidades — ALTA
+
+**Dónde (líneas de `8d01c50`, recalcular tras C2/C4/B4).** (a) catálogo y
+recetas de políticas + validación `:60-160, 565-720, 1085-1255`; (b) léxicos
+geo/idioma, compatibilidad de pareja y rerank v5 `:189-560`; (c) constructores
+de consulta léxica `:998-1061`; (d) SQL de candidatos + scan ANN `:1313-1615`;
+(e) cross-encoder prepare/score/assemble `:722-885`; (f) activación de políticas
+y modelo canónico `:1241-1330, 1468-1512`; (g) exclusiones de perfil
+`:1406-1465`; (h) evaluación + persistencia + outbox + movimiento del feed
+`:1678-2322`; (i) lectura del feed `feed/feed_facets/feed_category/
+feed_total_sql/feed_version_sql` `:2325-2648`; (j) estado de usuario
+`set_dismissed/set_saved` `:2651-2684`. 50 nombres distintos de `matching.`
+usados desde fuera (`grep -rhoE "\bmatching\.[A-Za-z_]+" jobhunt_core backend
+scripts | sort -u`).
+**Costura que MUERDE (lección «objetivos de monkeypatch»).** Los tests
+parchean `matching.compute_policy_feed` (7 sitios), `_persist_eval_rows` (4),
+`_ce_score_misses` (4), `_ce_assemble` (4), `set_after_revalidation_hook`,
+`_margen_cierre`. Un parche sobre el atributo del PAQUETE no afecta a una
+función que llama a su vecina por el nombre de su propio módulo. Por eso: las
+funciones parcheadas y sus LLAMADORES viven en el MISMO módulo, y los tests se
+re-apuntan a ese módulo en el mismo commit.
+**Pasos.**
+1. Listar los parches: `grep -rn "setattr(matching\|\"jobhunt_core.matching\." jobhunt_core/tests backend/tests scripts docs --include=*.py`.
+2. Crear el paquete `jobhunt_core/matching/` con, en este orden y un commit
+   por módulo (cada commit: mover + `__init__` re-exporta + suite focal verde):
+   - `recipes.py` ← (a): constantes `*_POLICY_*`, `POLICY_CATALOG`,
+     `_validated_*_recipe`, `_policy_recipes`, `_algorithm_of`, `_is_pair_absolute`.
+   - `compat.py` ← (b): léxicos, `_compatible_countries`, `_offer_countries`,
+     `_title_language_requirement`, `_pair_compatibility`, `_rerank_score`,
+     `_rerank_scale`, `_rerank_candidates`.
+   - `lexical.py` ← (c): `_lexical_query`, `_lexical_query_v2`, `_LEXICAL_QUERY_BUILDERS`, `_CV_STOP`, `_LEX_CAP`.
+   - `candidates.py` ← (d): `CANDIDATES_SQL`, `HYBRID*_CANDIDATES_SQL`,
+     `_hybrid_candidates_sql`, `ELIGIBLE_CORPUS_FROM`, `_with_candidate_exclusions`,
+     `_eligible_target`, `_fetch_candidates`, `_candidate_sql_for`, `_candidate_rows`.
+   - `policies.py` ← (f)+(g): `ensure_policy`, `bootstrap_policy_catalog`,
+     `declare_active_policies`, `canonical_model_id`, `declare_profile_exclusions`,
+     `VALID_EXCLUSION_KINDS`, `_active_profile`.
+   - `evaluation.py` ← (e)+(h) JUNTAS: `_ce_prepare`, `_ce_score_misses`,
+     `_ce_assemble`, `_cross_encoder_rows`, `compute_policy_feed`,
+     `_cross_encoder_feed`, `materialize_misses`, `_margen_cierre`,
+     `_persist_eval_rows`, `evaluate_profile`, `set_after_revalidation_hook`,
+     `eval_key`, `CORPUS_GENERATION_SQL`. Es el módulo que los tests parchean:
+     todos los nombres parcheados y sus llamadores quedan aquí.
+   - `feed.py` ← (i) y `vacancy_state.py` ← (j).
+   - `__init__.py`: re-exporta EXPLÍCITAMENTE (sin `*`) los 50 nombres
+     públicos y los privados que usan `materialization.py`, `tasks/*`,
+     `api/*`, `school_ingest`, `portfolio_vacancies` y `outbox` (lista con el
+     grep del punto 1 + `grep -rhoE "\bmatching\.[A-Za-z_]+"`). `from
+     jobhunt_core import matching; matching.feed(...)` debe seguir funcionando
+     sin tocar ningún llamador de producción.
+3. Re-apuntar los parches de los tests a `jobhunt_core.matching.evaluation`
+   (import del módulo y `monkeypatch.setattr(evaluation, "compute_policy_feed", …)`).
+4. Trasladar la narrativa G-numerada de los docstrings (509 líneas en
+   `matching.py`; 68+78 en `delivery.py:359-426, 496-573`; 220 en `dedup.py`) a
+   `docs/unificacion/DOC_3_DETALLE_TECNICO_2026-08-27.md` (o un ADR nuevo) y
+   dejar en cada docstring la INVARIANTE en 3-5 líneas con la referencia. El
+   código no cambia; el fichero se lee en la mitad de tiempo.
+5. Verificación: suite completa del core (`1.817 passed · 1 skipped` o la cifra
+   vigente, anotar), `radon mi jobhunt_core/matching/` todos en A/B,
+   `python -c "from jobhunt_core import matching; print(len(dir(matching)))"`
+   coincide con la lista exportada, `grep -rn "from jobhunt_core.matching import"
+   backend` sigue vacío (frontera HTTP).
+
+#### D2 · `evaluate_profile` (CC 28, 330 líneas) con las tres fases en línea — MEDIA (tras D1)
+
+**Dónde.** `matching/evaluation.py` (antes `matching.py:1993-2322`): F1
+`:2015-2068`, F2 `:2081-2114` (con `import asyncio as _asyncio` dentro de la
+función en `:2082` y `computed = {"rows": rows}` en `:2114` que reusa el nombre
+con otra forma), F3 revalidación de 5 identidades `:2117-2234`, movimiento del
+feed `:2240-2300`.
+**Pasos.** Extraer, sin cambiar una sola sentencia ni el orden de locks
+(perfil FOR UPDATE → generación FOR SHARE → modelo FOR SHARE → política FOR
+SHARE → escrituras, documentado en `:2155-2166`):
+`_prepare_evaluation(session_factory, …) -> dict | result`,
+`_infer_rows(computed, require_cache_only) -> list | result`,
+`_revalidate_under_lock(session, locked, prid, pesos_snapshot, gen_snapshot,
+model_id, policy_id, move_current) -> bool` (devuelve `deriva`),
+`_publish_feed_pointers(session, profile_id, eval_rows, winners) -> bool`.
+`evaluate_profile` queda en ~60 líneas orquestando. `import asyncio` al tope
+del módulo. Pruebas: `test_native_runtime.py`, la de deriva, la de
+`set_after_revalidation_hook` (barrera entre revalidación y escritura: debe
+seguir colocándose en el MISMO punto) y `test_empty_feed_recovery.py`.
+**Criterio.** `radon cc` de `evaluate_profile` ≤ B; ningún test modificado.
+
+#### D3 · `RawListingSink` (1.337 LOC de clase, `handle` 190 líneas) mezcla ocho responsabilidades — ALTA
+
+**Dónde.** `jobhunt_core/harvest/sink.py`: (1) cuarentena de frontera
+(funciones de módulo `:54-180`), (2) slots `_ensure_slots:375`, (3) ciclo de
+encarnaciones `_active_incarnations:442 … _settle_race:730`, (4) evidencia de
+identidad `_attach_join:535 … _write_dedup_candidates:1136`, (5) reparación de
+primary + reconstrucción canónica `_repair_primary_pointers:783`,
+`_rebuild_canonical_after_repair:840` (116 LOC que reimplementan
+`_canonical_revisions + _move_pointers + _aggregate_sources`), (6) revisiones
+raw `_refresh_and_revise:1434`, (7) canónica `_canonicalize:1171` + 4 helpers,
+(8) alta en caliente `_ensure_handler:814`. Duplicación interna: el SELECT
+`offer_revisions JOIN unnest(vids, hs)` tres veces idéntico (`:963-980`,
+`:1006-1024`, `:1290-1307`) y el INSERT `offer_revision_sources … ON CONFLICT
+DO NOTHING` dos (`:937-946`, `:1423-1432`).
+**Costuras.** `test_integration_identity.py:381-396` subclasea el sink y
+sobreescribe `_attach_candidates`: ese nombre sigue siendo método de la clase.
+Ningún otro test llama a privados (grep: 0). Dependen del sink:
+`school_ingest.py:22`, `portfolio_vacancies.py:20-21` (`_preprocess`,
+`_payload_has_nul`, `canonical_payload`) y `applications.py` (`RawListingSink`).
+Los proveedores NO dependen de internals del sink ni del runner (verificado).
+**Pasos (un commit por paso; suite `test_integration_identity`,
+`test_harvest_task`, `test_integration_native_*`, `test_integration_school_jobs`
+verde en cada uno).**
+1. `harvest/sink/__init__.py` que re-exporta `RawListingSink`, `normalize_url`,
+   `canonical_payload`, `_preprocess`, `_payload_has_nul`; el fichero actual
+   pasa a `harvest/sink/core.py` sin cambios (commit de movimiento puro).
+2. `sink/quarantine.py` ← (1): son funciones puras; publicarlas como
+   `preprocess`/`payload_has_nul` y dejar en `__init__` los alias con guion
+   bajo para `school_ingest` y `portfolio_vacancies` (o re-apuntarlos en el
+   mismo commit).
+3. `sink/revisions.py`: UNA función `ensure_offer_revisions(session, entries)`
+   (el cuerpo de `_ensure_offer_revisions:957-1026`) y UNA `link_sources(session,
+   source_rows)` (el INSERT de `:937-946`); `_canonical_revisions` y
+   `_rebuild_canonical_after_repair` pasan a llamarlas. Prueba de
+   caracterización ANTES: contar sentencias ejecutadas en un `handle()` de
+   fixture con un listener de SQLAlchemy y comprobar que el número y el orden
+   de `INSERT INTO offer_revision_sources` no cambian.
+4. `sink/incarnations.py` ← (3) y `sink/evidence.py` ← (4) como funciones que
+   reciben `session` (no métodos); `RawListingSink` las invoca. `_attach_candidates`
+   se queda como método que delega (costura).
+5. `sink/canonical.py` ← (5)+(7). `_rebuild_canonical_after_repair` se expresa
+   con las tres funciones existentes SOLO si el paso 3 demostró equivalencia
+   byte a byte del SQL; si no, se mueve tal cual y se anota.
+6. `handle()` queda como coordinador de ~120 líneas. Añadir el contador de
+   `_ensure_slots:429-439` (colisión de `url_normalized` que descarta la oferta
+   en cada cosecha con sólo un warning): devolver `skipped_url_collision` en el
+   resultado de `handle` y escribirlo en `_admission` del cursor para que
+   `health._missing_date_alert` lo pueda ver (esto SÍ es un cambio funcional:
+   commit aparte, con test).
+**Criterio.** `radon cc -s -n C jobhunt_core/harvest/sink/` sin D; ningún
+test existente modificado salvo re-apuntar imports.
+
+#### D4 · Lógica de negocio en routers del BFF — MEDIA
+
+| Router | Dónde | Qué hace ahí | Destino |
+|---|---|---|---|
+| `routers/documents.py` | `generate_document:206-310` (CC 20); `async_sessionmaker(db.bind, …)` en `:79, 184, 382` | carga perfil, busca `MatchResult`, construye snapshot, clave de caché, lee Redis, despacha LLM, persiste (outbox vs local), escribe Redis | `services/documents/generation.py: async def generate(db, redis, user, body, groq, gemini) -> response`; el router valida, traduce errores y devuelve |
+| `routers/integration_inbox.py` | `receive_event:111-215` (CC 19) | lectura acotada del body, validación de sobre, orden de cerrojos, insert idempotente, `Notification`, push SSE | `services/integration_inbox.py: async def ingest(db, sse, envelope)`; el router conserva SOLO la lectura acotada del stream (es HTTP) |
+| `routers/analytics.py` | `review_suggestion:102-176` | crea `JobFilter`, encola y sincroniza exclusiones al core: 13 sentencias SQL | `services/exclusions_review.py` |
+| `routers/profile.py` | `delete_all_user_data:343-374` | orquesta el borrado GDPR: lock, `queue_erasure`, borrar inbox y usuario, limpiar cachés | `services/profile_erasure.py` (ya existe: añadirle `erase_user(db, user)`) |
+
+Pasos comunes: mover el cuerpo tal cual; el router queda en `try: return await
+service(...) except XError: raise HTTPException(...)`; los tests de router
+existentes no se tocan; `radon cc` del handler ≤ B.
+
+#### D5 · Dar de alta una fuente exige tocar cuatro registros a mano; el runner conoce una familia por prefijo — MEDIA
+
+**Dónde.** `harvest/providers/__init__.py:36-60` (`_PROVIDERS`),
+`registry.py:23-78` (`_altas_exact_match`, 40 referencias), `admission.py:30-63`
+(`DATE_FIELDS`: el campo de fecha de cada fuente vive FUERA del provider que
+lo conoce), `tasks/harvest.py:30-45` (cadencias); `runner.py:208-211`
+(`startswith("swiss_schools_")` → `school_ingest.project_native_listings`).
+**Pasos.** (1) `BaseProvider` declara `DATE_FIELD: str | tuple | None`,
+`CADENCE_H: int = 24` y `post_persist: Callable | None = None`; cada provider
+los rellena (los valores actuales de `DATE_FIELDS` y de los dos conjuntos de
+cadencia). (2) `admission.publication_date` lee `provider.DATE_FIELD` vía el
+registro; `tasks/harvest` deriva `SIX_HOUR_SOURCES`/`TWELVE_HOUR_SOURCES` de
+`_PROVIDERS` (DT-147 fija las cadencias por fuente: el valor no cambia, cambia
+DÓNDE se declara). (3) `_altas_exact_match` se deriva de `_PROVIDERS` +
+`provider.register_handlers`. (4) El runner llama `provider.post_persist(session,
+listings)` si existe; los `swiss_schools_*` lo apuntan a
+`project_native_listings`. Prueba: `test_harvest_provider.py` — un provider sin
+`DATE_FIELD` y scope con ventana → `ProviderConfigError` claro; las cadencias
+de DT-147 siguen idénticas (test que compara con el mapa literal actual).
+
+#### D6 · Importaciones circulares perezosas y privados consumidos desde fuera — MEDIA (tras D1)
+
+**Dónde.** `materialization.py:29-34,115,117` y `tasks/materialize.py:21,67`
+consumen `matching._margen_cierre`, `matching._ce_assemble`,
+`matching._persist_eval_rows`; `matching.materialize_misses` (`:1858-1876`) es
+un wrapper trivial que importa `materialization`, que importa `matching`.
+`school_ingest.py:22` y `portfolio_vacancies.py:20-21` importan `_preprocess` y
+`_payload_has_nul` de `harvest.sink`.
+**Pasos.** Tras D1, `matching/evaluation.py` publica `persist_eval_rows`,
+`ce_assemble`, `close_margin` (sin guion) y mantiene los alias privados;
+`materialization.py` y `tasks/materialize.py` importan `evaluation`
+directamente; el wrapper `materialize_misses` sobrevive SOLO como seam
+(comprobar `grep -rn "matching.materialize_misses" jobhunt_core/tests scripts
+docs`: si son 2 tests + 2 scripts de docs, re-apuntarlos y borrarlo). Tras D3,
+`sink` publica `preprocess`/`payload_has_nul`.
+
+#### D7 · Frontend — `DocumentGenerator.jsx` (333 LOC) con dos modos por flag; páginas que hablan con `api` directamente — MEDIA
+
+**Dónde.** `components/DocumentGenerator.jsx:62` (`library = false` alterna
+generador por oferta con sessionStorage + operationId + reintento, biblioteca
+paginada, reintento de entregas, renderer markdown y export PDF);
+`WatchlistPage.jsx:56-98, 296-299` y `JobDetailPage.jsx:34-37` usan
+`useQuery`/`useMutation` contra `config/api` en la página (las otras 9
+pantallas van por `src/hooks/*`); `FilterPanel.jsx:27-32` carga fuentes con
+`useEffect`+`useState`; `NewSearchForm` (`SavedSearchesPage.jsx:141`) recibe el
+store entero como prop.
+**Pasos.** `DocumentLibrary.jsx`, `DocumentGenerator.jsx`, `DocumentPreview.jsx`
+(markdown + PDF) y `hooks/usePendingOperation(key)`; mantener verdes
+`DocumentGenerator.test.jsx` y `DocumentGenerator.pending.test.jsx` (adaptar
+sólo imports). `hooks/useWatchlist.js` (`useWatchlist`, `useSetWatchlistStatus`,
+`useGenerateDraft`, `useDraft`), `hooks/useJob(hash)`; `NewSearchForm` recibe
+`{ onCreate }`.
+
+### E · Consistencia, legibilidad y rendimiento menor
+
+#### E1 · `complete = not invalid` en 17 proveedores: un ítem malformado permanente deja el scope «parcial para siempre» y bloquea el reset del kill-switch — MEDIA
+
+**Dónde.** `complete=not invalid` / `not degraded` / `exhausted and not
+invalid` en `native_dynamitejobs, native_isp_workday, native_jobscout24,
+native_publicjobs, native_tes, native_stelle_admin, native_jobroom, native_rss,
+native_json, native_swissdevjobs` (+ myscience:436-446, chmedia, financejobs,
+irishjobs, nav, adzuna, jsearch con `error is None`).
+**Evidencia.** Un anuncio-publicidad sin enlace en myscience (`_stub` → None →
+`invalid += 1`) hace que `last_complete_at` no avance nunca: (a)
+`cosecha_sin_completar` permanente en `health.py:197-211`; (b)
+`consecutive_blocks` SÓLO vuelve a cero con `complete` (`runner.py:239-240`):
+en un scope eternamente parcial, tres bloqueos aislados a lo largo de meses
+acumulan y el kill-switch lo apaga. Dos proveedores ya eligieron lo contrario y
+lo documentan: jobgether (cuenta las ambiguas en el cursor «sin mentir») y
+tes (`native_tes.py` «A permanent portal limitation must not freeze
+last_complete_at»).
+**Decisión (propietario) y pasos.** Adoptar UNA política: la de jobgether/tes
+— `invalid` viaja en el cursor (`{"invalid": n, "items_seen": m}`), el barrido
+es `complete` si se agotó el feed, y `health.py` alerta por RATIO
+(`_missing_date_alert:216` ya hace exactamente esto para fechas: replicar con
+`invalid/items_seen > CORE_HARVEST_INVALID_RATIO_MAX`). Aplicarla a los 17 en
+un commit por proveedor, cada uno con su test (`test_native_x.py`: un item
+malformado no impide `complete=True`; `items_seen` y `invalid` en el cursor).
+Añadir el setting con su comentario y regenerar el ejemplo de entorno del
+core si existe (`grep -rn "CORE_HARVEST_MISSING_DATE" jobhunt_core docs` para
+encontrar el patrón del ratio ya existente).
+
+#### E2 · Tres semánticas de «llegué al tope de páginas» — BAJA
+
+**Dónde.** myscience:391 y gastrojob:530 marcan `exhausted=True` al tocar el
+tope AUNQUE no se declaró `max_pages`; nav:217, irishjobs, financejobs,
+jobgether sólo lo consideran completo si el scope lo declaró (jobgether pone
+`error="page_budget"` si no); stelle_admin:262-264 y tes NUNCA consideran
+completo un tope declarado (un scope stelle_admin con `max_pages=2` sería
+parcial eternamente). `browser_headers.page_budget:49-55` promete UNA regla
+(«Sweeping a declared budget counts as a COMPLETE harvest»).
+**Pasos.** `browser_headers.swept(exhausted: bool, params: dict, pages: int,
+budget: int) -> bool` = `exhausted or (MAX_PAGES_PARAM in params and pages >=
+budget)` y usarlo en los 11. Test en `test_harvest_provider.py` con los cuatro
+casos. Junto con E1.
+
+#### E3 · Precedencia del error en thehub (último gana) — BAJA
+
+**Dónde.** `native_thehub.py` (bucle de `fetch_new`: `error = "invalid_thehub_items"`,
+`error = type(exc).__name__` sobreescriben; el resto de proveedores usa `error =
+error or …`). Cambiar a `error = error or …` en los tres sitios; test: un
+`TimeoutError` en el detalle 2 no es tapado por un item inválido en el 3.
+
+#### E4 · `native_isp_workday` — el docstring promete lo contrario del código — BAJA
+
+**Dónde.** `:18-20` dice que el filtro de colegio va primero; `:283-287` valida
+el tipo de `locationsText` ANTES del filtro: una fila de OTRO colegio con
+`locationsText` no-string marca `degraded` y el barrido queda incompleto.
+Mover el `isinstance` no es posible (hace falta el texto para filtrar):
+corregir el docstring, y no contar como `degraded` lo que no pasa el filtro
+(`continue` sin incrementar cuando `location_text` no es str y tampoco
+contiene `SCHOOL_FILTER` tras `str()`). Test con una fila ajena malformada →
+`complete=True`.
+
+#### E5 · Números mágicos y seams con tres estilos — BAJA
+
+- `materialization.py:98-99` `min(batch_pairs, 8)` (tapa en silencio
+  `batch_pairs > 8`; el 8 duplica el default de `:21`) y `:102` `* 1.25`;
+  `matching.py:2452` `score_final >= 70` («strong»); `tasks/matching.py`
+  `countdown=120` ×2; `materialize.py:52` `300`. → `CE_MAX_BATCH`,
+  `CE_COST_SAFETY`, `STRONG_MATCH_SCORE`, `RETRY_COUNTDOWN_S` con una línea de
+  comentario cada uno.
+- Seams de test: `global` + setter en `delivery.set_transport:90`,
+  `embeddings.set_backend_factory:85`, `cross_encoder.set_engine_factory:170`,
+  `matching.set_after_revalidation_hook:1398` (ruff PLW0603 ×4) frente a
+  atributo de módulo parcheable (`materialization.scorer_factory:12`). →
+  atributo de módulo + `monkeypatch.setattr` en los cuatro; los tests que
+  llaman al setter se re-apuntan en el mismo commit.
+- `api/main.py:31` importa `database` en mitad de los routers → arriba.
+- `arbeitnow.py:111` registra handlers al importar; los otros 23 en `__init__`
+  → mover a `__init__`.
+
+#### E6 · Dos convenciones de error HTTP y dos idiomas de identificadores — POLÍTICA, no refactor
+
+- Routers del BFF lanzan `HTTPException` (78 ocurrencias); el core traduce
+  `ApiError` en un handler (`api/deps.py:22`). NO migrar en masa: regla para
+  código NUEVO del BFF — excepción de dominio en el servicio + traducción en el
+  router (lo que D4 ya produce).
+- ~94 `def` con nombre en español en el BFF y ~107 en el core contra la regla
+  «código en inglés». NO renombrar en masa (rompería 19 parches de tests y la
+  trazabilidad de las actas): regla para código nuevo, y renombrar sólo lo que
+  se toque por otro motivo.
+- UI: `WatchlistPage` entera en castellano (`alert("No se pudo descargar…")`
+  en `:111`), `CATEGORIES` de `utils/jobCategories.js:9-75` en castellano (lo
+  que se ve en modo legacy), `MatchCard.jsx:186` `title="Estado candidatura"`,
+  `ProfilePage.jsx:327-333`; el resto en inglés. → un idioma (inglés, el del
+  resto de la UI) y `ErrorBox` en vez de `alert()`. Cabe en C8.
+
+#### E7 · Rendimiento menor
+
+- `school_ingest.link_observation:146-147` ejecuta `register_handlers()` y
+  `_scope()` (INSERT a `sources`, SELECT, INSERT a `harvest_scopes`, SELECT,
+  `pg_advisory_xact_lock`) por CADA observación, y `record_shared_observation`
+  lo llama una vez por monitor. → registrar al importar (como
+  `portfolio_vacancies.py:70`) y resolver el scope una vez por transacción
+  (cachear `sid` en `record_shared_observation` y pasarlo). Test: contar
+  sentencias con un listener en un `record_shared_observation` con tres
+  monitores → un solo `pg_advisory_xact_lock` del scope.
+- `native_rss.fetch_new:326-341` parsea cada item dos veces (`ET.tostring` en
+  `_listing` y `ET.fromstring` en `_content`) → pasar el `Element` a `_content`.
+- `backend/services/matching/core_client.py:1149-1153` `_etag_cache` guarda los
+  cuerpos CRUDOS (descripción completa) hasta 512 entradas, mientras
+  `_feed_cache` se recorta a 500 chars por memoria (`:399-413`) → cachear
+  `_recortado(body)`.
+- `backend/core/rate_limit.py:59` usa `limiter._limiter.hit(...)` (privado de
+  slowapi) bajo un comentario que dice evitar sus internos → comprobar en la
+  versión fijada de `requirements.txt` si existe accesor público
+  (`python -c "import slowapi.extension as e, inspect; print([n for n in
+  dir(e.Limiter) if 'limit' in n])"`); si no, dejar el acceso y FIJAR la versión
+  con un comentario que lo diga.
+
+#### E8 · Tests que aseveran poco — BAJA
+
+`jobhunt_core/tests/test_harvest_provider.py:426` (usa `try/asyncio.run/raise
+AssertionError` en vez de `pytest.raises`), `test_integration_admin.py:65`,
+`test_integration_portfolio_vacancies.py:27`, `test_integration_schema.py:119`
+(sin `assert`). `backend/tests/test_c7_credenciales.py:113,117,124` prueban «no
+lanza» a propósito y lo documentan: dejar. → los cuatro del core afirman algo
+del estado tras la llamada; `:426` → `pytest.raises`.
+
+#### E9 · `runner.run_scope` (CC 23) — BAJA, movimiento puro
+
+`_stale_reason(locked, snapshot, provider, fingerprint) -> str | None`
+(`:181-190`) y `_upsert_scope_state(session, scope_id, cursor, complete,
+failed, blocked) -> int` (`:222-248`, con el RETURNING de A2). Riesgo nulo.
+Prueba: la suite del kill-switch.
+
+### F · Documentación y lo que caduca
+
+#### F1 · El `CLAUDE.md` del proyecto describe un árbol que no existe — EJECUTADO el 2026-10-20
+
+**Hecho.** Reescrito comprobando el árbol y la base, no leyendo: contexto
+rápido (cosecha nativa única, `backend/providers/` vacío, `jobs` como archivo
+de sólo lectura), el bloque del core (14 cadencias reales, cadena
+`core0001..core0055`, y el dato que faltaba: **en producción el worker está
+partido en TRES** — `worker`, `harvest-worker`, `ops-worker`), la retirada de
+la CDC sombra, la sección «Arquitectura en una página» entera (describía once
+módulos del BFF que no existen), los contadores de tests (750 BFF / 1.785+1
+core), las cabezas de migración (`a7c3d9e2f5b1` y `core0055`), el puntero del
+estado (§48, no §46), el nombre real de `docker-compose.core-local.yml`, la
+ruta de `warm.py` y la restricción de scraping (la política sigue; el
+`restricted.py` que la implementaba se fue). Añadidas tres trampas medidas del
+comando de los tests del núcleo: `pytest` ya no viaja en la imagen, hay que
+layerearla, y `test_deploy_order.py` necesita la raíz del repo montada.
+
+Medido en producción el mismo día para no copiar cifras viejas: 72 fuentes en
+el registro, 40 con scope habilitado, 50 scopes, 94.807 vacantes activas,
+ninguna apagada por bloqueo. Y con el registro en mano: 41 productores
+nativos, 9 de ellos la familia `swiss_schools_*`.
+
+**Arrastró dos trozos de F2**, porque dejarlos habría creado la contradicción
+que F1 cura: la cota A19-13 de complejidad quedó SIN OBJETO (sus siete
+funciones E/F se retiraron en P3 de DT-145; hoy los dos únicos grados E vivos
+son los `fetch_new` de myscience y schuljobs), y la del lote de re-ranking
+ampara un camino que ya no corre. Además la sección 3 de COTAS entera
+(«Matching, LLM y embeddings») describe el matcher del BFF retirado: lleva ya
+un aviso en cabecera, pero reescribirla con las cotas del núcleo sigue siendo
+F2.
+
+**Y la memoria del agente**, que se carga en cada sesión y repetía lo mismo:
+corregidas las dos secciones de providers/scrapers y siete decisiones falsas
+del índice. `progress.md` (282 KB), `structure.md`, `stack.md` y `tech-debt.md`
+siguen sin revisar y llevan el aviso; es trabajo de `/docsync`.
+
+Texto original del ítem, como referencia:
+
+**Dónde.** `CLAUDE.md:14-27` («Cosecha NATIVA… `LEGACY_DISABLED_PROVIDERS`»,
+«Workers legacy que SIGUEN: 5 providers y 13 scrapers», `daily_harvest`),
+`:29` («Sombra (Fase B)… `core-capture`»), `:194` (`core-capture`),
+`:251` (`providers/restricted.py`), `:447-476` («Arquitectura en una página»:
+`providers/ 26 REGISTRADOS`, `scrapers/ 15`, `job_matcher.py` 3 etapas con seis
+pesos, `MATCH_SCORE_THRESHOLD=42.0`, `translation_service`… `groq_service`
+«caché de rerank POR OFERTA», `tasks/pipeline_tasks.py`, `fetch_tasks`,
+`scraping_tasks`, «los 15 scrapers corren EN SERIE»). También la nota de
+«Tests backend (2.644 passed…)» si la cifra cambió (DT-145 midió 783).
+**Pasos.** Reescribir esas secciones con lo que hay: BFF = API + Celery con
+`maintenance`, `watchlist`, `alert`, `profile`, `digest`, `language`;
+`backend/providers/` vacío; `backend/scrapers/swiss_schools_config.py` como
+tabla de colegios; core único cosechador (41 fuentes activas, DT-145); sin
+sombra ni `core-capture`; modelos LLM vivos (`get_chat_response` para
+traducción y documentos; sin rerank); contadores de tests re-medidos con
+`pytest` ese día. Mantener intactas las secciones de puertos, perfiles de
+compose, sesiones (T9), operación (T13) y rendimiento del feed (siguen siendo
+ciertas). Señalar con fecha qué se corrigió.
+
+#### F2 · COTAS y MEMORIA con filas caducadas — EJECUTADO el 2026-10-20 (salvo la reescritura de la sección 3)
+
+**Hecho.** A19-13 cerrada con fecha y motivo (sus siete funciones E/F se
+retiraron en P3 de DT-145, `1f415d3`); la cota del lote de re-ranking marcada
+sin objeto; la de la alerta de profesor anotada: sigue vigente y sobre-inclusiva
+a propósito, pero ahora lee el catálogo del núcleo y no la tabla legacy.
+`MEMORIA_PROYECTO.md` remite a DT-148, corrige la autoridad de candidaturas
+(hoy del núcleo en exclusiva) y marca las dos releases pendientes de desplegar.
+
+**Lo que queda de F2:** la sección 3 de COTAS («Matching, LLM y embeddings»)
+describe el matcher del BFF retirado. Lleva un aviso en cabecera desde F1, así
+que nadie la lee como vigente, pero reescribirla con las cotas REALES del
+matching del núcleo (recuperación híbrida, cross-encoder, generación de corpus)
+sigue pendiente y necesita leer `CONTRATOS_FASE_A.md` entero.
+
+Texto original del ítem:
+
+`docs/COTAS_Y_DECISIONES.md:479-487` (A19-13) cita siete funciones E/F de
+herramientas de corte que P3 de DT-145 retiró (`1f415d3`): marcar la cota como
+CERRADA con fecha y SHA. `:186` (lote de rerank) → RETIRADA con B1. `:187`
+(alerta sobre-inclusiva) sigue vigente tras A1 — anotar que ahora lee el
+core. `MEMORIA_PROYECTO.md`: añadir una línea que remita a DT-148 como estado
+de la auditoría de refactorización.
+
+#### F3 · Lo que caduca con el corpus legacy (~enero 2027)
+
+`harvest/providers/legacy_shadow.py` (76 LOC) sigue invocado por
+`registry.py:102-105` para resolver encarnaciones `legacy:*` que quedan en el
+corpus; justificado por COTAS `:420` («conviven hasta que `archive.py` retire
+la rancia, `CORE_CORPUS_STALE_DAYS=120`»). Anotar en COTAS la fecha implícita
+de caducidad y retirarlo junto con B6 (`shadow_inbox`) y los tests que montan
+vacantes `legacy:*` cuando `SELECT count(*) FROM jobhunt.source_listing_incarnations
+i JOIN jobhunt.sources s ON s.id=i.source_id WHERE s.name LIKE 'legacy:%' AND
+i.ended_at IS NULL` sea 0.
+
+### Veredicto cuantificado (para no prometer de más)
+
+| Bloque | LOC producción | Tests que arrastra | Riesgo |
+|---|---|---|---|
+| B1 rerank de Groq | 442 | 721 | nulo |
+| B2–B4 muertos verificados (BFF + core) | ~600 | ~500 | nulo |
+| B3 Protocols/seams (sólo si el propietario lo aprueba; hoy son 6 `seam.py` de una línea + 151 LOC de `Protocol`) | ~150 | 3 tests | bajo |
+| C1 transporte de cosecha | 700–900 | 0 modificados | medio (costura de monkeypatch) |
+| C2–C5 core | 250–300 | 0 modificados | bajo |
+| C6–C7 BFF | ~200 | 0 modificados | medio-bajo |
+| C8 + B7 + B8 frontend | 600–900 | — | bajo |
+| B5 tooling fuera de la imagen | ~5.000 movibles | 1.216 movibles | nulo |
+| D1/D3 particiones | no bajan LOC; sacan a `matching.py` del grado C | re-apuntar ~19 parches | medio |
+
+Total honesto: **2.700–3.300 LOC de producción eliminables o fusionables (5–6 %)**
+más ~5.000 que dejan de viajar en la imagen y ~1.100 líneas de narrativa de
+auditoría en docstrings que pasan a `docs/`. Lo que NO se puede comprimir:
+los parsers por portal (`_Records`, `_Fragment`, `_Detail`, `_Cards`, los 8
+`parse` de boards): son conocimiento específico y suman más de la mitad de
+`providers/`.
+
+### Acta de ejecución · Sección A (2026-10-20)
+
+**Estado: fase 1 (servidor), fase 2 (frontend) y los tres puntos que quedaban
+abiertos, EJECUTADOS y COMMITEADOS en `fix/dt148-auditoria-seccion-a`. SIN
+desplegar: el orden es núcleo primero, BFF después, y la migración
+`a7c3d9e2f5b1` ANTES de recrear el contenedor del BFF.**
+
+Lo ejecutado, con su prueba y su control negativo cuando lo tenía:
+
+| Ítem | Qué se hizo | Pruebas |
+|---|---|---|
+| **A2** | `FetchResult.blocked_with` + el upsert del runner cuenta el bloqueo del PARCIAL y dispara el kill-switch en la misma transacción; 8 proveedores informan `blocking_status(exc)` | 3 casos nuevos en `test_integration_block_killswitch.py` (7 pasan) + `blocked_with` en nav/myscience/thehub. **Control negativo:** revertida la línea del contador, el caso nuevo falla con `assert 1 == 3` |
+| **A1** | Core: `category` y `since` en `/vacancies`, con el texto clasificado compartido con las facetas y barrera `OFFSET 0`. BFF: `CatalogPort.recent` + `CoreCatalog.recent` (paginación por cursor) y la alerta de profesor lee el catálogo | 2 casos nuevos en `test_integration_api.py`, 3 en `test_catalog_contract.py`, los 3 de la tarea en `test_g3_fix_marcas_agua.py` y los 2 de `test_g1_fix_tareas_mantenimiento.py` reescritos sobre un doble del catálogo |
+| **A3** | `tasks.purge_refresh_tokens` + cita diaria 03:45 (nadie llamaba a `purgar_caducados`) | caso de borrado/conservación en `test_refresh_rotation.py`; `test_scheduler.py` fija el id y, de paso, que los 8 nombres despachados existan en el registro de Celery |
+| **A4** | *Parcial:* el 404 que mentía pasa a 501 honesto. El fondo exige migración (ver abajo) | caso nuevo en `test_applications.py` |
+| **A7** | El enriquecimiento de la observación escolar se PERSISTE aunque no haya que re-enlazar | caso nuevo en `test_integration_school_jobs.py`. **Control negativo:** sin la rama, falla con `None == 'Perfil completo del puesto'` |
+| **A8** | `SoftBlocked` (203→403 para el kill-switch): el desafío sale sin reintento y corta el pase de detalles en jobscout24 y dynamitejobs | `test_html_response.py` y 2 casos en `test_native_jobscout24.py` (el que fijaba el envoltorio tras agotar reintentos se reescribió) |
+| **A9** | La ventana del dedup viaja como INSTANTE, no en horas redondeadas | 2 casos nuevos sin BD en `test_dedup_task_batches.py`; `test_integration_dedup.py` actualizado al parámetro nuevo |
+| **A10** | `run_one_task` registra el tipo de la excepción antes de reintentar | caso nuevo en `test_search_execution_tasks.py` |
+| **A11** | Retirados `/jobs/stats` y `/jobs/sources` (501 incondicional), sus métodos de puerto y cliente y los esquemas `JobStats`/`SourceInfo`/`SalaryStats`; el desplegable vacío del buscador pasa a entrada de texto | `test_catalog_contract.py` reescrito (de «cota» a «retirado») |
+| **A18** | Un cursor ilegible se DESCARTA con `logger.error` en los cuatro sitios; `ProviderConfigError` queda para `params` | 4 casos reescritos (jobscout24, dynamitejobs, swissdevjobs, arbeitnow) |
+| **A5** | Orden de guardas (el error ya no es inalcanzable), re-hidratación por `updated_at` y mezcla de `skills_extracted` al subir el CV | sin cobertura automática (ver nota) |
+| **A6** | `qc.clear()` en el logout | sin cobertura automática |
+| **A12** | La watchlist pide `category="__watchlist"` al core cuando hay facetas; sin ellas conserva el recorrido legacy | sin cobertura automática |
+| **A13** | Se invalida `["draft", hash]` al regenerar la carta | sin cobertura automática |
+| **A14** | Los dos fallos del SSE dejan el banner en `error` (tenía botón de cierre sólo fuera de progreso) | sin cobertura automática |
+| **A15** | La letra sólo se pinta para la taxonomía (`id.length === 1`) | `CategoryTabs.test.jsx` nuevo. **Control negativo:** con la condición vieja falla por `__watchlist<` |
+| **A16** | Caja del buscador controlada y sincronizada en render; `useDebounce` limpia su temporizador | sin cobertura automática |
+| **A17** | `useMemo` en los dos agregados legacy, paginación de 50 también en legacy y `mutate` extraído en Pipeline y Guardados | lint `react-hooks` limpio |
+
+#### Lo que la ejecución DESMINTIÓ del plan (el código mandó) — nueve puntos
+
+1. **A2 eran OCHO proveedores, no diez.** `native_isp_workday` y
+   `native_swiss_schools` no tragan la excepción: la propagan, así que el
+   runner ya las contaba por `blocking_status`. No se tocaron.
+2. **A1 necesitaba una barrera de optimización que el plan no previó.** Con el
+   LATERAL «a secas» el planificador lo sube y evalúa el texto clasificado una
+   vez por predicado del CASE: **25,861 s** para una página de 21 sobre 19.575
+   activas. Con `OFFSET 0`, **0,020 s** — mil trescientas veces menos. Está
+   fijado por `test_catalog_category_classifies_once_per_row`.
+3. **A1: `category` + `offset` se RECHAZA con 400.** El recuento de un feed
+   clasificado clasifica todo lo que casa (1,56-1,60 s medidos) y crece con el
+   corpus; el keyset para en la página (0,015-0,42 s). No se promete un total
+   que no está indexado.
+4. **A1: el filtro local de la alerta habría lanzado `AttributeError`.**
+   Llamaba `is_primary_teacher_job(j.category, …)` y `JobResponse` NO tiene
+   `category`. Se resolvió haciendo pública `teacher_alert.TEACHING_CATEGORY` y
+   usándola para pedir Y para afirmar: una sola fuente de verdad.
+5. **A4 no es implementable como estaba escrito.** `job_applications.job_hash`
+   es `varchar(32)` **y** tiene `FOREIGN KEY → jobs.hash ON DELETE CASCADE`
+   (comprobado en la base, no en el modelo). Resolver el UUID por catálogo no
+   basta: el INSERT fallaría por longitud y por la clave ajena. Se implementó
+   la mitad honesta (501 en vez de un 404 que mentía) y el fondo queda como
+   decisión del propietario: migración que ensanche a 36 y suelte la FK, que
+   además retira el `ON DELETE CASCADE` desde una tabla ya congelada.
+6. **El `pytest` del core ya no viaja en la imagen** (P1 de DT-145 separó
+   dependencias). El comando de `CLAUDE.md` falla con «No module named
+   pytest». Se trabajó con una imagen local `swissjob-core:dt148-test`
+   (`FROM swissjob-core:dev` + `pytest==8.4.2`) y un override de una línea que
+   sólo cambia `image:`. **F1 debe corregir ese comando.**
+7. **Complejidad: dos funciones cruzaron a grado E y se corrigieron en el
+   mismo trabajo.** Añadir el corte por desafío llevó
+   `JobScout24Provider.fetch_new` de D(27) a **E(31)** y
+   `DynamiteJobsProvider.fetch_new` de D(29) a **E(33)** — un grado E nuevo en
+   código vivo, que es justo lo que la cota de T16 dice que no debe haber. Se
+   extrajo el pase de detalles (`_fill_descriptions`) en los dos y quedan en
+   **D(21)** y **D(24)**: mejor que antes de tocarlos. Lo mismo con las dos
+   funciones nuevas que pasaban de 10: `CoreCatalog.recent` (se extrajo
+   `_recent_page`) y `_catalog_filter_sql` (se extrajo
+   `_classified_conditions`, con el estilo mutador que ya usa
+   `_location_conditions`). Queda **`run_scope` de D(23) a D(25)**: mismo
+   grado, y E9 lo baja extrayendo `_stale_reason` y `_upsert_scope_state`,
+   que es donde el plan ya lo tenía previsto. `list_vacancies` pasa de C(15) a
+   C(17), mismo grado.
+
+8. **Un segundo fichero de tests sembraba la tabla legacy para la alerta.**
+   `test_g1_fix_tareas_mantenimiento.py::TestP215AlertaProfesor` (dos casos: el
+   reintento tras fallo de SMTP y la cota superior) no estaba en el plan y la
+   suite completa lo cazó. Adaptado al mismo doble de catálogo.
+9. **La cota superior del aviso ya no cierra sola la carrera de G1/P2-15.** El
+   corte inferior lo aplica el servidor sobre el alta de la vacante y el
+   superior se aplica en el BFF sobre `first_seen_at` del listing primario,
+   que es lo que trae el DTO: casi el mismo instante, no el mismo campo. Quien
+   cierra la carrera es la idempotencia POR OFERTA de G3/P1-1, que es el
+   mecanismo primario desde entonces. Está dicho en el código.
+
+#### Segunda pasada (2026-10-20, misma tarde): los tres puntos abiertos, re-verificados y resueltos donde procedía
+
+**Punto 1 — tareas sobre la tabla congelada: RETIRADAS.** Re-verificado en la
+base: `jobs` tiene 24.046 filas, última alta el 05-10, ningún escritor en el
+código (ORM ni SQL crudo). `check_job_urls` habría sondeado 19.580 URLs (a
+3.000 por noche) de un archivo que no cambia; `cleanup_stale_jobs` (60 d sobre
+`last_seen_at`) habría empezado a borrar en masa TODAS las filas a partir del
+04-12, con cascada sobre `match_results`; el digest diario estaba apagado
+(`DAILY_DIGEST_ENABLED=False` por defecto, ausente del `.env` y del compose
+del NAS) y `match_results` tampoco tiene escritores. Se retiraron las tres
+tareas, sus tres citas del scheduler, sus tres despachadores, los settings
+`DAILY_DIGEST_*` y `MAINTENANCE_URL_CHECK_LIMIT`, `tasks/digest_tasks.py`,
+`services/daily_digest.py`, `tests/test_daily_digest.py`,
+`tests/test_maintenance_tasks.py` y las clases P2-10/P2-14 y A20-10 de otros
+dos ficheros de test (597 líneas de ficheros enteros más los recortes). `jobs`
+queda como archivo de sólo lectura para el overlay local. `.env.prod.example`
+regenerado; `CLAUDE.md` corregido en la frase del scheduler.
+
+**Punto 2 — RESUELTO en una tercera pasada: el vertical local de
+candidaturas se RETIRA entero (decisión del propietario, 2026-10-20).** Los
+datos que la fundamentan se leyeron de PRODUCCIÓN en solo lectura:
+`job_applications` con **cero filas en toda la vida del sistema**, cero
+estados avanzados en la máquina de la watchlist, y una interfaz que listaba,
+editaba y borraba pero no tenía camino para CREAR. El único creador exigía
+una fila en `jobs`, congelada desde el 11-10 (última alta en producción), con
+clave ajena y borrado en cascada hacia ella: una función muerta por
+construcción. Las candidaturas viven en el núcleo (`/v1/applications`, que el
+Portfolio usa en modo primario). Retirado: router, servicio local con puerto
+y costura, modelo, esquemas, el enum `ApplicationStatus` del BFF (sólo lo
+usaban ellos), sus dos ficheros de test (1.201 líneas en total); en el
+frontend, `PipelinePage`, `useApplications`, `applicationsApi`, la ruta y la
+entrada «Pipeline» del menú (357 líneas). Los helpers de siembra que cuatro
+tests ajenos importaban del fichero retirado viven ahora en `tests/seeds.py`.
+**Migración `a7c3d9e2f5b1`** (revisada: ida, `alembic check` sin diferencias,
+vuelta que recrea tabla, índice y las cuatro claves, y de nuevo ida): borra la
+tabla y el tipo `public.application_status`, cuya única columna era la suya;
+el tipo homónimo de `jobhunt` es del núcleo y no se toca. Con cero filas no
+hay datos que migrar. Esto NO contradice el gate de DT-144 («applications
+locales fuera del alcance» del corte): no se reenruta nada, se retira una
+capacidad que nunca tuvo datos. Lo que sigue es el razonamiento previo, que
+se conserva como historia:
+
+El cierre formal de DT-144 dejó las candidaturas locales y eso chocaba con la
+tabla congelada. El cierre formal de DT-144 dice literalmente que
+SwissJob deja «applications/profiles locales expresamente fuera del alcance».
+Reenrutar al core (el `CoreApplications` de 583 líneas retirado en `d54b2ec`
+es recuperable) contradiría esa decisión; retirar el vertical es decisión de
+producto. Queda el 501 honesto y ESTA contradicción, que es la que el
+propietario debe resolver: DT-144 mantuvo las candidaturas locales, pero el
+mismo corte congeló `jobs`, de la que dependen por clave ajena — una
+autoridad local sobre una tabla que ya no recibe ofertas. Dato: cero
+candidaturas en la base y ningún creador fuera del endpoint. Si se quiere la
+función, la vía es recuperar el cliente del core y reabrir ese punto de
+DT-144; si no, retirar el vertical entero. La migración de ensanchar y soltar
+la FK es la peor de las tres.
+
+**Punto 3 — verificación extremo a extremo de A1: HECHA.** Sin tocar el
+`.env`: consumidor local `swissjob-local` con credencial de `vacancies:read`
+(key_id `6f0e97a452b84105`, 90 días; el secreto se usó en un contenedor
+efímero y se destruyó — `rotate_credential emitir swissjob-local` emite otra
+cuando haga falta, ya que existe una viva). La tarea REAL del BFF contra el
+`core-api` REAL con el árbol actual, correo y Redis sustituidos por dobles y
+ventana de 120 días: `status=success, candidates=500, matched=11` en 3,63 s,
+con 11 ofertas de primaria auténticas en el correo (Collège Champittet,
+Mosaic Ecole, Klassenlehrperson Primarschule…). Las 500 candidatas son el
+tope declarado de `recent` y la tarea lo gritó en el log, como estaba
+previsto; con la cadencia real de 6 h no se alcanza. Dos cosas que la prueba
+enseñó: (a) `core-api` arrancado antes de la barrera `OFFSET 0` seguía
+sirviendo la versión lenta y el BFF caía por timeout de 5 s — recrear el
+contenedor lo resolvió; (b) el corpus trae una oferta de zebis con URL
+`https://0.0.0.0:3000/stellen/…`, duplicada de la misma con host correcto:
+residuo de la fuente sombra `legacy:zebis` (ver el hallazgo de abajo), no
+tocado aquí.
+
+#### Lo que esto cierra de la auditoría A18 (0.A), y lo que NO
+
+- **A18-03 (watchlist escolar incompleta): cerrada su PRIMERA mitad.** La
+  página ya no pide las 500 mejores coincidencias para filtrarlas por
+  `school_id`: con facetas pide `category="__watchlist"` al núcleo (A12). La
+  SEGUNDA mitad sigue ABIERTA: `WatchlistPage` no consume `isError`, así que
+  un fallo de red se sigue leyendo como «Aún no hay vacantes en la watchlist»
+  — un error disfrazado de vacío.
+- **A18-01 (el buscador ofrece lo que la ruta canónica rechaza): sigue
+  ABIERTA, con una parte menos.** Se retiraron los dos endpoints que
+  devolvían 501 incondicional y el desplegable de fuentes que nunca se
+  llenaba (A11), pero `searchStore` conserva `canton`, `language`,
+  `seniority`, `contractType`, `salaryMin/Max` y los tres órdenes que
+  `unsupported_search_reason` rechaza: la UI sigue ofreciendo filtros que el
+  catálogo no puede servir.
+
+#### Hallazgo nuevo surgido de la verificación
+
+- **URL con host `0.0.0.0:3000` en vacantes de zebis** (visible en el correo
+  de la prueba). VERIFICADO en el corpus: son 7 encarnaciones, TODAS de la
+  fuente sombra `legacy:zebis`, vistas por primera y última vez el 25-08 y
+  todavía vivas (`ended_at IS NULL`). El extractor nativo (`native_rss`) NO
+  las produce: es un residuo del productor legacy retirado. Caducan solas con
+  el corpus legacy (F3, `CORE_CORPUS_STALE_DAYS=120` → archivo hacia finales
+  de diciembre). No requiere arreglo de código; sí conviene que el aviso de
+  profesor no las sirva mientras tanto: la misma oferta existe con host
+  correcto, así que el único efecto es una línea duplicada y rota en el
+  correo durante unas semanas. Anotado, no tocado.
+
+#### Huecos declarados (no se taparon ni se disimularon)
+
+- **Verificación extremo a extremo de A1: HECHA en la segunda pasada** (ver
+  arriba). Sigue siendo obligatoria la comprobación en producción tras
+  desplegar el core y después el BFF, en ese orden.
+- **Siete arreglos de frontend sin cobertura automática** (A5, A6, A12, A13,
+  A14, A16, A17): el proyecto no tiene librería de render interactivo —los
+  tests usan `renderToStaticMarkup`— y el plan prohíbe añadir dependencias por
+  esto. Verificados leyendo, con `eslint` (incluido `react-hooks`), los 59
+  tests existentes y el build.
+- **A1 paso 4: EJECUTADO en la segunda pasada** con la opción de retirada
+  (ver arriba). El overlay local (`match_result_service`, `pattern_analysis`,
+  `watchlist_state`) no se tocó: lee `jobs` como archivo.
+- `frontend/dist/assets` pertenece a root desde el 28-09 y rompe
+  `npm run build` en el árbol; se compiló a otro directorio para verificar.
+  No se borró nada (necesita permiso).
+
+### Checkpoints
+
+| Fecha | Ítem | Estado | SHA | Pruebas ejecutadas | Desviaciones / evidencia |
+|---|---|---|---|---|---|
+| 2026-10-20 | Apertura | COMPLETADO | `8d01c50` | radon, vulture, ruff; verificación manual de A1, A2, A3, A4, A5, A6, A7, A9, B1 | Inventario escrito; nada aplicado. |
+| 2026-10-20 (noche) | Punto 2: retirada del vertical de candidaturas | EJECUTADO y commiteado (`922439f`) | sobre `8d01c50` | Migración `a7c3d9e2f5b1` ida/vuelta/ida + `alembic check`; BFF 750 pasan · 0 fallan (los 19 menos son los dos ficheros de test del vertical); frontend eslint + 59 vitest + build; cuentas de producción en solo lectura (0 candidaturas) | −1.201 líneas BFF, −357 frontend; `tests/seeds.py` nuevo con las siembras compartidas. Desplegar: migración del BFF ANTES de recrear el contenedor (la ruta y el modelo ya no existen). |
+| 2026-10-20 (tarde) | Puntos abiertos 1 y 3 | EJECUTADO y commiteado (`922439f`) | sobre `8d01c50` | BFF 769 pasan · 0 fallan (los 20 menos que antes son exactamente los tests de las tareas retiradas: 11+4+1+2+2); lint limpio; prueba extremo a extremo de la alerta contra `core-api` real (`candidates=500, matched=11`) | Punto 1: tres tareas retiradas (597 líneas de ficheros + recortes, 6 settings). Punto 2: sin cambio de autoridad por el gate de DT-144; contradicción documentada para el propietario. Hallazgo nuevo: URL `0.0.0.0:3000` en el corpus de zebis. |
+| 2026-10-20 | Sección A (fases 1 y 2) | EJECUTADO y commiteado (`1d16b44`, `2ed72cd`, `922439f`) | sobre `8d01c50` | **Core 1.785 pasan · 1 omitido · 0 fallan** y **BFF 789 pasan · 0 fallan**, las dos corridas sobre el árbol FINAL (una corrida intermedia del BFF arrancó antes de A11 y se descartó; 3 rojos de `test_deploy_order` en una corrida del core eran artefacto del arnés —necesita la raíz del repo montada— y con ella pasan los 11). Frontend: eslint + 59 vitest + build. Controles negativos en A2, A7 y A15 | 64 ficheros. Nueve desmentidos del plan en el acta de arriba (A2 son 8 providers; A1 exige barrera `OFFSET 0` y rechaza `offset`; A4 bloqueado por `varchar(32)`+FK). A1 paso 4 y el fondo de A4 siguen siendo decisión del propietario. |
+
+**Reanudación exacta:** la sección A está ejecutada y sin commitear. Lo
+siguiente es F1 (una sesión: el `CLAUDE.md` describe un árbol que no existe, y
+hay que corregir además el comando de los tests del core, que ya no trae
+`pytest`), y después la fase 3 (B). No ejecutar nada de la fase 4 (C) sin haber
+revisado antes el diff de A: C mueve líneas que A acaba de cambiar.
 
 ## DT-147 · Cadencia de cosecha escalonada y carga del NAS
 

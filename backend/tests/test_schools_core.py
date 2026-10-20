@@ -19,7 +19,7 @@ from services.schools.presentation import (
     clear_school_presentation_cache,
     overlay_school_results,
 )
-from tests.test_applications_contract import seed_job, seed_match, JOB_HASH
+from tests.seeds import seed_job, seed_match, JOB_HASH
 
 
 async def _register(client):

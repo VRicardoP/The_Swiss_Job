@@ -87,7 +87,7 @@ class TestGetResultsHidesArchivedJobs:
         _, total = await _svc(db_session).get_results(user_id)
         assert total == 1  # visible mientras está activa
 
-        # Archivar (como hace cleanup_stale_jobs con ofertas caducadas + adjuntos)
+        # Archivar (is_active=False: el overlay no debe servir ofertas archivadas)
         await db_session.execute(
             update(Job).where(Job.hash == "arch1").values(is_active=False)
         )

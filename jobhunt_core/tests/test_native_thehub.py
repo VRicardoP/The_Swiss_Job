@@ -112,3 +112,16 @@ def test_final_page_and_empty_contract(monkeypatch):
 def test_late_listing_failure_keeps_completed_detail(monkeypatch):
     result, _ = fetch([{"docs": [item()], "pages": 2}, 503], monkeypatch=monkeypatch)
     assert not result.complete and result.error and len(result.listings) == 1
+    # DT-148 A2: el 503 sostenido es un bloqueo y viaja al runner.
+    assert result.blocked_with == 503
+
+
+def test_a_blocked_detail_also_counts_as_a_block(monkeypatch):
+    """Un portal que nos bloquea en el detalle nos está bloqueando igual."""
+    result, _ = fetch(
+        [{"docs": [item(), item(2)], "pages": 1}],
+        details={f"{2:024x}": 429},
+        monkeypatch=monkeypatch,
+    )
+    assert len(result.listings) == 1 and result.error
+    assert result.blocked_with == 429

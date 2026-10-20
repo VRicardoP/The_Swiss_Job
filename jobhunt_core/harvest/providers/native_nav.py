@@ -17,6 +17,7 @@ from jobhunt_core.harvest.provider import (
     BaseProvider,
     ProviderConfigError,
     ProviderResponseError,
+    blocking_status,
 )
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills, strip_html_tags
 from jobhunt_core.harvest.providers.browser_headers import (
@@ -179,6 +180,7 @@ class NavProvider(BaseProvider):
         started = time.monotonic()
         listings, pages, offset, invalid = [], 0, 0, 0
         exhausted, error = False, None
+        blocked_with = None
         for page in range(budget):
             remaining = SWEEP_BUDGET_S - (time.monotonic() - started)
             if remaining <= 0:
@@ -190,6 +192,9 @@ class NavProvider(BaseProvider):
             except (httpx.HTTPError, ProviderResponseError, TimeoutError) as exc:
                 if not listings:
                     raise
+                # Un 429/403 a partir de la página 2 ES un bloqueo del
+                # portal, no un fallo genérico (DT-148 A2).
+                blocked_with = blocking_status(exc)
                 error = (
                     f"http_{exc.response.status_code}"
                     if isinstance(exc, httpx.HTTPStatusError)
@@ -221,4 +226,5 @@ class NavProvider(BaseProvider):
             pages_fetched=pages,
             complete=swept and error is None,
             error=error,
+            blocked_with=blocked_with,
         )

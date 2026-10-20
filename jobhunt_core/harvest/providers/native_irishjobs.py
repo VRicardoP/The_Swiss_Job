@@ -17,6 +17,7 @@ from jobhunt_core.harvest.provider import (
     BaseProvider,
     ProviderConfigError,
     ProviderResponseError,
+    blocking_status,
 )
 from jobhunt_core.harvest.providers.browser_headers import MAX_PAGES_PARAM, page_budget
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills, strip_html_tags
@@ -201,4 +202,7 @@ class IrishJobsProvider(BaseProvider):
             pages_fetched=pages,
             complete=exhausted and error is None,
             error=error,
+            # El barrido lo cortó `first_failure`: si fue un 403/429/503 del
+            # portal, cuenta como bloqueo (DT-148 A2).
+            blocked_with=blocking_status(first_failure),
         )

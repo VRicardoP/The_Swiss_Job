@@ -49,6 +49,27 @@ def classify(title: str | None, tags: list | None) -> str:
     return "otros"
 
 
+def content_search_text_sql(content: str = "o.content") -> str:
+    """Expresión SQL del texto que clasifica `sql_case`: título + tags de la
+    canónica, en minúsculas.
+
+    Vive junto a la taxonomía porque son UNA regla: tenerla copiada permitía
+    que el feed de facetas y el catálogo clasificaran la misma oferta de forma
+    distinta. El llamador debe evaluarla UNA vez por fila (CTE o LATERAL) y
+    pasar su alias a `sql_case`: inlinearla dentro del CASE la ejecutaría una
+    vez por palabra clave.
+    """
+    return (
+        f"lower(concat_ws(' ', COALESCE({content}->>'title',''), "
+        "  (SELECT string_agg(tag #>> '{}', ' ' ORDER BY ordinal) "
+        "   FROM jsonb_array_elements(CASE "
+        f"     WHEN jsonb_typeof({content}->'tags')='array' "
+        f"     THEN {content}->'tags' ELSE '[]'::jsonb END) "
+        "     WITH ORDINALITY AS tags(tag, ordinal) "
+        "   WHERE jsonb_typeof(tag)='string')))"
+    )
+
+
 def sql_case(search_text: str = "search_text") -> tuple[str, dict[str, str]]:
     """Return the ordered taxonomy as a parameterized PostgreSQL CASE."""
     params: dict[str, str] = {}

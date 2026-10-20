@@ -186,15 +186,46 @@ def test_an_empty_sweep_fails_instead_of_emptying_the_corpus(monkeypatch):
 
 
 def test_a_blocked_listing_is_a_failure_not_an_empty_page(monkeypatch):
-    from jobhunt_core.harvest.provider import ProviderResponseError
-    from jobhunt_core.harvest.providers import native_jobscout24 as module
+    """DT-148 A8: el desafío sale a la PRIMERA y cuenta como bloqueo.
 
-    monkeypatch.setattr(module, "MAX_RETRIES", 0)
-    with pytest.raises(ProviderResponseError, match="request failed"):
-        fetch(
+    Antes era un `ValueError`, que `_read` clasificaba como reintentable: la
+    página que nos pedía parar recibía cuatro peticiones con espera
+    exponencial, y al agotarse salía como «request failed (ValueError)» —
+    HTTP 200, ningún estatus, ningún bloqueo contabilizado. Este test tenía
+    que poner `MAX_RETRIES=0` para no esperar: eso era la pista.
+    """
+    from jobhunt_core.harvest.provider import (
+        SOFT_BLOCK_STATUS,
+        SoftBlocked,
+        blocking_status,
+    )
+
+    peticiones = []
+    with pytest.raises(SoftBlocked) as fallo:
+        _result, peticiones = fetch(
             {"default": "<html>Attention Required! | Cloudflare</html>"},
             monkeypatch=monkeypatch,
         )
+
+    assert blocking_status(fallo.value) == SOFT_BLOCK_STATUS
+    assert peticiones == []  # no hubo cuatro intentos: no hubo ninguno de más
+
+
+def test_a_challenge_detail_stops_the_detail_pass_and_travels(monkeypatch):
+    """Y en el DETALLE: se deja de pedir en cuanto aparece el desafío."""
+    from jobhunt_core.harvest.provider import SOFT_BLOCK_STATUS
+
+    pages = {"default": page()}
+    pages[("informatik", 1)] = page("".join(card(i) for i in range(1, 6)))
+    result, requests = fetch(
+        pages, monkeypatch=monkeypatch, details="unusual traffic detected"
+    )
+
+    detalles = [url for url in requests if "/en/jobs/" not in url]
+    assert len(detalles) == 1  # uno, no veinte con cuatro reintentos cada uno
+    assert result.blocked_with == SOFT_BLOCK_STATUS
+    assert result.error and not result.complete
+    assert result.listings  # lo cosechado del listado se preserva
 
 
 def test_a_page_with_jobs_may_mention_captcha(monkeypatch):
@@ -214,11 +245,22 @@ def test_a_page_with_jobs_may_mention_captcha(monkeypatch):
         {"descriptions": {1: "x"}},
     ],
 )
-def test_corrupt_description_cursor_fails_closed(cursor, monkeypatch):
-    from jobhunt_core.harvest.provider import ProviderConfigError
+def test_corrupt_description_cursor_is_discarded_not_fatal(cursor, monkeypatch, caplog):
+    """DT-148 A18: el cursor es CACHÉ nuestra, no configuración del scope.
 
-    with pytest.raises(ProviderConfigError):
-        fetch({"default": page(card())}, cursor=cursor, monkeypatch=monkeypatch)
+    Tratarlo como permanente dejaba el scope fallando en CADA ventana sin
+    contabilizar el fallo —el runner relanza `ProviderConfigError` antes de
+    registrarlo—, el dispatcher lo reencolaba siempre y no existía vía de
+    operador para reiniciarlo. Se descarta con un grito y se vuelve a pedir
+    el detalle: una ventana más lenta, no una avería permanente.
+    """
+    with caplog.at_level("ERROR"):
+        result, _requests = fetch(
+            {"default": page(card())}, cursor=cursor, monkeypatch=monkeypatch
+        )
+
+    assert result.listings
+    assert any("ilegible" in mensaje for mensaje in caplog.messages)
 
 
 def test_invalid_scope_fails_before_network(monkeypatch):

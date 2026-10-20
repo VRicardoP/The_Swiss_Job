@@ -21,6 +21,7 @@ from jobhunt_core.harvest.provider import (
     BaseProvider,
     ProviderConfigError,
     ProviderResponseError,
+    blocking_status,
 )
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills
 from jobhunt_core.harvest.providers.browser_headers import (
@@ -191,12 +192,15 @@ def _error_name(exc) -> str:
 async def _sweep(http, query, budget):
     """Recorre hasta `budget` páginas dentro del presupuesto de tiempo.
 
-    Devuelve (listings, invalid, pages, seen, error, exhausted). Un fallo en la
-    primera página sube; a partir de la segunda la cosecha es parcial.
+    Devuelve (listings, invalid, pages, seen, error, exhausted, blocked_with).
+    Un fallo en la primera página sube; a partir de la segunda la cosecha es
+    parcial, y si el portal la cortó con un 403/429/503 eso viaja en
+    `blocked_with` para que el kill-switch lo vea (DT-148 A2).
     """
     started = time.monotonic()
     listings, invalid, pages, seen = [], 0, 0, 0
     error, exhausted = None, False
+    blocked_with = None
     for page in range(1, budget + 1):
         remaining = SWEEP_BUDGET_S - (time.monotonic() - started)
         if remaining <= 0:
@@ -207,6 +211,7 @@ async def _sweep(http, query, budget):
         except (httpx.HTTPError, ProviderResponseError, TimeoutError) as exc:
             if not listings:
                 raise
+            blocked_with = blocking_status(exc)
             error = _error_name(exc)
             break
         pages += 1
@@ -223,7 +228,7 @@ async def _sweep(http, query, budget):
             remaining = SWEEP_BUDGET_S - (time.monotonic() - started)
             if remaining > 0:
                 await asyncio.sleep(min(PAGE_PAUSE_S, remaining))
-    return listings, invalid, pages, seen, error, exhausted
+    return listings, invalid, pages, seen, error, exhausted, blocked_with
 
 
 def _without_ambiguous(listings):
@@ -262,7 +267,7 @@ class JobgetherProvider(BaseProvider):
             raise ProviderConfigError("Jobgether query must be a bounded string")
         # Same three-page budget the retiring producer uses (jobgether.py:57).
         budget = page_budget(params, MAX_PAGES) or MAX_PAGES
-        listings, invalid, pages, seen, error, exhausted = await _sweep(
+        listings, invalid, pages, seen, error, exhausted, blocked_with = await _sweep(
             http, query, budget
         )
         listings, ambiguous = _without_ambiguous(listings)
@@ -281,4 +286,5 @@ class JobgetherProvider(BaseProvider):
             pages_fetched=pages,
             complete=exhausted and error is None,
             error=error,
+            blocked_with=blocked_with,
         )

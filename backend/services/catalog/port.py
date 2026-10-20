@@ -1,13 +1,19 @@
 """Read port for the catalog owned by Core.
 
-The HTTP router keeps request validation while CoreCatalog implements search
-and detail access. Aggregate operations remain explicit unsupported methods.
+The HTTP router keeps request validation while CoreCatalog implements search,
+detail and «lo nuevo de una categoria» (`recent`, para los avisos).
+
+Las operaciones AGREGADAS (estadisticas y fuentes con recuento) se retiraron en
+DT-148 A11: el /v1 no las expone, el cliente devolvia 501 incondicional y los
+dos endpoints publicos no podian servir nada. Cuando el nucleo las publique,
+vuelven con su contrato, no como una cota.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
-from schemas.job import JobSearchResponse, JobStats, SourceInfo
+from schemas.job import JobResponse, JobSearchResponse
 
 
 class CatalogError(Exception):
@@ -48,18 +54,21 @@ class CatalogPort(Protocol):
         """Busqueda paginada con filtros estructurados + full-text."""
         ...
 
-    async def stats(self) -> JobStats:
-        """Estadisticas agregadas del catalogo activo."""
-        ...
-
-    async def sources(self) -> list[SourceInfo]:
-        """Fuentes activas con recuentos."""
-        ...
-
     async def get(self, job_ref: str):
         """Detalle por referencia (hash MD5 legacy / UUID de vacante core).
 
         Devuelve un objeto validable como `JobResponse` o None si no existe
         (el router traduce None a 404).
+        """
+        ...
+
+    async def recent(
+        self, *, category: str, since: datetime, limit: int = 500
+    ) -> list[JobResponse]:
+        """Ofertas ACTIVAS de una categoria dadas de alta desde `since`.
+
+        Existe para los avisos por correo, que necesitan «lo nuevo de una
+        categoria» y no una pagina ordenada por relevancia: hasta DT-148 A1 lo
+        leian de la tabla legacy `jobs`, que ya no tiene ningun escritor.
         """
         ...

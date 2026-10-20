@@ -51,3 +51,53 @@ def test_final_fragment_does_not_enqueue(monkeypatch):
 
     assert "continuation_enqueued" not in result
     enqueue.assert_not_called()
+
+
+class _SesionFalsa:
+    """Registra el SQL y los parámetros; no necesita base de datos."""
+
+    def __init__(self):
+        self.ejecutadas: list[tuple[str, dict | None]] = []
+
+    async def execute(self, sql, params=None):
+        self.ejecutadas.append((str(sql), params))
+
+        class _Resultado:
+            rowcount = 0
+
+        return _Resultado()
+
+
+def test_una_ventana_corta_sigue_siendo_ventana():
+    """DT-148 A9: la ventana viajaba en HORAS REDONDEADAS al brazo léxico.
+
+    `round(0,16) == 0` y el código leía «0 horas» como «sin ventana», así que
+    un relanzamiento de 10 minutos disparaba la pasada léxica sobre TODO el
+    corpus (los 67 s de OPT-ALTA-1) en vez de sobre el fragmento.
+    """
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    from jobhunt_core import dedup
+
+    sesion = _SesionFalsa()
+    desde = datetime.now(timezone.utc) - timedelta(minutes=10)
+    asyncio.run(dedup._finish_scan(sesion, desde))
+
+    lexico, params = sesion.ejecutadas[-1]
+    assert "created_at >= :desde" in lexico
+    assert params["desde"] == desde
+
+
+def test_sin_ventana_la_pasada_lexica_es_completa():
+    """`None` sigue siendo la pasada COMPLETA del backfill, explícita."""
+    import asyncio
+
+    from jobhunt_core import dedup
+
+    sesion = _SesionFalsa()
+    asyncio.run(dedup._finish_scan(sesion, None))
+
+    lexico, params = sesion.ejecutadas[-1]
+    assert "created_at >= :desde" not in lexico
+    assert "desde" not in params

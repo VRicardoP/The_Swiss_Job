@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Bookmark, Sparkles } from "lucide-react";
 import {
   useSavedJobs,
@@ -53,15 +53,24 @@ export default function SavedJobsPage() {
     ? grouped.get(activeCategory) ?? []
     : [];
 
-  function handleFeedback({ jobHash, feedback }) {
-    submitFeedback.mutate({ jobHash, feedback });
-  }
-  function handleClearFeedback({ jobHash }) {
-    clearFeedback.mutate({ jobHash });
-  }
-  function handleImplicit({ jobHash, action, durationMs }) {
-    submitImplicit.mutate({ jobHash, action, durationMs });
-  }
+  // DT-148 A17: funciones nuevas en cada render ⇒ el `memo(MatchCard)` que ya
+  // se paga no filtraba nada. `mutate` es estable entre renders.
+  const { mutate: mutarFeedback } = submitFeedback;
+  const { mutate: mutarBorradoFeedback } = clearFeedback;
+  const { mutate: mutarImplicito } = submitImplicit;
+  const handleFeedback = useCallback(
+    ({ jobHash, feedback }) => mutarFeedback({ jobHash, feedback }),
+    [mutarFeedback],
+  );
+  const handleClearFeedback = useCallback(
+    ({ jobHash }) => mutarBorradoFeedback({ jobHash }),
+    [mutarBorradoFeedback],
+  );
+  const handleImplicit = useCallback(
+    ({ jobHash, action, durationMs }) =>
+      mutarImplicito({ jobHash, action, durationMs }),
+    [mutarImplicito],
+  );
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">

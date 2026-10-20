@@ -35,7 +35,7 @@ Idempotente: `uq_dedup_pair` (LEAST/GREATEST) + ON CONFLICT DO NOTHING.
 import hashlib
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -416,11 +416,11 @@ _LEX_REMOTO = (
 
 
 def _lex_sql(window: bool) -> str:
-    filtro_ventana = (
-        "WHERE created_at >= now() - make_interval(hours => :ventana) "
-        if window
-        else ""
-    )
+    # El corte viaja como INSTANTE (`:desde`), no como horas: redondear la
+    # ventana a horas enteras convertía una de menos de 30 min en CERO, y
+    # `window=False` lanza la pasada léxica sobre TODO el corpus — los 67 s de
+    # OPT-ALTA-1 en vez del fragmento (DT-148 A9).
+    filtro_ventana = "WHERE created_at >= :desde " if window else ""
     loc_ok = _loc_compat_sql("p.loc_n", "p.loc_c")
     tn_n, tn_c = "p.tn_n", "p.tn_c"
     return (
@@ -661,18 +661,27 @@ async def _scan_ann_rows(
     return inserted
 
 
-async def _finish_scan(session: AsyncSession, window_hours: int) -> tuple[int, int]:
-    """Run the two set-based arms once, after the last ANN fragment."""
+async def _finish_scan(
+    session: AsyncSession, window_start: datetime | None
+) -> tuple[int, int]:
+    """Run the two set-based arms once, after the last ANN fragment.
+
+    `window_start=None` = pasada COMPLETA (backfill). Cualquier instante
+    acota el brazo léxico a lo nacido desde él; antes se pasaban HORAS
+    redondeadas y una ventana corta se convertía en pasada completa (A9).
+    """
     exact = (await session.execute(sa.text(_EXACT_INTRA_SQL))).rowcount
     lex_params = {
         "trgm": float(settings.CORE_DEDUP_LEX_TRGM_MIN),
         "trgm_intra": float(settings.CORE_DEDUP_LEX_TRGM_INTRA_MIN),
         "maxfreq": int(settings.CORE_DEDUP_LEX_TOKEN_MAX_FREQ),
     }
-    if window_hours > 0:
-        lex_params["ventana"] = window_hours
+    if window_start is not None:
+        lex_params["desde"] = window_start
     lexical = (
-        await session.execute(sa.text(_lex_sql(window=window_hours > 0)), lex_params)
+        await session.execute(
+            sa.text(_lex_sql(window=window_start is not None)), lex_params
+        )
     ).rowcount
     return int(exact), int(lexical)
 
@@ -705,7 +714,12 @@ async def scan_semantic_candidates(
         sim_min=float(settings.CORE_DEDUP_SIM_MIN),
         k=int(settings.CORE_DEDUP_KNN),
     )
-    exact, lexical = await _finish_scan(session, window_hours)
+    exact, lexical = await _finish_scan(
+        session,
+        None
+        if window_hours <= 0
+        else datetime.now(timezone.utc) - timedelta(hours=window_hours),
+    )
     result = {
         "status": "ok",
         "escaneadas": len(rows),
@@ -785,8 +799,7 @@ async def scan_semantic_candidates_batch(
         "next_cursor": None,
     }
     if complete:
-        window_hours = round((window_end - window_start).total_seconds() / 3600)
-        exact, lexical = await _finish_scan(session, window_hours)
+        exact, lexical = await _finish_scan(session, window_start)
         result["candidatos_exactos_intra"] = exact
         result["candidatos_lexicos"] = lexical
     else:

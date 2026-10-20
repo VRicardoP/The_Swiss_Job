@@ -182,11 +182,20 @@ def test_invalid_feed_envelope_never_becomes_empty_success(body, monkeypatch):
         {"descriptions": {1: "x"}},
     ],
 )
-def test_corrupt_description_cursor_fails_closed(cursor, monkeypatch):
-    from jobhunt_core.harvest.provider import ProviderConfigError
+def test_corrupt_description_cursor_is_discarded_not_fatal(cursor, monkeypatch, caplog):
+    """DT-148 A18: el cursor es CACHÉ nuestra, no configuración del scope.
 
-    with pytest.raises(ProviderConfigError):
-        fetch([row()], cursor=cursor, monkeypatch=monkeypatch)
+    Tratarlo como permanente dejaba el scope fallando en CADA ventana sin
+    contabilizar el fallo —el runner relanza `ProviderConfigError` antes de
+    registrarlo—, el dispatcher lo reencolaba siempre y no existía vía de
+    operador para reiniciarlo. Se descarta con un grito y se vuelve a pedir
+    el detalle: una ventana más lenta, no una avería permanente.
+    """
+    with caplog.at_level("ERROR"):
+        result, _requests = fetch([row()], cursor=cursor, monkeypatch=monkeypatch)
+
+    assert result.listings
+    assert any("ilegible" in mensaje for mensaje in caplog.messages)
 
 
 def test_invalid_filters_fail_before_network(monkeypatch):

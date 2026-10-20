@@ -1110,7 +1110,8 @@ def test_opt1_firma_group_by_equivale_a_la_correlada(db):
     assert _FIRMA_GROUP_BY in sql_nueva_w
     sql_vieja_w = sql_nueva_w.replace(_FIRMA_GROUP_BY, _FIRMA_CORRELADA)
     assert sql_vieja_w != sql_nueva_w
-    params_w = dict(params, ventana=48)
+    # DT-148 A9: el corte viaja como INSTANTE, no como horas redondeadas.
+    params_w = dict(params, desde=datetime.now(timezone.utc) - timedelta(hours=48))
     set_nueva_w = asyncio.run(run(sql_nueva_w, params_w))
     set_vieja_w = asyncio.run(run(sql_vieja_w, params_w))
     assert set_nueva_w == set_vieja_w

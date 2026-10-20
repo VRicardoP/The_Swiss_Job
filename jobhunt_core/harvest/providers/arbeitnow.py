@@ -585,12 +585,24 @@ def _parse_config(params: dict) -> tuple[int, int, str | None]:
 
 
 def _cursor_int(cur: dict, key: str) -> int:
-    """El cursor sale de NUESTRA BD, pero si se corrompe tampoco lo arregla un
-    retry (rev. 3ª): misma clasificación permanente que la config inválida."""
+    """Entero del cursor, o 0 si es ilegible.
+
+    DT-148 A18: antes era `ProviderConfigError` —permanente, y el runner lo
+    relanza SIN contabilizarlo—, así que un cursor que este mismo código
+    escribió dejaba el scope fallando en cada ventana y sin rastro en el
+    estado. Es CACHÉ: se descarta con un grito y se parte de cero (el objetivo
+    adaptativo se vuelve a aprender; una ventana más lenta, no una avería).
+    """
     try:
         return int(cur.get(key, 0))
-    except (TypeError, ValueError) as exc:
-        raise ProviderConfigError(f"cursor corrupto: {key}={cur.get(key)!r}") from exc
+    except (TypeError, ValueError):
+        logger.error(
+            "%s: cursor ilegible en %r (%r), se parte de cero",
+            SOURCE_NAME,
+            key,
+            cur.get(key),
+        )
+        return 0
 
 
 def _parse_created_at(item: dict) -> int | None:

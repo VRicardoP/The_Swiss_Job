@@ -1,4 +1,9 @@
-"""Contracts retained for locally owned applications and MatchResult state."""
+"""Siembras compartidas: usuario, oferta legacy y match con estado.
+
+Vivían en `test_applications_contract.py`; al retirarse el vertical local de
+candidaturas (DT-148), las conservan aquí los tests de feedback del core, de la
+watchlist escolar, de documentos y de colegios que las importaban.
+"""
 
 import uuid
 from types import SimpleNamespace
@@ -9,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.job import Job
 from models.match_result import MatchResult
 from models.user import User
-from services.applications import LocalApplications, resolve_applications
 from services.matching.identity import set_profile_link
 
 JOB_HASH = "a" * 32
@@ -78,23 +82,3 @@ async def seeded(db_session):
     core_profile_id = uuid.uuid4()
     await set_profile_link(db_session, user_id, core_profile_id, updated_by="tests")
     return user_id, SimpleNamespace(profile_id=core_profile_id), None
-
-
-async def test_resolver_selects_local_application_authority(db_session):
-    assert isinstance(
-        await resolve_applications(db_session, uuid.uuid4()), LocalApplications
-    )
-
-
-async def test_match_result_state_machine_remains_local(db_session):
-    user_id = await seed_user(db_session)
-    await seed_job(db_session)
-    await seed_match(db_session, user_id)
-    await db_session.commit()
-    port = LocalApplications(db_session)
-
-    assert await port.set_match_status(user_id, JOB_HASH, "reviewed") is True
-    match, job = await port.get_match(user_id, JOB_HASH)
-    assert match.application_status == "reviewed" and job.hash == JOB_HASH
-    assert await port.save_draft(user_id, JOB_HASH, "Draft") is True
-    assert await port.get_draft(user_id, JOB_HASH) == "Draft"

@@ -28,6 +28,7 @@ from jobhunt_core.harvest.provider import (
     BaseProvider,
     ProviderConfigError,
     ProviderResponseError,
+    blocking_status,
 )
 from jobhunt_core.harvest.providers.browser_headers import (
     BROWSER_HEADERS,
@@ -169,6 +170,7 @@ class FinancejobsProvider(BaseProvider):
         budget = page_budget(params, MAX_PAGES) or MAX_PAGES
         listings, invalid, pages, seen = [], 0, 0, 0
         exhausted, error = False, None
+        blocked_with = None
         loop = asyncio.get_running_loop()
         started = loop.time()
         for page in range(1, budget + 1):
@@ -180,6 +182,8 @@ class FinancejobsProvider(BaseProvider):
             except Exception as exc:
                 if not listings:
                     raise
+                # Bloqueo del portal en la página k>1 (DT-148 A2).
+                blocked_with = blocking_status(exc)
                 error = type(exc).__name__
                 break
             pages += 1
@@ -209,4 +213,5 @@ class FinancejobsProvider(BaseProvider):
             pages_fetched=pages,
             complete=exhausted and error is None,
             error=error,
+            blocked_with=blocked_with,
         )

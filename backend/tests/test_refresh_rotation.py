@@ -230,3 +230,73 @@ async def test_un_refresh_anterior_a_t9_se_acepta_una_vez(client: AsyncClient, s
     )
     assert respuesta.status_code == 200
     assert respuesta.json()["refresh_token"] != legado
+
+
+@pytest.mark.asyncio
+async def test_la_purga_borra_lo_caducado_y_conserva_la_memoria(db_session):
+    """DT-148 A3: la purga por caducidad existía y no la llamaba nadie.
+
+    Lo que debe borrar: filas cuya caducidad quedó MUY atrás (hay margen: una
+    recién caducada todavía sirve para responder «reutilizado»). Lo que NO
+    debe borrar: lo vigente, ni siquiera revocado — una fila revocada es la
+    memoria que distingue el robo de un token desconocido.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from models.refresh_token import RefreshToken
+    from services.token_store import purgar_caducados
+
+    ahora = datetime.now(timezone.utc)
+    familia = uuid.uuid4()
+    caducado = uuid.uuid4()
+    reciente = uuid.uuid4()
+    vigente_revocado = uuid.uuid4()
+    usuario = await _alta_directa(db_session)
+    for jti, expira, revocado in (
+        (caducado, ahora - timedelta(days=30), None),
+        (reciente, ahora - timedelta(days=1), None),
+        (vigente_revocado, ahora + timedelta(days=5), ahora),
+    ):
+        db_session.add(
+            RefreshToken(
+                jti=jti,
+                family_id=familia,
+                user_id=usuario,
+                expires_at=expira,
+                revoked_at=revocado,
+            )
+        )
+    await db_session.commit()
+
+    borrados = await purgar_caducados(db_session)
+    await db_session.commit()
+
+    quedan = set(
+        (
+            await db_session.execute(
+                sa.select(RefreshToken.jti).where(RefreshToken.family_id == familia)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert borrados == 1
+    assert quedan == {reciente, vigente_revocado}
+
+
+async def _alta_directa(db) -> uuid.UUID:
+    """Usuario mínimo para colgar filas de refresh (sin pasar por HTTP)."""
+    from core.security import hash_password
+    from models.user import User
+
+    uid = uuid.uuid4()
+    db.add(
+        User(
+            id=uid,
+            email=random_email(),
+            hashed_password=hash_password("SecureP@ss1"),
+            gdpr_consent=True,
+        )
+    )
+    await db.commit()
+    return uid

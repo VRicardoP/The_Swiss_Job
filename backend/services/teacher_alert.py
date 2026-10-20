@@ -10,8 +10,10 @@ penalizada en el scoring); esta alerta es un opt-in aparte y no toca ese flujo.
 
 from html import escape as _esc
 
-# Categoría de docencia que asigna JobClassifier (ver services/job_classifier.py).
-_TEACHING_CATEGORY = "H"
+# Categoría de docencia de la taxonomía del core (`jobhunt_core/match_categories`).
+# PÚBLICA porque `tasks/alert_tasks` la necesita para PEDIRLA al catálogo: la
+# oferta ya no trae su categoría puesta, la filtra el /v1 (DT-148 A1).
+TEACHING_CATEGORY = "H"
 
 # Marcadores de NIVEL PRIMARIA en DE/FR/IT/EN/ES. Se comparan como substring en
 # minúsculas sobre título + tags. Frases específicas para evitar falsos positivos.
@@ -65,7 +67,7 @@ def is_primary_teacher_job(
     category: str | None, title: str | None, tags: list[str] | None
 ) -> bool:
     """True si el job es docencia (categoría H) Y de nivel primaria."""
-    if (category or "") != _TEACHING_CATEGORY:
+    if (category or "") != TEACHING_CATEGORY:
         return False
     haystack = (title or "").lower() + " " + " ".join(tags or []).lower()
     if any(marker in haystack for marker in _PRIMARY_MARKERS):

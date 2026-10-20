@@ -37,6 +37,32 @@ def test_task_executes_coroutine_instead_of_returning_it(monkeypatch):
     execute.assert_awaited_once_with(limit=7)
 
 
+def test_una_ejecucion_fallida_deja_rastro_del_tipo_de_error(monkeypatch, caplog):
+    """DT-148 A10: `run_one_task` reintentaba y PERDÍA la causa.
+
+    Su hermana `run_due_task` sí registra el tipo. Aquí el `ValueError` del
+    inbox sin configurar se reintentaba una vez y desaparecía sin una línea de
+    log: la avería quedaba sin diagnóstico. Nunca el TEXTO (puede arrastrar
+    preferencias), sólo el tipo.
+    """
+    import uuid
+
+    import pytest
+    from celery.exceptions import Retry
+
+    monkeypatch.setattr(settings, "CORE_SAVED_SEARCH_EXECUTION_ENABLED", True)
+
+    async def boom(**kwargs):
+        raise ValueError("saved-search execution requires a real HTTP inbox")
+
+    monkeypatch.setattr(searches, "_run", boom)
+    with caplog.at_level("ERROR"), pytest.raises(Retry):
+        searches.run_one_task.apply(args=[str(uuid.uuid4())], throw=True).get()
+
+    assert any("ValueError" in m for m in caplog.messages)
+    assert not any("real HTTP inbox" in m for m in caplog.messages)
+
+
 def test_failed_search_does_not_starve_healthy_search_or_consume_observations(
     db,  # noqa: F811  (la fixture, no una redefinición)
     monkeypatch,

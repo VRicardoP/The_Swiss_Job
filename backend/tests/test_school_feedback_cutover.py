@@ -6,7 +6,7 @@ import uuid
 import httpx
 import pytest
 
-from tests.test_applications_contract import seeded  # noqa: F401  (fixture de pytest: se importa para que la resuelva por nombre)
+from tests.seeds import seeded  # noqa: F401  (fixture de pytest: se importa para que la resuelva por nombre)
 from tests.test_core_feedback import writer
 from services.matching.port import CoreUnavailableError
 

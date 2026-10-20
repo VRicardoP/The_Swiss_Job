@@ -314,7 +314,7 @@ async def _send_digest_async() -> dict[str, Any]:
                         MatchResult.created_at >= since,
                         # Cota superior = la marca guardada: sin ella, un match
                         # creado entre la query y la marca se notificaría dos
-                        # veces (el cierre de digest_tasks/P2-15).
+                        # veces (el cierre de P2-15 en la alerta de profesor).
                         MatchResult.created_at <= now,
                         Job.source.in_(watchlist_sources),
                         and_(

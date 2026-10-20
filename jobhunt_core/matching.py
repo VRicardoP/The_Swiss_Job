@@ -2385,7 +2385,7 @@ async def feed(session, profile_id, limit: int = 20, cursor=None, consumer_id=No
 def _facet_feed_sql(profile_id, consumer_id):
     """Canonical visible feed with category and school-watchlist annotations."""
     from jobhunt_core.feedback import effective_feedback_batch_sql
-    from jobhunt_core.match_categories import sql_case
+    from jobhunt_core.match_categories import content_search_text_sql, sql_case
 
     category_case, category_params = sql_case()
     params = {"pid": profile_id, "cid": consumer_id, **category_params}
@@ -2399,13 +2399,9 @@ def _facet_feed_sql(profile_id, consumer_id):
         "e.offer_revision_id, v.current_offer_revision_id, "
         "v.primary_incarnation_id, s.updated_at, s.saved_at, "
         "fb.feedback, s.notes, o.content, "
-        "lower(concat_ws(' ', COALESCE(o.content->>'title',''), "
-        "  (SELECT string_agg(tag #>> '{}', ' ' ORDER BY ordinal) "
-        "   FROM jsonb_array_elements(CASE "
-        "     WHEN jsonb_typeof(o.content->'tags')='array' "
-        "     THEN o.content->'tags' ELSE '[]'::jsonb END) "
-        "     WITH ORDINALITY AS tags(tag, ordinal) "
-        "   WHERE jsonb_typeof(tag)='string'))) AS search_text, "
+        # El texto clasificado lo define la taxonomía (match_categories): el
+        # catálogo lo usa igual, y copiarlo permitía clasificar distinto.
+        f"{content_search_text_sql()} AS search_text, "
         "jsonb_exists_any(COALESCE(o.content->'tags','[]'::jsonb), "
         "                 monitored_refs.refs) AS watchlist "
         "FROM profile_vacancy_state s "

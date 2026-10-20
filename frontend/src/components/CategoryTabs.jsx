@@ -35,7 +35,10 @@ export default function CategoryTabs({
                 : "bg-surface text-text-secondary border-border hover:border-border-strong hover:text-text-primary",
             )}
           >
-            {cat.id && cat.id !== cat.label && (
+            {/* Sólo las categorías de la taxonomía llevan letra delante;
+                los items sintéticos ("__watchlist", "otros") se veían como
+                «__watchlist Watchlist 5» (DT-148 A15). */}
+            {cat.id && cat.id.length === 1 && (
               <span className="font-semibold tabular-nums">{cat.id}</span>
             )}
             <span className={cn(cat.shortLabel && "hidden sm:inline")}>

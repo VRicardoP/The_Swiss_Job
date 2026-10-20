@@ -29,6 +29,15 @@ class FetchResult:
     `consecutive_failures` — sin esa marca, preservar el barrido parcial
     convertía un rojo mudo en silencio absoluto (auditoría G9 P2-C).
     Invariante: `error is not None` ⇒ `complete is False`.
+
+    `blocked_with` es el estatus HTTP de BLOQUEO (`BLOCK_STATUSES`: 403/429/503)
+    que cortó un barrido parcial. Existe porque el kill-switch de DT-144 sólo
+    veía los bloqueos que LANZABAN: un portal que nos limita a partir de la
+    página 2 dejaba el parcial con `error` pero sin bloqueo, así que
+    `consecutive_blocks` no subía nunca y la fuente seguía recibiendo peticiones
+    para siempre (auditoría DT-148 A2). Lo rellena el provider con
+    `blocking_status(exc)` al preservar lo cosechado.
+    Invariante: `blocked_with is not None` ⇒ `error is not None`.
     """
 
     listings: tuple[RawListing, ...]
@@ -36,6 +45,7 @@ class FetchResult:
     pages_fetched: int = 1
     complete: bool = True
     error: str | None = None
+    blocked_with: int | None = None
 
 
 @dataclass

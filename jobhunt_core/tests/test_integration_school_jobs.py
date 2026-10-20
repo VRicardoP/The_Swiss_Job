@@ -136,6 +136,49 @@ def test_live_reobservation_fills_missing_details_without_replacing_job(school_d
     assert conflicting["metadata"]["description_snippet"] == "Complete requirements"
 
 
+def test_a_shared_sighting_persists_the_enrichment_it_computes(school_db):
+    """DT-148 A7: el enriquecimiento se calculaba y se TIRABA.
+
+    MUERDE sin el arreglo: con la fila YA enlazada y `publish_missing=False`
+    —lo que `record_shared_observation` pasa siempre a los monitores que no son
+    la fuente— el `UPDATE` sólo corría dentro de la rama de re-enlace, así que
+    la descripción nueva se perdía en silencio en cada cosecha.
+    """
+    f, made = school_db
+    token, _, _ = _seed_profile(f, made, SCOPES)
+    monitor = _create(f, token).json()
+    path = "/v1/schools/" + monitor["id"] + "/jobs"
+    body = _observation(description_snippet=None)
+
+    primera = _request(f, token, path, "POST", body, "linked-without-snippet").json()[
+        "item"
+    ]
+    assert primera["vacancy_id"] is not None
+    assert primera["quarantine_reason"] is None
+    assert not primera["metadata"].get("description_snippet")
+
+    segunda = _request(
+        f,
+        token,
+        path,
+        "POST",
+        {
+            **body,
+            "publish_missing": False,
+            "description_snippet": "Perfil completo del puesto",
+            "content_hash": "d" * 64,
+        },
+        "shared-enrichment",
+    ).json()["item"]
+
+    assert segunda["id"] == primera["id"]
+    assert segunda["metadata"]["description_snippet"] == "Perfil completo del puesto"
+    assert segunda["metadata"]["content_hash"] == "d" * 64
+    # Y no se toca lo que esa rama no debe tocar.
+    assert segunda["vacancy_id"] == primera["vacancy_id"]
+    assert segunda["quarantine_reason"] is None
+
+
 def test_same_source_sighting_preserves_canonical_content(school_db):
     f, made = school_db
     token, _, _ = _seed_profile(f, made, SCOPES)

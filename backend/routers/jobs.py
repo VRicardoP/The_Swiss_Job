@@ -1,7 +1,11 @@
-"""Anonymous Core catalog endpoints for search, detail and aggregates.
+"""Anonymous Core catalog endpoints for search and detail.
 
 The router owns HTTP validation; the fixed Core adapter owns catalog access.
 The catalog stays public by product design, while user data remains authenticated.
+
+DT-148 A11: los agregados (`/stats`, `/sources`) se retiraron. El /v1 no los
+expone, así que devolvían 501 SIEMPRE: el desplegable de fuentes del buscador
+estaba vacío desde el corte y nadie lo veía porque el front se tragaba el error.
 """
 
 import logging
@@ -10,12 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from schemas.job import (
-    JobResponse,
-    JobSearchResponse,
-    JobStats,
-    SourceInfo,
-)
+from schemas.job import JobResponse, JobSearchResponse
 from services.catalog import (
     CatalogError,
     CatalogSearchParams,
@@ -78,26 +77,6 @@ async def search_jobs(
     )
     try:
         return await catalog.search(params)
-    except (CoreUnavailableError, CatalogUnsupportedError) as exc:
-        raise _catalog_http_error(exc) from exc
-
-
-@router.get("/stats", response_model=JobStats)
-async def get_job_stats(db: AsyncSession = Depends(get_db)):
-    """Aggregated job statistics by source, canton, language, etc."""
-    catalog = await resolve_catalog(db)
-    try:
-        return await catalog.stats()
-    except (CoreUnavailableError, CatalogUnsupportedError) as exc:
-        raise _catalog_http_error(exc) from exc
-
-
-@router.get("/sources", response_model=list[SourceInfo])
-async def get_job_sources(db: AsyncSession = Depends(get_db)):
-    """List active job sources with counts."""
-    catalog = await resolve_catalog(db)
-    try:
-        return await catalog.sources()
     except (CoreUnavailableError, CatalogUnsupportedError) as exc:
         raise _catalog_http_error(exc) from exc
 

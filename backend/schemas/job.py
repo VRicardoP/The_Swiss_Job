@@ -83,32 +83,3 @@ class JobSearchResponse(BaseModel):
     limit: int
     offset: int
     has_more: bool
-
-
-class SourceInfo(BaseModel):
-    """Active source summary."""
-
-    name: str
-    count: int
-    last_seen: datetime | None = None
-
-
-class SalaryStats(BaseModel):
-    """Salary distribution statistics."""
-
-    min: int | None = None
-    max: int | None = None
-    median: float | None = None
-    mean: float | None = None
-
-
-class JobStats(BaseModel):
-    """Aggregated job statistics."""
-
-    total_jobs: int
-    by_source: dict[str, int]
-    by_canton: dict[str, int]
-    by_language: dict[str, int]
-    by_seniority: dict[str, int]
-    by_contract: dict[str, int]
-    salary_stats: SalaryStats

@@ -2,6 +2,11 @@
 
 A Redis watermark prevents duplicate notifications. This independent local
 feature remains active because it is outside the transferred matching engine.
+
+Las candidatas las sirve el CATÁLOGO DEL CORE desde DT-148 A1: la tabla legacy
+`jobs` de la que se leían dejó de tener escritores con el corte de la cosecha
+nativa, así que el aviso llevaba semanas sin poder disparar — en verde y en
+silencio. El correo sigue saliendo de aquí: el núcleo no tiene SMTP.
 """
 
 import asyncio
@@ -35,13 +40,15 @@ def detect_teacher_alerts(self) -> dict[str, Any]:
 
 async def _detect_and_notify() -> dict[str, Any]:
     import redis
-    from sqlalchemy import select
 
     from config import settings
-    from database import task_session
-    from models.job import Job
+    from services.catalog.core_client import CoreCatalog
     from services.email_service import EmailService
-    from services.teacher_alert import build_alert_email, is_primary_teacher_job
+    from services.teacher_alert import (
+        TEACHING_CATEGORY,
+        build_alert_email,
+        is_primary_teacher_job,
+    )
     from tasks.watermarks import filter_unsent, save_watermark, unmark_sent
 
     if not settings.TEACHER_ALERT_ENABLED:
@@ -64,28 +71,33 @@ async def _detect_and_notify() -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     watermark = _load_watermark(r, now, settings.TEACHER_ALERT_INITIAL_LOOKBACK_DAYS)
 
-    # Prefiltro barato en BD: docencia (categoría H) activa y nueva desde la
-    # marca. G1/P2-15: con cota SUPERIOR `<= now` — sin ella, una oferta
-    # insertada entre la captura de `now` y la query entraba en ESTA corrida
-    # (> watermark viejo) y en la SIGUIENTE (> now) → doble email. Es el mismo
-    # cierre que ya aplica digest_tasks (`created_at <= now`).
-    async with task_session() as db:
-        stmt = (
-            select(Job)
-            .where(
-                Job.category == "H",
-                Job.is_active.is_(True),
-                Job.duplicate_of.is_(None),
-                Job.first_seen_at > watermark,
-                Job.first_seen_at <= now,
-            )
-            .order_by(Job.first_seen_at)
+    # Prefiltro barato en el CATÁLOGO: docencia (categoría H) nueva desde la
+    # marca. El feed del core sirve SOLO vacantes activas y presentables, que
+    # es justo lo que pedían `is_active` y `duplicate_of IS NULL` (DT-148 A1).
+    # G1/P2-15: se conserva la cota SUPERIOR `<= now`, pero con una diferencia
+    # que hay que decir: el corte INFERIOR lo aplica el servidor sobre el alta
+    # de la vacante y este superior se aplica aquí sobre `first_seen_at` del
+    # listing primario, que es lo que el DTO trae. Son casi el mismo instante,
+    # no el mismo campo, así que la cota ya no cierra por sí sola la carrera de
+    # G1/P2-15: quien la cierra es la idempotencia POR OFERTA de G3/P1-1
+    # (`filter_unsent`), que es el mecanismo primario desde entonces.
+    candidates = [
+        job
+        for job in await CoreCatalog().recent(
+            category=TEACHING_CATEGORY, since=watermark
         )
-        candidates = list((await db.execute(stmt)).scalars().all())
+        if job.first_seen_at <= now
+    ]
+    # El orden del correo era por antigüedad; el feed sirve lo más nuevo primero.
+    candidates.sort(key=lambda job: job.first_seen_at)
 
-    # Filtro fino de NIVEL primaria (marcadores multiidioma).
+    # Filtro fino de NIVEL primaria (marcadores multiidioma). La CATEGORÍA ya
+    # la garantiza el filtro del catálogo: la oferta servida no trae el campo
+    # (`JobResponse` no lo tiene), así que se afirma la que se pidió.
     matches = [
-        j for j in candidates if is_primary_teacher_job(j.category, j.title, j.tags)
+        j
+        for j in candidates
+        if is_primary_teacher_job(TEACHING_CATEGORY, j.title, j.tags)
     ]
 
     # G3/P1-1: la marca se guarda con LAG (ventana solapada, ver
@@ -111,7 +123,7 @@ async def _detect_and_notify() -> dict[str, Any]:
         )
 
     # G4/P1-2 — la marca se guarda DESPUÉS del envío, dentro del camino de
-    # éxito (mismo criterio que digest_tasks:149 y watchlist_tasks). Guardarla
+    # éxito (mismo criterio que watchlist_tasks). Guardarla
     # antes perdía el lote ENTERO ante un fallo de SMTP: el `unmark_sent` de
     # arriba retira los marcadores por-oferta, pero la marca de agua ya había
     # avanzado y solo retrocede `NOTIFY_WATERMARK_LAG_MINUTES` (15 min) —

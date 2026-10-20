@@ -20,9 +20,9 @@ Se afirma forma y semantica equivalentes DONDE EL CONTRATO LO EXIGE:
   remote) y total/offset exactos; los filtros sin equivalente (canton,
   language, seniority, contract_type, salary, sort!=newest) son la cota
   CatalogUnsupportedError SIN peticiones de red.
-- stats/fuentes: el /v1 del core NO las expone — la cota es
-  CatalogUnsupportedError (fijada aqui; al publicarse el endpoint core, estos
-  tests pasan a exigir equivalencia tambien ahi).
+- stats/fuentes: RETIRADAS (DT-148 A11). El /v1 no las expone, el cliente
+  devolvia 501 incondicional y sus dos endpoints publicos no podian servir
+  nada. Si el nucleo las publica, vuelven con su contrato.
 """
 
 import hashlib
@@ -264,15 +264,16 @@ async def test_get_missing_returns_none(catalogs, impl):
 
 
 @pytest.mark.parametrize("operation", ["stats", "sources"])
-async def test_core_catalog_operations_not_in_v1_contract(catalogs, operation):
-    """El /v1 del core no expone estadisticas/fuentes agregadas de catalogo:
-    la costura lo declara como CatalogUnsupportedError, no lo simula."""
+async def test_core_catalog_aggregates_no_longer_exist(catalogs, operation):
+    """DT-148 A11: los agregados se RETIRARON, no son una cota.
+
+    El /v1 no los expone, así que el cliente devolvia 501 incondicional y los
+    dos endpoints publicos no podian servir nada: el desplegable de fuentes
+    del buscador llevaba meses vacio y nadie lo veia. Cuando el nucleo los
+    publique, vuelven con su contrato.
+    """
     core_catalog, _, _ = catalogs["core"]
-    with pytest.raises(CatalogUnsupportedError):
-        if operation == "stats":
-            await core_catalog.stats()
-        else:
-            await core_catalog.sources()
+    assert not hasattr(core_catalog, operation)
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +298,8 @@ async def test_core_without_configured_credential_makes_no_request(monkeypatch):
         await catalog.get(CASE_CORE_REFS["python_zurich"])
     with pytest.raises(CoreUnavailableError):
         await catalog.search(CatalogSearchParams())
+    with pytest.raises(CoreUnavailableError):
+        await catalog.recent(category="H", since=FIRST_SEEN)
 
 
 async def test_core_down_raises_unavailable():
@@ -487,6 +490,72 @@ async def test_core_search_sends_offset_and_preserves_total():
     assert result.total == 5 and not result.has_more
     assert [item.title for item in result.data] == names[3:5]
     assert calls == [{"limit": "2", "offset": "3"}]
+
+
+async def test_core_recent_pages_by_cursor_until_the_feed_ends():
+    """DT-148 A1: `recent` recorre por CURSOR y no exige `total`.
+
+    El endpoint solo sirve `total` con offset; pedirlo aqui habria hecho
+    fallar el aviso por un campo que el contrato no promete en este camino.
+    """
+    names, dtos = _synthetic_feed(3)
+    calls = []
+
+    def handler(request):
+        params = dict(request.url.params)
+        calls.append(params)
+        if "cursor" not in params:
+            return httpx.Response(
+                200,
+                json={"items": [dtos[names[0]], dtos[names[1]]], "next_cursor": "c1"},
+            )
+        return httpx.Response(
+            200, json={"items": [dtos[names[2]]], "next_cursor": None}
+        )
+
+    offers = await make_core_catalog(transport=httpx.MockTransport(handler)).recent(
+        category="H", since=FIRST_SEEN
+    )
+
+    assert [offer.title for offer in offers] == names
+    assert all(isinstance(offer, JobResponse) for offer in offers)
+    # La categoria y el `since` viajan como filtros del /v1, no se filtra local.
+    assert calls[0]["category"] == "H"
+    assert calls[0]["since"] == FIRST_SEEN.isoformat()
+    assert calls[1]["cursor"] == "c1"
+
+
+async def test_core_recent_stops_at_the_declared_limit():
+    """El tope es una COTA declarada, no una pagina: deja de pedir al cubrirlo."""
+    names, dtos = _synthetic_feed(4)
+    calls = []
+
+    def handler(request):
+        calls.append(dict(request.url.params))
+        return httpx.Response(
+            200, json={"items": [dtos[n] for n in names], "next_cursor": "mas"}
+        )
+
+    offers = await make_core_catalog(transport=httpx.MockTransport(handler)).recent(
+        category="H", since=FIRST_SEEN, limit=2
+    )
+
+    assert len(offers) == 2 and len(calls) == 1
+
+
+async def test_core_recent_refuses_a_cursor_that_does_not_advance():
+    """Un cursor repetido es un core roto: falla cerrado en vez de dar vueltas."""
+    names, dtos = _synthetic_feed(1)
+
+    def handler(request):
+        return httpx.Response(
+            200, json={"items": [dtos[names[0]]], "next_cursor": "igual"}
+        )
+
+    with pytest.raises(CoreUnavailableError):
+        await make_core_catalog(transport=httpx.MockTransport(handler)).recent(
+            category="H", since=FIRST_SEEN
+        )
 
 
 @pytest.mark.parametrize("total", [None, -1, True, 1.5, "2", [], {}])

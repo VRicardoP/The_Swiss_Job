@@ -24,9 +24,11 @@ import httpx
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
 from jobhunt_core.harvest.provider import (
+    SOFT_BLOCK_STATUS,
     BaseProvider,
     ProviderConfigError,
     ProviderResponseError,
+    SoftBlocked,
 )
 from jobhunt_core.harvest.providers.browser_headers import BROWSER_HEADERS
 from jobhunt_core.harvest.providers.html_response import (
@@ -188,7 +190,10 @@ def _cards(html: str, now: datetime | None = None) -> list[dict]:
     # Only an empty parse can be a block: a page that produced jobs may
     # legitimately mention "captcha" in its own content.
     if not cards and looks_like_soft_block(html):
-        raise ValueError("JobScout24 returned a soft-block/CAPTCHA page")
+        # `SoftBlocked`, no `ValueError`: `_read` reintentaba cuatro veces
+        # contra una página que nos pide parar, y al agotarse perdía el motivo
+        # (HTTP 200 ⇒ ningún bloqueo contabilizado) — DT-148 A8.
+        raise SoftBlocked("JobScout24 returned a soft-block/CAPTCHA page")
     return cards
 
 
@@ -329,7 +334,14 @@ def _cached_descriptions(cursor) -> dict[str, str]:
     if cursor is None:
         return {}
     if not isinstance(cursor, dict):
-        raise ProviderConfigError("JobScout24 cursor is corrupt")
+        # DT-148 A18: el cursor es CACHÉ que escribe este mismo código, no
+        # configuración del scope. Tratarlo como `ProviderConfigError` dejaba el
+        # scope fallando en CADA ventana sin contabilizar el fallo (el runner
+        # relanza ese error antes de registrarlo), el dispatcher lo reencolaba
+        # siempre y nadie podía reiniciarlo sin tocar un parámetro semántico.
+        # Un cursor ilegible se DESCARTA con un grito y se parte de cero.
+        logger.error("%s: cursor ilegible, se descarta y se parte de cero", SOURCE_NAME)
+        return {}
     values = cursor.get("descriptions", {})
     if not isinstance(values, dict) or any(
         not isinstance(key, str)
@@ -339,8 +351,55 @@ def _cached_descriptions(cursor) -> dict[str, str]:
         or len(value) > MAX_DESCRIPTION_LENGTH
         for key, value in values.items()
     ):
-        raise ProviderConfigError("JobScout24 description cursor is corrupt")
+        logger.error(
+            "%s: caché de descripciones ilegible, se descarta y se vuelve a "
+            "pedir el detalle",
+            SOURCE_NAME,
+        )
+        return {}
     return values
+
+
+async def _fill_descriptions(http, retained, cached):
+    """Completa las descripciones que falten, dentro del tope de detalles.
+
+    Devuelve `(descriptions, attempts, fetched, soft_block)`. Vive fuera de
+    `fetch_new` porque es otra responsabilidad —el barrido del listado ya
+    terminó— y porque dejarla dentro llevó la función a grado E de radon al
+    añadirle el corte por desafío (DT-148 A8).
+    """
+    retained_ids = {card["id"] for card in retained}
+    descriptions = {key: value for key, value in cached.items() if key in retained_ids}
+    attempts = fetched = 0
+    soft_block = None
+    for card in retained:
+        identity = card["id"]
+        url = _url(card)
+        if identity in descriptions or not url or attempts >= MAX_DETAIL_FETCHES:
+            continue
+        attempts += 1
+        await _pause()
+        try:
+            description = await _read(http, url, MAX_DETAIL_BYTES, _description)
+        except SoftBlocked:
+            # El portal nos está diciendo que paremos: se deja de pedir
+            # detalles AHORA (antes se seguía hasta los 20 del tope) y el
+            # bloqueo viaja al runner (DT-148 A8).
+            logger.error(
+                "%s: desafío anti-bot en el detalle de %r — se detiene el "
+                "pase de detalles",
+                SOURCE_NAME,
+                identity,
+            )
+            soft_block = SOFT_BLOCK_STATUS
+            break
+        except (httpx.HTTPError, ProviderResponseError):
+            logger.warning("%s: detail fetch failed for %r", SOURCE_NAME, identity)
+            continue
+        if description:
+            descriptions[identity] = description
+            fetched += 1
+    return descriptions, attempts, fetched, soft_block
 
 
 class JobScout24Provider(BaseProvider):
@@ -396,26 +455,9 @@ class JobScout24Provider(BaseProvider):
             logger.warning("%s: %d cards without a detail URL", SOURCE_NAME, invalid)
 
         retained = rows[:MAX_RECENT_JOBS]
-        retained_ids = {card["id"] for card in retained}
-        descriptions = {
-            key: value for key, value in cached.items() if key in retained_ids
-        }
-        attempts = fetched = 0
-        for card in retained:
-            identity = card["id"]
-            url = _url(card)
-            if identity in descriptions or not url or attempts >= MAX_DETAIL_FETCHES:
-                continue
-            attempts += 1
-            await _pause()
-            try:
-                description = await _read(http, url, MAX_DETAIL_BYTES, _description)
-            except (httpx.HTTPError, ProviderResponseError):
-                logger.warning("%s: detail fetch failed for %r", SOURCE_NAME, identity)
-                continue
-            if description:
-                descriptions[identity] = description
-                fetched += 1
+        descriptions, attempts, fetched, soft_block = await _fill_descriptions(
+            http, retained, cached
+        )
 
         # The producer sorts the served cache by date, descending, with a stable
         # sort — so equal dates keep sweep order. That final order is what
@@ -450,6 +492,8 @@ class JobScout24Provider(BaseProvider):
                 "descriptions": descriptions,
             },
             pages_fetched=pages,
-            complete=not invalid,
-            error="invalid_jobscout24_cards" if invalid else None,
+            complete=not invalid and soft_block is None,
+            error=("invalid_jobscout24_cards" if invalid else None)
+            or ("soft_block" if soft_block is not None else None),
+            blocked_with=soft_block,
         )
