@@ -1483,7 +1483,22 @@ traducción y documentos; sin rerank); contadores de tests re-medidos con
 compose, sesiones (T9), operación (T13) y rendimiento del feed (siguen siendo
 ciertas). Señalar con fecha qué se corrigió.
 
-#### F2 · COTAS y MEMORIA con filas caducadas — MEDIA
+#### F2 · COTAS y MEMORIA con filas caducadas — EJECUTADO el 2026-10-20 (salvo la reescritura de la sección 3)
+
+**Hecho.** A19-13 cerrada con fecha y motivo (sus siete funciones E/F se
+retiraron en P3 de DT-145, `1f415d3`); la cota del lote de re-ranking marcada
+sin objeto; la de la alerta de profesor anotada: sigue vigente y sobre-inclusiva
+a propósito, pero ahora lee el catálogo del núcleo y no la tabla legacy.
+`MEMORIA_PROYECTO.md` remite a DT-148, corrige la autoridad de candidaturas
+(hoy del núcleo en exclusiva) y marca las dos releases pendientes de desplegar.
+
+**Lo que queda de F2:** la sección 3 de COTAS («Matching, LLM y embeddings»)
+describe el matcher del BFF retirado. Lleva un aviso en cabecera desde F1, así
+que nadie la lee como vigente, pero reescribirla con las cotas REALES del
+matching del núcleo (recuperación híbrida, cross-encoder, generación de corpus)
+sigue pendiente y necesita leer `CONTRATOS_FASE_A.md` entero.
+
+Texto original del ítem:
 
 `docs/COTAS_Y_DECISIONES.md:479-487` (A19-13) cita siete funciones E/F de
 herramientas de corte que P3 de DT-145 retiró (`1f415d3`): marcar la cota como

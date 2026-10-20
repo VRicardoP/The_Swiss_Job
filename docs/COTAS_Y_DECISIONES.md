@@ -198,7 +198,7 @@ no tendría ningún par sobre el que actuar.
 | Modo avalancha: `>MATCH_LLM_RERANK_MAX ⇒ top 50` `[I]` | Coste de IA acotado. **Pero no es recuperable**: el `head` se elige por el `score_final` de la etapa 2, calculado con `llm_score=0.0`, así que una oferta bajo el puesto 50 tiende a quedarse ahí |
 | Un lote degradado JAMÁS se cachea `[I]` | Verificado con Redis real: tras forzar degradación, 0 claves. Evita que un fallo del LLM se sirva 7 días |
 | ~~Tamaño de lote de rerank = 10~~ `[I]` — **SIN OBJETO desde el corte (anotado 2026-10-20)** | El motivo sigue siendo cierto (3.728 tokens × `GROQ_CONCURRENCY=2` = 93 % del límite de 8k/min del tramo gratuito), pero **el re-ranking LLM ya no corre**: murió con `job_matcher` el 2026-10-13 y sus 442 líneas en `groq_service` son código muerto que DT-148 B1 retira. Si alguna vez vuelve, la cota vuelve con él |
-| Alerta de profesor **sobre-inclusiva a propósito** `[I]` | «esta alerta es opt-in y su razón de ser es NO perder la vacante» |
+| Alerta de profesor **sobre-inclusiva a propósito** `[I]` — VIGENTE, con fuente nueva (2026-10-20) | «esta alerta es opt-in y su razón de ser es NO perder la vacante». Lo que cambió es de DÓNDE lee: ya no consulta `jobs.category='H'` de la tabla legacy —congelada desde el corte, que la dejó devolviendo cero candidatas EN VERDE durante semanas— sino `GET /v1/vacancies?category=H&since=…` del núcleo (DT-148 A1). El filtro fino de NIVEL primaria sigue siendo local y sigue siendo sobre-inclusivo a propósito |
 
 **Pesos reales del matcher `[V]`** — son **SEIS** factores, no cinco:
 

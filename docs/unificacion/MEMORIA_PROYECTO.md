@@ -1,6 +1,14 @@
 # Memoria del proyecto JobHunting
 
-Última reconciliación documental: **2026-10-19**.
+Última reconciliación documental: **2026-10-20**.
+
+> **Auditoría de refactorización en curso: DT-148** del ledger
+> (`DEUDA_TECNICA.md`). Su **sección A está ejecutada** —18 bugs corregidos,
+> tres tareas y dos verticales muertos retirados— y su **fase 0 (F1) también**:
+> el `CLAUDE.md` del proyecto describía un árbol que no existía desde octubre.
+> Quedan ABIERTAS las secciones B a F (código muerto, duplicación, particiones
+> por SRP y el resto de la sincronización documental). Lo ejecutado está
+> commiteado y **pendiente de desplegar**.
 
 Esta es la memoria vigente del sistema formado por SwissJob, jobhunt-core y
 ReactPortfolio. Resume estado, autoridades y trabajo pendiente. Los contratos y
@@ -13,7 +21,10 @@ estado durable de empleo en jobhunt-core. SwissJob y ReactPortfolio conservan
 sus interfaces, autenticación y responsabilidades propias de BFF.
 
 - Core es autoridad del corpus, catálogo, matching, facetas/categorías,
-  feedback, candidaturas, búsquedas guardadas, documentos y colegios.
+  feedback, candidaturas, búsquedas guardadas, documentos y colegios. Desde
+  DT-148 lo es de las candidaturas **en exclusiva**: SwissJob tenía un vertical
+  local (`job_applications`) que se retiró al comprobar que no había tenido una
+  sola fila en toda su vida y que su interfaz no podía crear ninguna.
 - SwissJob conserva localmente el perfil editable y lo sincroniza a Core. Sus
   costuras de catálogo, matching y colegios tienen autoridad fija; ya no existe
   routing runtime ni fallback silencioso de escritura.
@@ -31,8 +42,8 @@ Sondas finales ejecutadas el 2026-10-19:
 
 | Pieza | Release/imagen viva | Resultado |
 |---|---|---|
-| Core API y tres workers | swissjob-core:point5-c990131 | ready, authoritative, Alembic core0055; 50/50 scopes con estado, cero alertas |
-| SwissJob BFF/worker | swissjob-backend:point5-acf48b2 | healthy/Celery pong; misma imagen inmutable; cero productores locales |
+| Core API y tres workers | swissjob-core:point5-c990131 | ready, authoritative, Alembic core0055; 50/50 scopes con estado, cero alertas. **Pendiente de desplegar `point5-5c91c44`** (filtros `category`/`since` del catálogo y kill-switch de bloqueos parciales) |
+| SwissJob BFF/worker | swissjob-backend:point5-acf48b2 | healthy/Celery pong; misma imagen inmutable; cero productores locales. **Pendiente de desplegar `point5-5c91c44`** (aviso de profesor leyendo el núcleo, purga de refresh, dos verticales retirados y la migración `a7c3d9e2f5b1`, que va ANTES de recrear) |
 | SwissJob frontend | swissjob-frontend:point5-acf48b2 | healthy; categorías canónicas y tarjetas con contenido |
 | Portfolio API/worker | portfolio-backend:board-5492147 | healthy; seis capacidades `core_primary`; cero productores locales |
 | Portfolio frontend público | remoto 5045a28 | cookie-only publicado; login real y 12 ventanas con contenido verificadas por Playwright |
