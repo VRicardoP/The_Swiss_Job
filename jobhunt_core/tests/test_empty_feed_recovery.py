@@ -13,7 +13,7 @@ def test_valid_empty_feed_records_attempt_and_drains_recovery(db):  # noqa: F811
 
     async def pending():
         async with factory() as session:
-            return await matching_tasks._recovery_targets(session, set())
+            return await matching_tasks._recovery_targets(session)
 
     async def check():
         await matching_tasks._evaluate_and_record(factory, pid)

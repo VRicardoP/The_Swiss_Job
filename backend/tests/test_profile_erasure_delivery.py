@@ -13,18 +13,21 @@ from tests.test_profile import register_and_get_token
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind", ["profile", "feed"])
 @pytest.mark.parametrize("same_profile", [True, False])
-async def test_erasure_fences_late_http_cache_publication(kind, same_profile):
+async def test_erasure_fences_late_http_cache_publication(same_profile):
+    """Una respuesta que llega TARDE no puede repoblar la caché de un borrado.
+
+    DT-148 B3: este caso estaba parametrizado sobre dos cachés, la del perfil y
+    la del feed. La del perfil se fue con `profiles.core_client.CoreProfile`,
+    que no tenía consumidor de producción; la del feed —la que de verdad sirve
+    contenido del sujeto— se queda y es la que se comprueba aquí.
+    """
     import httpx
-    from services.profiles import core_client as pc
     from services.matching import core_client as mc
 
     pid, other = uuid.uuid4(), uuid.uuid4()
-    module = pc if kind == "profile" else mc
-    key = str(pid) if kind == "profile" else (str(pid), "")
-    other_key = str(other) if kind == "profile" else (str(other), "")
-    module._etag_cache[other_key] = ("other", {"preserve": True})
+    key, other_key = (str(pid), ""), (str(other), "")
+    mc._etag_cache[other_key] = ("other", {"preserve": True})
 
     class Late:
         async def __aenter__(self):
@@ -40,19 +43,16 @@ async def test_erasure_fences_late_http_cache_publication(kind, same_profile):
             )
 
     async def fetch():
-        if kind == "profile":
-            return await pc.CoreProfile(None, Late)._fetch_profile(pid)
         return await mc.CoreMatching(None)._fetch_page(Late(), pid, None)
 
     if same_profile:
-        with pytest.raises(module.CoreUnavailableError, match="invalidated"):
+        with pytest.raises(mc.CoreUnavailableError, match="invalidated"):
             await fetch()
-        assert key not in module._etag_cache
+        assert key not in mc._etag_cache
     else:
         assert await fetch() == {"content": "synthetic private CV"}
-        assert key in module._etag_cache
-    assert module._etag_cache[other_key][1] == {"preserve": True}
-    pc.clear_profile_cache()
+        assert key in mc._etag_cache
+    assert mc._etag_cache[other_key][1] == {"preserve": True}
     mc.clear_feed_cache()
 
 

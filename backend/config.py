@@ -107,23 +107,13 @@ class Settings(BaseSettings):
     # SSE
     SSE_QUEUE_MAXSIZE: int = 100
 
-    # AI Matching
-    MATCH_SCORE_THRESHOLD: float = 35.0  # minimum score to qualify as a match
-    # Re-ranking LLM ADAPTATIVO: si las ofertas cualificadas caben en
-    # MATCH_LLM_RERANK_MAX se re-rankean TODAS (sin efecto de tope, caso normal con
-    # extracción incremental); por encima se aplica MATCH_LLM_RERANK_TOP para proteger
-    # el crédito de IA en avalanchas. Con Gemini de fallback el coste sigue acotado.
-    MATCH_LLM_RERANK_TOP: int = 50  # tope de re-ranking cuando el pool es enorme
-    MATCH_LLM_RERANK_MAX: int = 150  # por debajo de esto, se re-rankea todo
-    SEMANTIC_DEDUP_THRESHOLD: float = 0.95
-    # G4/P3-6 — segunda condición del dedup semántico: Jaccard mínimo de los
-    # tokens del título normalizado. 0.3 = «al menos un tercio del léxico
-    # combinado es común». Era constante de módulo, y eso dejaba
-    # SEMANTIC_DEDUP_THRESHOLD sin efecto como mando de remediación: bajar el
-    # umbral del coseno no servía de nada porque la puerta léxica seguía
-    # rechazando (medido: 20/20 pares reales de la MISMA vacante en DE↔FR/IT/EN
-    # rechazados, 15 con solape exactamente 0.000).
-    SEMANTIC_DEDUP_TITLE_OVERLAP_MIN: float = 0.3
+    # DT-148 B3 (2026-10-21): aquí vivían los mandos del matching y del dedup
+    # LOCALES — MATCH_SCORE_THRESHOLD, MATCH_LLM_RERANK_TOP/_MAX,
+    # SEMANTIC_DEDUP_THRESHOLD y SEMANTIC_DEDUP_TITLE_OVERLAP_MIN. Los dos
+    # runtimes que los leían se retiraron (`42ecf96`) y quedaron sin UN SOLO
+    # lector: un mando que no manda nada es peor que ninguno, porque invita a
+    # girarlo esperando un efecto. El matching y el dedup viven hoy en el
+    # núcleo con sus propios ajustes (`jobhunt_core/config.py`).
 
     # Groq LLM
     GROQ_API_KEY: str = ""
@@ -145,10 +135,8 @@ class Settings(BaseSettings):
     # proteger de un futuro modelo que sí razone. Se envía como reasoning_effort
     # SOLO en llamadas con GROQ_RERANK_MODEL; vacío = no enviar el parámetro.
     GROQ_RERANK_REASONING_EFFORT: str = "none"
-    GROQ_RERANK_BATCH_SIZE: int = 10
-    GROQ_RERANK_TEMPERATURE: float = 0.2
-    GROQ_RERANK_MAX_TOKENS: int = 2048
-    GROQ_CACHE_TTL_DAYS: int = 7
+    # DT-148 B1: GROQ_RERANK_BATCH_SIZE, _TEMPERATURE, _MAX_TOKENS y
+    # GROQ_CACHE_TTL_DAYS se fueron con la rama de re-ranking LLM que las leía.
 
     # Alerts & Saved Searches
     # G1/P3-28 — rate limiting tras reverse proxy: confiar en X-Forwarded-For
@@ -160,9 +148,9 @@ class Settings(BaseSettings):
     # bucle descontrolado sí choca. Medir antes de bajarlo.
     RATE_LIMIT_DEFAULT: str = "240/minute"
 
-    ALERTS_MAX_PUSH_PER_DAY: int = 10
-    ALERTS_MIN_SCORE_THRESHOLD: int = 50
-    SCHEDULER_SEARCH_INTERVAL_MINUTES: int = 60
+    # DT-148 B3: ALERTS_MAX_PUSH_PER_DAY, ALERTS_MIN_SCORE_THRESHOLD y
+    # SCHEDULER_SEARCH_INTERVAL_MINUTES tampoco tenían lector. Los avisos
+    # vigentes son los cuatro por email, con sus propios ajustes NOTIFY_*.
 
     # Watchlist colegios — thresholds del dual-channel
     # Push inmediato si score_final + urgency_score >= threshold.
@@ -238,10 +226,10 @@ class Settings(BaseSettings):
     # Caducidad del marcador «ya avisado» por elemento, que es lo que evita
     # que el solape reenvíe. Debe ser >> LAG y >> intervalo de la tarea.
     NOTIFY_SENT_MARKER_TTL_DAYS: int = Field(default=14, ge=1)
-    # Cota inferior de la PRIMERA corrida de una búsqueda guardada (G3/P3-2):
-    # sin ella la corrida de estreno cuenta el corpus activo entero como
-    # «nuevo» y notifica cientos de ofertas de hace meses.
-    SAVED_SEARCH_INITIAL_LOOKBACK_DAYS: int = Field(default=1, ge=0)
+    # DT-148 B3: SAVED_SEARCH_INITIAL_LOOKBACK_DAYS (cota de la primera corrida
+    # de una búsqueda guardada, G3/P3-2) se quedó sin lector con el runtime que
+    # la aplicaba. Si vuelven las búsquedas guardadas, vuelve la cota: su motivo
+    # —la corrida de estreno contaba el corpus entero como nuevo— sigue siendo real.
 
     # DT-148: aquí vivía MAINTENANCE_URL_CHECK_LIMIT (chequeo nocturno de URLs
     # sobre la tabla legacy `jobs`, retirado con la tarea).

@@ -117,7 +117,7 @@ def test_delegated_ce_does_not_keep_projector_recovery_on_forever(db):  # noqa: 
         await matching_tasks._evaluate_and_record(factory, pid)
         await matching_tasks._evaluate_and_record(factory, pid)
         async with factory() as s:
-            pending = await matching_tasks._recovery_targets(s, set())
+            pending = await matching_tasks._recovery_targets(s)
         assert pid not in pending, (
             "El CE delegado mantiene permanentemente encendida la recuperación"
         )

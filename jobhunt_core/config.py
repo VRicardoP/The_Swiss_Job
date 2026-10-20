@@ -44,8 +44,10 @@ class CoreSettings(BaseSettings):
     # mensajes Celery/locks bajo presión de memoria.
     CORE_BROKER_URL: str = f"redis://:{_DEV_REDIS_PASSWORD}@redis-core:6379/0"
     CORE_RESULT_BACKEND: str = f"redis://:{_DEV_REDIS_PASSWORD}@redis-core:6379/1"
-    # Namespace propio de locks/coordinación (leader-lock separado del legacy).
-    CORE_LOCK_PREFIX: str = "jobhunt:"
+    # DT-148 B4 (2026-10-21): CORE_LOCK_PREFIX se retiró. Prometía un namespace
+    # propio de locks y no lo daba: los locks del núcleo son `pg_advisory_xact_lock`
+    # sobre claves hasheadas en su propio esquema, y el aislamiento del broker lo
+    # da el Redis DEDICADO de arriba (ADR-08). Nadie lo leía.
 
     # Credenciales de proveedores. Adzuna sólo la necesita en el worker de
     # cosecha; JSearch también la recibe en el API Core porque preserva la
@@ -55,7 +57,10 @@ class CoreSettings(BaseSettings):
     CORE_JSEARCH_RAPIDAPI_KEY: str = ""
 
     # Embeddings (A-06, ADR-02): modelo multilingüe 384d.
-    CORE_EMBEDDING_MODEL_NAME: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    # DT-148 B4: CORE_EMBEDDING_MODEL_NAME se retiró y era ACTIVAMENTE engañoso.
+    # El backend carga `(name, version)` de CADA encoder REGISTRADO en la base
+    # (`embeddings.SentenceTransformerBackend`, rev. A-06 #3), nunca este valor:
+    # podía nombrar un modelo distinto del que de verdad embebe.
     CORE_EMBEDDING_BATCH_SIZE: int = 32
 
     # Cadencias nativas. Un tick por debajo de 60 s convertiría una vigilancia

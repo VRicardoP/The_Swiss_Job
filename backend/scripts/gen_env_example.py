@@ -2,7 +2,7 @@
 
 El fichero de ejemplo se escribía a mano y derivaba: el 2026-09-28 tenía 28
 claves frente a 130 campos de `Settings`, y le faltaban `CORE_API_BASE_URL`,
-`CORE_CONSUMER_KEY` y `MATCH_SCORE_THRESHOLD`. Generarlo desde la fuente de verdad
+`CORE_CONSUMER_KEY`. Generarlo desde la fuente de verdad
 convierte la deriva en imposible, y `tests/test_env_example_covers_settings.py`
 falla si alguien vuelve a editarlo a mano y se queda corto.
 
@@ -29,9 +29,8 @@ EXCLUIDOS = {
 SENSIBLE = re.compile(r"(PASSWORD|SECRET|KEY|TOKEN|DSN|_URL$|URL_ASYNC$|_BACKEND$)")
 # Valores de producción conocidos que difieren del defecto del código. Vienen del
 # acta del punto 4 (traspaso nativo) y del .env efectivo; NO son secretos.
-PRODUCCION = {
-    "MATCH_SCORE_THRESHOLD": 42.0,
-}
+# DT-148 B3: quedó vacío al retirarse MATCH_SCORE_THRESHOLD, su única entrada.
+PRODUCCION: dict[str, object] = {}
 
 
 def _render(nombre: str, campo) -> str:

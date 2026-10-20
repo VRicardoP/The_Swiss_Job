@@ -44,7 +44,7 @@ def test_embedding_drain_never_exceeds_one_round(monkeypatch):
 
     monkeypatch.setattr(matching_tasks, "_run_pending_impl", still_busy)
     factory = object()
-    asyncio.run(matching_tasks._drain_embeddings(factory, limit=17, max_rounds=50))
+    asyncio.run(matching_tasks._drain_embeddings(factory, limit=17))
     assert calls == [(17, factory)]
 
 
@@ -81,7 +81,7 @@ def test_delivery_health_reports_green_and_alerts(monkeypatch, caplog):
 
 
 def test_recovery_selects_at_most_one_target(monkeypatch):
-    first, second = uuid.uuid4(), uuid.uuid4()
+    first = uuid.uuid4()
 
     class Result:
         def all(self):
@@ -89,10 +89,11 @@ def test_recovery_selects_at_most_one_target(monkeypatch):
 
     class Session:
         async def execute(self, _statement, params):
+            # DT-148 B4: el tope es la constante, no un parámetro, y la lista de
+            # ya-evaluados viaja como el centinela UUID cero (nunca vacía).
             assert params["cap"] == 1
+            assert params["evaluated"] == [uuid.UUID(int=0)]
             return Result()
 
-    targets = asyncio.run(
-        matching_tasks._recovery_targets(Session(), {second}, limit=20)
-    )
+    targets = asyncio.run(matching_tasks._recovery_targets(Session()))
     assert targets == [first]

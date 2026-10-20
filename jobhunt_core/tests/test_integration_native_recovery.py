@@ -53,7 +53,7 @@ def db():
 
 async def _targets(factory):
     async with factory() as session:
-        return await matching_tasks._recovery_targets(session, set())
+        return await matching_tasks._recovery_targets(session)
 
 
 def test_revision_corpus_generation_and_attempt_watermark(db):

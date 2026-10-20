@@ -20,7 +20,7 @@ import json
 import pytest
 
 from config import settings
-from services.groq_service import RERANK_SYSTEM_PROMPT, GroqService
+from services.groq_service import GroqService
 from services.translation_service import (
     TRANSLATION_SYSTEM_PROMPT,
     TranslationService,
@@ -34,27 +34,6 @@ def groq() -> GroqService:
     if not settings.GROQ_API_KEY:
         pytest.skip("GROQ_API_KEY no configurada")
     return GroqService()
-
-
-async def test_el_rerank_devuelve_un_veredicto_por_oferta(groq):
-    """Forma que finge `llm_stub._rerank_response`."""
-    views = [
-        {"title": "Content Editor", "company": "Acme", "tags": ["editing"]},
-        {"title": "Backend Engineer", "company": "Acme", "tags": ["python"]},
-    ]
-    prompt = GroqService._rerank_prompt(
-        "editing, localisation", "Bilingual editor.", views
-    )
-
-    raw = await groq.get_chat_response(
-        user_message=prompt,
-        system_prompt=RERANK_SYSTEM_PROMPT,
-        model=settings.GROQ_RERANK_MODEL,
-    )
-
-    results = GroqService._parse_llm_response(raw, len(views))
-    assert [r["index"] for r in results] == [0, 1]
-    assert all(isinstance(r["score"], (int, float)) for r in results)
 
 
 async def test_la_traduccion_devuelve_un_objeto_indexado(groq):

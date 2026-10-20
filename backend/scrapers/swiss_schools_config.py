@@ -339,13 +339,7 @@ SCHOOLS: list[WatchedSchool] = [
 ]
 
 
-def schools_by_strategy(strategy: str) -> list[WatchedSchool]:
-    """Devuelve los colegios que usan la estrategia indicada."""
-    return [s for s in SCHOOLS if s.strategy == strategy]
-
-
-# Índice por id para lookup O(1) (get_school se llama en caliente por cada tag
-# de cada job en resolve_school_from_job). Los ids son únicos.
+# Índice por id para lookup O(1). Los ids son únicos.
 _SCHOOLS_BY_ID: dict[str, WatchedSchool] = {s.id: s for s in SCHOOLS}
 
 
@@ -353,18 +347,6 @@ def get_school(school_id: str) -> WatchedSchool | None:
     return _SCHOOLS_BY_ID.get(school_id)
 
 
-def resolve_school_from_job(job) -> WatchedSchool | None:
-    """Identifica el WatchedSchool al que pertenece un job a partir de sus
-    tags. Los scrapers de la watchlist insertan school.id como tag.
-
-    Función centralizada para que watchlist router, urgency scorer y
-    cualquier futuro consumidor compartan la misma lógica.
-    """
-    tags = getattr(job, "tags", None)
-    if not tags:
-        return None
-    for tag in tags:
-        s = get_school(tag)
-        if s is not None:
-            return s
-    return None
+# DT-148 B3 (2026-10-21): aquí vivían `schools_by_strategy` (0 llamadores) y
+# `resolve_school_from_job`, cuyo único consumidor era `urgency_scorer`. La
+# urgencia la calcula hoy el núcleo y la sirve `schools/presentation.py:107`.

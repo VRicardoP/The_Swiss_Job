@@ -46,18 +46,6 @@ class TestSSEManager:
         assert msg1["event"] == "update"
         assert msg2["event"] == "update"
 
-    async def test_broadcast_to_all(self, sse_manager):
-        u1, u2 = uuid.uuid4(), uuid.uuid4()
-        q1 = await sse_manager.subscribe(u1)
-        q2 = await sse_manager.subscribe(u2)
-
-        await sse_manager.broadcast_to_all("global", {"msg": "hello"})
-
-        msg1 = await asyncio.wait_for(q1.get(), timeout=2.0)
-        msg2 = await asyncio.wait_for(q2.get(), timeout=2.0)
-        assert msg1["event"] == "global"
-        assert msg2["event"] == "global"
-
     async def test_queue_overflow_drops_oldest(self, sse_manager):
         """TD-01: Verify bounded queue drops oldest on overflow."""
         user_id = uuid.uuid4()
@@ -93,14 +81,6 @@ class TestSSEManager:
         result = SSEManager.format_sse("test_event", {"key": "value"})
         assert "event: test_event" in result
         assert '"key": "value"' in result
-
-    async def test_get_active_connections(self, sse_manager):
-        user_id = uuid.uuid4()
-        await sse_manager.subscribe(user_id)
-        await sse_manager.subscribe(user_id)
-
-        active = sse_manager.get_active_connections()
-        assert active[str(user_id)] == 2
 
     async def test_start_stop_lifecycle(self, redis_client):
         """Verify clean start/stop without errors."""

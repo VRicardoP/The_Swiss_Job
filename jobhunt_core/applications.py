@@ -505,23 +505,9 @@ async def application_item(session, application_id) -> dict | None:
     return compose_application(row, corpus.get(row.vacancy_id, {}))
 
 
-async def bookmark_item(session, profile_id, vacancy_id) -> dict | None:
-    """Item compuesto de UN bookmark puro (representación cuyo hash es su ETag)."""
-    row = (
-        await session.execute(
-            sa.text(
-                "SELECT profile_id, vacancy_id, saved_at, notes, updated_at "
-                "FROM profile_vacancy_state "
-                "WHERE profile_id = :pid AND vacancy_id = :vid "
-                "AND saved_at IS NOT NULL"
-            ),
-            {"pid": profile_id, "vid": vacancy_id},
-        )
-    ).one_or_none()
-    if row is None:
-        return None
-    corpus = await corpus_fields(session, [vacancy_id])
-    return compose_bookmark(row, corpus.get(vacancy_id, {}))
+# DT-148 B4 (2026-10-21): aquí vivía `bookmark_item`, el item compuesto de UN
+# bookmark puro. Nunca tuvo llamador, ni en producción ni en tests: el router
+# sirve la colección (`bookmark_items`) y el estado por vacante va en el feed.
 
 
 # ------------------------------------------------- GET compuesto (Decisión 10)

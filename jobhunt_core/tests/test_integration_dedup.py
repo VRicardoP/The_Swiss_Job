@@ -20,10 +20,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from jobhunt_core import embeddings
 from jobhunt_core.config import settings
 from jobhunt_core.harvest import normalize as normalize_mod
-from jobhunt_core.dedup import (
-    scan_semantic_candidates,
-    scan_semantic_candidates_batch,
-)
+from jobhunt_core.dedup import scan_semantic_candidates_batch
+from jobhunt_core.tests._dedup_helpers import scan_semantic_candidates
 from jobhunt_core.harvest.sink import RawListing, RawListingSink
 from jobhunt_core.tests import dbcleanup
 
@@ -200,6 +198,53 @@ def _scan(factory, window=0):
     return asyncio.run(go())
 
 
+def test_exacto_intra_respeta_multi_ciudad(db):
+    """Regla ratificada (2026-08-23, curación D-34/D-40): contenido idéntico
+    pero LOCATION distinta = publicación multi-ciudad legítima — NO candidato.
+    Misma location ⇒ sí.
+
+    DT-148 B4: este caso probaba la regla A TRAVÉS de `exact_intra_backfill`,
+    que no tenía llamador de producción. Archivaba una de las dos ofertas de
+    Zúrich para que el barrido diario (active-only) devolviera 0 y luego pedía
+    el rescate histórico. Eso medía el rescate, no la regla: aquí se mide la
+    regla con el barrido que de verdad corre, sin archivar nada.
+    """
+    factory, created = db
+    _setup(factory, created, [[]])  # fuente sin ofertas: solo el modelo
+
+    async def go():
+        async with factory() as s:
+            scope = created["scopes"][0]
+
+            def _l(ext, loc):
+                return RawListing(
+                    external_id=ext,
+                    url=f"https://x/{ext}",
+                    payload={
+                        "title": "python dev",
+                        "company_name": "ACME AG",
+                        "description": "d",
+                        "tags": [],
+                        "location": loc,
+                    },
+                )
+
+            await RawListingSink().handle(
+                s,
+                str(scope),
+                (_l("l-a", "Zurich"), _l("l-b", "Zurich"), _l("l-c", "Berna")),
+            )
+            await s.commit()
+
+    asyncio.run(go())
+
+    # Exactamente UN candidato exacto intra: (l-a, l-b), las dos de Zúrich.
+    # La pareja multi-ciudad con l-c queda fuera, que es la regla.
+    assert _scan(factory)["candidatos_exactos_intra"] == 1
+    # Y es idempotente: repetir el barrido no inventa candidatos nuevos.
+    assert _scan(factory)["candidatos_exactos_intra"] == 0
+
+
 def _pairs(factory, created):
     async def go():
         async with factory() as s:
@@ -320,70 +365,6 @@ def test_b2_concentracion_intra_no_oculta_al_vecino_cross(db):
     assert all(
         p.state == "pending" and abs(float(p.similarity) - 0.96) < 0.005 for p in pares
     )
-
-
-def test_exacto_intra_respeta_multi_ciudad(db):
-    """Regla ratificada (2026-08-23, curación D-34/D-40): contenido idéntico
-    pero LOCATION distinta = publicación multi-ciudad legítima — NO candidato.
-    Misma location ⇒ sí."""
-    factory, created = db
-    _setup(factory, created, [[]])  # fuente sin ofertas: solo el modelo
-
-    async def go():
-        async with factory() as s:
-            src = created["sources"][0]
-            scope = created["scopes"][0]
-            # dos pares intra: uno misma location, otro ciudad distinta
-            from jobhunt_core.harvest.sink import RawListing, RawListingSink
-
-            def _l(ext, loc):
-                return RawListing(
-                    external_id=ext,
-                    url=f"https://x/{ext}",
-                    payload={
-                        "title": "python dev",
-                        "company_name": "ACME AG",
-                        "description": "d",
-                        "tags": [],
-                        "location": loc,
-                    },
-                )
-
-            await RawListingSink().handle(
-                s,
-                str(scope),
-                (_l("l-a", "Zurich"), _l("l-b", "Zurich"), _l("l-c", "Berna")),
-            )
-            await s.execute(
-                sa.text(
-                    "UPDATE vacancies SET archived_at=now() WHERE id=("
-                    "SELECT i.vacancy_id FROM source_listings l "
-                    "JOIN source_listing_incarnations i ON i.source_listing_id=l.id "
-                    "WHERE l.source_id=:src AND l.external_id='l-b')"
-                ),
-                {"src": src},
-            )
-            await s.commit()
-
-    asyncio.run(go())
-    current = _scan(factory)
-    assert current["candidatos_exactos_intra"] == 0
-
-    from jobhunt_core.dedup import exact_intra_backfill
-
-    async def backfill():
-        async with factory() as s:
-            first = await exact_intra_backfill(s)
-            await s.commit()
-            second = await exact_intra_backfill(s)
-            await s.commit()
-            return first, second
-
-    first, second = asyncio.run(backfill())
-    # Recupera (l-a,l-b) aunque l-b ya esté archivada; la pareja
-    # multi-ciudad con l-c sigue fuera.
-    assert first == 1
-    assert second == 0
 
 
 def test_hnsw_underfill_cae_al_scan_exacto(db, monkeypatch):
@@ -585,7 +566,8 @@ def test_backfill_lexico_cubre_corpus_viejo_y_firma_de_gran_empleador(db):
     idempotente ⇒ 0. (b) El par pertenece a un GRAN empleador (51 vacantes
     Megacorp): el tope de frecuencia por token lo silenciaba; la rama de
     FIRMA completa de empresa lo recupera."""
-    from jobhunt_core.dedup import lexical_backfill, scan_semantic_candidates as scan
+    from jobhunt_core.dedup import lexical_backfill
+    from jobhunt_core.tests._dedup_helpers import scan_semantic_candidates as scan
 
     factory, created = db
     _setup(
@@ -1273,34 +1255,6 @@ def test_el_vector_no_viaja_y_el_orden_kNN_sigue_siendo_una_constante(db):
     # El operando del <=> es un Param ($n), no una expresión correlacionada.
     assert re.search(r"<=> \$\d+", texto), texto
     assert "SubPlan" not in texto, texto
-
-
-def test_la_variante_historica_no_puede_quedar_igual_que_la_diaria():
-    """La histórica se DERIVA de la diaria por sustitución para que no diverjan a
-    la primera corrección. Pero `str.replace` no falla cuando no encuentra su
-    patrón: devuelve la cadena intacta. Si alguien reescribe el WHERE de
-    `_EXACT_INTRA_SQL`, la histórica pasaría a ser active-only —igual que la
-    diaria— y el backfill dejaría de recuperar archivadas EN SILENCIO, con todo
-    en verde. Esto es lo que impide ese verde falso."""
-    from jobhunt_core.dedup import _EXACT_INTRA_HISTORY_SQL, _EXACT_INTRA_SQL
-
-    assert _EXACT_INTRA_HISTORY_SQL != _EXACT_INTRA_SQL, (
-        "la derivación no sustituyó nada: la variante histórica es la diaria"
-    )
-    # La histórica NO filtra archivadas…
-    assert "archived_at" not in _EXACT_INTRA_HISTORY_SQL
-    # …pero conserva el resto de invariantes de identidad.
-    for invariante in (
-        "v.merged_into IS NULL",
-        "a.text_hash = b.text_hash",
-        "a.source_id = b.source_id",
-        "a.loc = b.loc",
-        "a.id < b.id",
-        "ON CONFLICT",
-    ):
-        assert invariante in _EXACT_INTRA_HISTORY_SQL, invariante
-    # Y la diaria SIGUE siendo active-only: el barrido de producción no cambia.
-    assert "v.archived_at IS NULL" in _EXACT_INTRA_SQL
 
 
 # --------------------------------------------------------------------------
