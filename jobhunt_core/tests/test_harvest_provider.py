@@ -410,11 +410,22 @@ def test_invalid_config_types_are_config_errors():
             _fetch(params=params)
 
 
-def test_corrupt_cursor_is_config_error():
-    """Rev. 3ª: un cursor corrupto tampoco se arregla reintentando."""
+def test_un_cursor_ilegible_se_descarta_en_vez_de_romper_el_scope(caplog):
+    """DT-148 A18: el cursor es CACHÉ propia, no configuración del scope.
+
+    Antes era `ProviderConfigError`, que el runner RELANZA sin contabilizar el
+    fallo: el scope quedaba fallando en cada ventana, el dispatcher
+    reencolándolo y `health` sólo lo veía días después como «rancio», mal
+    atribuido — por un valor que escribió este mismo código. Se descarta con
+    un grito y se vuelve a aprender el objetivo.
+    """
     for cursor in ({"page_target": "abc"}, {"last_top_seen": {}}):
-        with pytest.raises(ProviderConfigError):
-            _fetch(cursor=cursor)
+        caplog.clear()
+        with caplog.at_level("ERROR"):
+            result, _hits = _fetch(cursor=cursor)
+        assert result.complete is True
+        assert _ids(result) == ["a", "b", "c", "d", "e"]
+        assert any("ilegible" in mensaje for mensaje in caplog.messages)
 
 
 def test_keyword_scope_filters_client_side():

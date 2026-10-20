@@ -19,6 +19,7 @@ from jobhunt_core.harvest.provider import (
     BaseProvider,
     ProviderConfigError,
     ProviderResponseError,
+    blocking_status,
 )
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills, strip_html_tags
 from jobhunt_core.harvest.providers.search_metadata import swiss_canton
@@ -158,6 +159,7 @@ class CHMediaProvider(BaseProvider):
             raise ProviderConfigError("CH Media scope has no query parameters")
         listings, pages, seen, invalid = [], 0, 0, 0
         exhausted, error = False, None
+        blocked_with = None
         url = f"https://api.{DOMAINS[self.name]}/public/vacancy/search/"
         started = time.monotonic()
         for page in range(1, MAX_PAGES + 1):
@@ -170,6 +172,8 @@ class CHMediaProvider(BaseProvider):
             except (httpx.HTTPError, ProviderResponseError, TimeoutError) as exc:
                 if not listings:
                     raise
+                # Bloqueo del portal en la página k>1 (DT-148 A2).
+                blocked_with = blocking_status(exc)
                 error = type(exc).__name__
                 break
             pages += 1
@@ -195,4 +199,5 @@ class CHMediaProvider(BaseProvider):
             pages_fetched=pages,
             complete=exhausted and error is None,
             error=error,
+            blocked_with=blocked_with,
         )

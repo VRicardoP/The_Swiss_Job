@@ -22,6 +22,7 @@ from html.parser import HTMLParser
 from json import JSONDecodeError
 
 from jobhunt_core.harvest.providers.rss_text import strip_html_tags
+from jobhunt_core.harvest.provider import SoftBlocked
 
 # Strong markers of a soft block: HTTP 200 carrying a CAPTCHA/challenge page
 # instead of data. Deliberately conservative — a false positive turns a healthy
@@ -62,11 +63,12 @@ def looks_like_soft_block(text: str | None) -> bool:
 def job_posting_description(html: str, *, max_length: int) -> str:
     """Plain-text description of the page's JSON-LD `JobPosting`.
 
-    Raises ValueError on a soft block so the caller's retry/failure path sees a
-    real failure instead of an empty description.
+    Raises `SoftBlocked` on a soft block: un desafío no se reintenta (era un
+    `ValueError`, que `_read` clasificaba como reintentable) y cuenta como
+    bloqueo del portal (DT-148 A8).
     """
     if looks_like_soft_block(html):
-        raise ValueError("detail page is a soft block")
+        raise SoftBlocked("detail page is a soft block")
     queue = []
     for attributes, body in _SCRIPT_RE.findall(html):
         if not _JSON_LD_TYPE_RE.search(attributes):

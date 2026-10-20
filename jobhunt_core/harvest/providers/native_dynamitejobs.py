@@ -14,9 +14,11 @@ import httpx
 from jobhunt_core.harvest.identity import register_extractor
 from jobhunt_core.harvest.normalize import register_normalizer
 from jobhunt_core.harvest.provider import (
+    SOFT_BLOCK_STATUS,
     BaseProvider,
     ProviderConfigError,
     ProviderResponseError,
+    SoftBlocked,
 )
 from jobhunt_core.harvest.providers.browser_headers import BROWSER_HEADERS
 from jobhunt_core.harvest.providers.html_response import job_posting_description
@@ -287,7 +289,14 @@ def _cached_descriptions(cursor) -> dict[str, str]:
     if cursor is None:
         return {}
     if not isinstance(cursor, dict):
-        raise ProviderConfigError("DynamiteJobs cursor is corrupt")
+        # DT-148 A18: el cursor es CACHÉ que escribe este mismo código, no
+        # configuración del scope. Tratarlo como `ProviderConfigError` dejaba el
+        # scope fallando en CADA ventana sin contabilizar el fallo (el runner
+        # relanza ese error antes de registrarlo), el dispatcher lo reencolaba
+        # siempre y nadie podía reiniciarlo sin tocar un parámetro semántico.
+        # Un cursor ilegible se DESCARTA con un grito y se parte de cero.
+        logger.error("%s: cursor ilegible, se descarta y se parte de cero", SOURCE_NAME)
+        return {}
     values = cursor.get("descriptions", {})
     if not isinstance(values, dict) or any(
         not isinstance(key, str)
@@ -297,8 +306,55 @@ def _cached_descriptions(cursor) -> dict[str, str]:
         or len(value) > MAX_DESCRIPTION_LENGTH
         for key, value in values.items()
     ):
-        raise ProviderConfigError("DynamiteJobs description cursor is corrupt")
+        logger.error(
+            "%s: caché de descripciones ilegible, se descarta y se vuelve a "
+            "pedir el detalle",
+            SOURCE_NAME,
+        )
+        return {}
     return values
+
+
+async def _fill_descriptions(http, retained, cached):
+    """Completa las descripciones que falten, dentro del tope de detalles.
+
+    Devuelve `(descriptions, attempts, fetched, soft_block)`. Fuera de
+    `fetch_new` por la misma razón que en jobscout24: es otra
+    responsabilidad, y dentro llevaba la función a grado E (DT-148 A8).
+    """
+    retained_ids = {_identity(raw) for raw in retained}
+    descriptions = {key: value for key, value in cached.items() if key in retained_ids}
+    attempts = fetched = 0
+    soft_block = None
+    for raw in retained:
+        identity = _identity(raw)
+        if identity in descriptions or attempts >= MAX_DETAIL_FETCHES:
+            continue
+        attempts += 1
+        await _pause()
+        try:
+            description = await _read(
+                http, _public_url(raw), MAX_DETAIL_BYTES, _description
+            )
+        except SoftBlocked:
+            # Se deja de pedir detalles AHORA y el bloqueo viaja al runner
+            # (antes: cuatro reintentos por detalle y hasta 20 detalles,
+            # contra un portal que nos pide parar) — DT-148 A8.
+            logger.error(
+                "%s: desafío anti-bot en el detalle de %r — se detiene el "
+                "pase de detalles",
+                SOURCE_NAME,
+                identity,
+            )
+            soft_block = SOFT_BLOCK_STATUS
+            break
+        except (httpx.HTTPError, ProviderResponseError):
+            logger.warning("%s: detail fetch failed for %r", SOURCE_NAME, identity)
+            continue
+        if description:
+            descriptions[identity] = description
+            fetched += 1
+    return descriptions, attempts, fetched, soft_block
 
 
 class DynamiteJobsProvider(BaseProvider):
@@ -342,27 +398,9 @@ class DynamiteJobsProvider(BaseProvider):
                 rows.append(raw)
 
         retained = rows[:MAX_RECENT_JOBS]
-        retained_ids = {_identity(raw) for raw in retained}
-        descriptions = {
-            key: value for key, value in cached.items() if key in retained_ids
-        }
-        attempts = fetched = 0
-        for raw in retained:
-            identity = _identity(raw)
-            if identity in descriptions or attempts >= MAX_DETAIL_FETCHES:
-                continue
-            attempts += 1
-            await _pause()
-            try:
-                description = await _read(
-                    http, _public_url(raw), MAX_DETAIL_BYTES, _description
-                )
-            except (httpx.HTTPError, ProviderResponseError):
-                logger.warning("%s: detail fetch failed for %r", SOURCE_NAME, identity)
-                continue
-            if description:
-                descriptions[identity] = description
-                fetched += 1
+        descriptions, attempts, fetched, soft_block = await _fill_descriptions(
+            http, retained, cached
+        )
 
         recent_order = {
             _identity(raw): index
@@ -412,6 +450,8 @@ class DynamiteJobsProvider(BaseProvider):
                 "descriptions": descriptions,
             },
             pages_fetched=len(CATEGORY_SLUGS),
-            complete=not invalid,
-            error="invalid_dynamitejobs_items" if invalid else None,
+            complete=not invalid and soft_block is None,
+            error=("invalid_dynamitejobs_items" if invalid else None)
+            or ("soft_block" if soft_block is not None else None),
+            blocked_with=soft_block,
         )

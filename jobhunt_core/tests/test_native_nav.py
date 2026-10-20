@@ -134,6 +134,15 @@ def test_rate_limit_preserves_prefix_without_retry(monkeypatch):
     assert len(requests) == 2
     assert not result.complete and result.error == "http_429"
     assert [row.external_id for row in result.listings] == [hit()["_id"]]
+    # DT-148 A2: preservar lo cosechado NO puede esconder el bloqueo — el
+    # estatus viaja para que el runner lo cuente y el kill-switch lo vea.
+    assert result.blocked_with == 429
+
+
+def test_a_late_server_error_is_a_failure_but_not_a_block(monkeypatch):
+    result, _requests = fetch([page([hit()], 200), 500], monkeypatch=monkeypatch)
+    assert not result.complete and result.error == "http_500"
+    assert result.blocked_with is None
 
 
 def test_pacing_uses_remaining_sweep_budget(monkeypatch):

@@ -114,5 +114,20 @@ def test_job_posting_description_is_plain_text_and_capped():
 
 
 def test_a_challenge_page_is_a_failure_not_an_empty_description():
-    with pytest.raises(ValueError, match="soft block"):
+    """DT-148 A8: `SoftBlocked`, no un `ValueError` cualquiera.
+
+    Como `ValueError`, `_read` lo clasificaba como REINTENTABLE: cuatro
+    peticiones con espera exponencial contra una página que nos pide parar, y
+    al agotarse un «request failed (ValueError)» sin estatus — ningún bloqueo
+    contabilizado. `SoftBlocked` sale sin reintento y vale 403.
+    """
+    from jobhunt_core.harvest.provider import (
+        SOFT_BLOCK_STATUS,
+        SoftBlocked,
+        blocking_status,
+    )
+
+    with pytest.raises(SoftBlocked, match="soft block") as fallo:
         job_posting_description("unusual traffic detected", max_length=500)
+    # Y vale como bloqueo para el kill-switch, pese a ser un HTTP 200.
+    assert blocking_status(fallo.value) == SOFT_BLOCK_STATUS

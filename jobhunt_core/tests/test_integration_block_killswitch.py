@@ -36,6 +36,27 @@ class _Portal(BaseProvider):
             )
         if verdict == "fail":
             raise ProviderResponseError("arbeitnow: unreadable envelope")
+        if verdict == "parcial":
+            # Parcial por una forma inválida: fallo, no bloqueo.
+            return FetchResult(
+                listings=(RawListing("n1", "https://x/n1", {"t": 1}),),
+                next_cursor={"watermark": 1},
+                pages_fetched=2,
+                complete=False,
+                error="invalid_items",
+            )
+        if verdict.startswith("parcial_"):
+            # Barrido que el portal CORTÓ a partir de la página 2: el provider
+            # preserva lo cosechado y DICE con qué estatus lo bloquearon.
+            status = int(verdict.removeprefix("parcial_"))
+            return FetchResult(
+                listings=(RawListing("n1", "https://x/n1", {"t": 1}),),
+                next_cursor={"watermark": 1},
+                pages_fetched=2,
+                complete=False,
+                error=f"http_{status}",
+                blocked_with=status,
+            )
         request = httpx.Request("GET", "https://portal.test/jobs")
         try:
             raise httpx.HTTPStatusError(
@@ -102,6 +123,64 @@ def test_tres_bloqueos_seguidos_apagan_el_scope(db, caplog):  # noqa: F811
     before = provider.calls
     assert [r.status for r in _run(factory, scope_id, provider)] == ["skipped"]
     assert provider.calls == before
+
+
+def test_un_bloqueo_en_la_pagina_dos_tambien_apaga_el_scope(db, caplog):  # noqa: F811
+    """DT-148 A2: el portal que nos limita a partir de la página 2 también cae.
+
+    MUERDE sin el arreglo: ocho providers preservan lo cosechado y degradan el
+    429/403 a texto (`error="http_429"`), así que la excepción no llegaba al
+    runner y `consecutive_blocks` se quedaba a cero PARA SIEMPRE — el scope
+    seguía recibiendo las cuatro peticiones diarias de un portal que llevaba
+    meses diciendo que parásemos.
+    """
+    factory, made = db
+    (scope_id,) = _seed_scopes(factory, made, 1)
+    provider = _Portal(["parcial_429", "parcial_429", "parcial_403"])
+
+    with caplog.at_level("ERROR"):
+        results = _run(factory, scope_id, provider, times=3)
+
+    # El barrido se PERSISTE (lo cosechado es válido) y aun así cuenta.
+    assert [r.status for r in results] == ["partial", "partial", "partial"]
+    row = _state(factory, scope_id)
+    assert row.consecutive_blocks == 3
+    assert row.consecutive_failures == 3
+    assert row.last_blocked_at is not None
+    assert row.enabled is False
+    assert row.disabled_by_blocks_at is not None
+    assert any("harvest_block_killswitch" in m for m in caplog.messages)
+
+    # Y deja de pedir, igual que por el camino que lanza.
+    before = provider.calls
+    assert [r.status for r in _run(factory, scope_id, provider)] == ["skipped"]
+    assert provider.calls == before
+
+
+def test_un_parcial_que_no_es_bloqueo_sigue_siendo_solo_un_fallo(db):  # noqa: F811
+    """Un sobre inválido a mitad de barrido no es el portal bloqueándonos."""
+    factory, made = db
+    (scope_id,) = _seed_scopes(factory, made, 1)
+
+    _run(factory, scope_id, _Portal(["parcial"] * 4), times=4)
+
+    row = _state(factory, scope_id)
+    assert row.consecutive_failures == 4
+    assert row.consecutive_blocks == 0
+    assert row.last_blocked_at is None
+    assert row.enabled is True and row.disabled_by_blocks_at is None
+
+
+def test_una_cosecha_completa_borra_los_bloqueos_del_parcial(db):  # noqa: F811
+    """El reset vale igual para los bloqueos contados en un parcial."""
+    factory, made = db
+    (scope_id,) = _seed_scopes(factory, made, 1)
+
+    _run(factory, scope_id, _Portal(["parcial_429", "parcial_429", "ok"]), times=3)
+
+    row = _state(factory, scope_id)
+    assert row.consecutive_blocks == 0
+    assert row.enabled is True and row.disabled_by_blocks_at is None
 
 
 def test_un_fallo_que_no_es_bloqueo_no_apaga_nada(db):  # noqa: F811

@@ -49,6 +49,25 @@ class ProviderResponseError(RuntimeError):
 # answering "unavailable" for the whole retry window.
 BLOCK_STATUSES = frozenset({403, 429, 503})
 
+# Un desafío anti-bot llega como HTTP 200, así que no tiene estatus propio: se
+# cuenta como el 403 que representa (DT-148 A8).
+SOFT_BLOCK_STATUS = 403
+
+
+class SoftBlocked(ProviderResponseError):
+    """El portal respondió 200 con una página de DESAFÍO (CAPTCHA/challenge).
+
+    Es un `ProviderResponseError` para que los adaptadores lo dejen salir sin
+    reintentar —`_read` relanza esta familia antes de su rama de reintento—, y
+    tiene estatus propio para que `blocking_status` lo cuente como bloqueo.
+
+    Antes era un `ValueError`: `_read` lo clasificaba como reintentable, así
+    que una página que nos estaba diciendo «para» recibía hasta cuatro
+    peticiones con espera exponencial, y al agotarse salía como
+    «request failed (ValueError)» — HTTP 200, ningún estatus, ningún bloqueo
+    contabilizado (DT-148 A8).
+    """
+
 
 def blocking_status(exc: BaseException | None) -> int | None:
     """The blocking HTTP status behind a failure, or None.
@@ -60,6 +79,9 @@ def blocking_status(exc: BaseException | None) -> int | None:
     seen: set[int] = set()
     while exc is not None and id(exc) not in seen:
         seen.add(id(exc))
+        if isinstance(exc, SoftBlocked):
+            # 200 con desafío: no hay estatus que leer, pero es un bloqueo.
+            return SOFT_BLOCK_STATUS
         response = getattr(exc, "response", None)
         status = getattr(response, "status_code", None)
         if isinstance(status, int) and status in BLOCK_STATUSES:

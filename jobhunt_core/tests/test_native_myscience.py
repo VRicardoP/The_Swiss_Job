@@ -286,6 +286,16 @@ def test_a_failing_later_page_keeps_what_was_harvested(monkeypatch):
 
     assert len(result.listings) == 1
     assert not result.complete and result.error == "HTTPStatusError"
+    # Un 500 es una avería del portal, no un bloqueo.
+    assert result.blocked_with is None
+
+
+def test_a_late_block_travels_so_the_killswitch_can_see_it(monkeypatch):
+    """DT-148 A2: el 429 de la página 2 se preserva Y se cuenta."""
+    result, _requests = fetch({1: listing(record()), 2: 429}, monkeypatch=monkeypatch)
+
+    assert len(result.listings) == 1 and not result.complete
+    assert result.blocked_with == 429
 
 
 def test_a_dead_detail_page_does_not_end_the_run(monkeypatch):

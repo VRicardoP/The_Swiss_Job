@@ -15,6 +15,9 @@ FINAL, en la MISMA transacción que la persistencia. Además (revisión externa)
   se persiste como `partial` —lo cosechado antes del fallo es válido— pero
   INCREMENTA consecutive_failures en la misma transacción: preservarlo sin contar
   el fallo dejaría la avería sin ningún rastro en el estado (auditoría G9 P2-C).
+- Y si ese corte fue un BLOQUEO del portal (FetchResult.blocked_with: 403/429/503),
+  cuenta además como bloqueo y puede disparar el kill-switch, igual que si la
+  excepción hubiera llegado hasta aquí (DT-148 A2).
 """
 
 import json
@@ -219,33 +222,57 @@ async def run_scope(
             # preservar lo cosechado dejaba `consecutive_failures` quieto en 0 y la
             # avería no tenía ningún rastro en el estado (auditoría G9 P2-C).
             failed = result.error is not None
-            await session.execute(
-                sa.text(
-                    "INSERT INTO source_scope_state "
-                    "(scope_id, cursor, last_complete_at, consecutive_failures) "
-                    "VALUES (:sid, CAST(:cur AS jsonb), "
-                    "CASE WHEN :complete THEN now() END, "
-                    "CASE WHEN :failed THEN 1 ELSE 0 END) "
-                    "ON CONFLICT (scope_id) DO UPDATE SET "
-                    "cursor = EXCLUDED.cursor, "
-                    "last_complete_at = CASE WHEN :complete THEN now() "
-                    "ELSE source_scope_state.last_complete_at END, "
-                    "consecutive_failures = CASE WHEN :complete THEN 0 "
-                    "WHEN :failed THEN source_scope_state.consecutive_failures + 1 "
-                    "ELSE source_scope_state.consecutive_failures END, "
-                    # Una cosecha COMPLETA es la prueba de que el portal ya no
-                    # nos bloquea: el contador de bloqueos vuelve a cero aquí y
-                    # sólo aquí (un barrido parcial no lo demuestra).
-                    "consecutive_blocks = CASE WHEN :complete THEN 0 "
-                    "ELSE source_scope_state.consecutive_blocks END"
-                ),
-                {
-                    "sid": scope_id,
-                    "cur": json.dumps(new_cursor),
-                    "complete": result.complete,
-                    "failed": failed,
-                },
-            )
+            # Un barrido PARCIAL que el portal cortó con un 403/429/503 también
+            # es un bloqueo (DT-148 A2): antes sólo contaba el que LANZABA, así
+            # que un portal que limita a partir de la página 2 no subía nunca
+            # `consecutive_blocks` y seguía recibiendo las cuatro peticiones
+            # diarias para siempre. El provider lo informa en `blocked_with`.
+            blocked = result.blocked_with is not None
+            blocks = (
+                await session.execute(
+                    sa.text(
+                        "INSERT INTO source_scope_state "
+                        "(scope_id, cursor, last_complete_at, consecutive_failures, "
+                        " consecutive_blocks, last_blocked_at) "
+                        "VALUES (:sid, CAST(:cur AS jsonb), "
+                        "CASE WHEN :complete THEN now() END, "
+                        "CASE WHEN :failed THEN 1 ELSE 0 END, "
+                        "CASE WHEN :blocked THEN 1 ELSE 0 END, "
+                        "CASE WHEN :blocked THEN now() END) "
+                        "ON CONFLICT (scope_id) DO UPDATE SET "
+                        "cursor = EXCLUDED.cursor, "
+                        "last_complete_at = CASE WHEN :complete THEN now() "
+                        "ELSE source_scope_state.last_complete_at END, "
+                        "consecutive_failures = CASE WHEN :complete THEN 0 "
+                        "WHEN :failed THEN source_scope_state.consecutive_failures + 1 "
+                        "ELSE source_scope_state.consecutive_failures END, "
+                        # Una cosecha COMPLETA es la prueba de que el portal ya no
+                        # nos bloquea: el contador de bloqueos vuelve a cero aquí
+                        # (un barrido parcial no lo demuestra) y un parcial
+                        # BLOQUEADO lo incrementa.
+                        "consecutive_blocks = CASE WHEN :complete THEN 0 "
+                        "WHEN :blocked THEN source_scope_state.consecutive_blocks + 1 "
+                        "ELSE source_scope_state.consecutive_blocks END, "
+                        "last_blocked_at = CASE WHEN :blocked THEN now() "
+                        "ELSE source_scope_state.last_blocked_at END "
+                        "RETURNING consecutive_blocks"
+                    ),
+                    {
+                        "sid": scope_id,
+                        "cur": json.dumps(new_cursor),
+                        "complete": result.complete,
+                        "failed": failed,
+                        "blocked": blocked,
+                    },
+                )
+            ).scalar_one()
+            if blocked and blocks >= int(settings.CORE_HARVEST_BLOCK_THRESHOLD):
+                # Mismo portero que en el camino que lanza, y en la MISMA
+                # transacción que ya tiene el scope bloqueado y la
+                # autoritatividad verificada.
+                await _disable_for_blocks(
+                    session, scope_id, result.blocked_with, blocks
+                )
             await session.commit()
         except Exception as exc:
             await session.rollback()  # ni listings a medias ni cursor avanzado

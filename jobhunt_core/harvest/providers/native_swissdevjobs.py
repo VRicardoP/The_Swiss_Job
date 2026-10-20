@@ -168,7 +168,14 @@ def _cached_descriptions(cursor) -> dict[str, str]:
     if cursor is None:
         return {}
     if not isinstance(cursor, dict):
-        raise ProviderConfigError("SwissDevJobs cursor is corrupt")
+        # DT-148 A18: el cursor es CACHÉ que escribe este mismo código, no
+        # configuración del scope. Tratarlo como `ProviderConfigError` dejaba el
+        # scope fallando en CADA ventana sin contabilizar el fallo (el runner
+        # relanza ese error antes de registrarlo), el dispatcher lo reencolaba
+        # siempre y nadie podía reiniciarlo sin tocar un parámetro semántico.
+        # Un cursor ilegible se DESCARTA con un grito y se parte de cero.
+        logger.error("%s: cursor ilegible, se descarta y se parte de cero", SOURCE_NAME)
+        return {}
     if "descriptions" not in cursor:
         return {}
     values = cursor["descriptions"]
@@ -180,7 +187,12 @@ def _cached_descriptions(cursor) -> dict[str, str]:
         or len(value) > MAX_DESCRIPTION_LENGTH
         for key, value in values.items()
     ):
-        raise ProviderConfigError("SwissDevJobs description cursor is corrupt")
+        logger.error(
+            "%s: caché de descripciones ilegible, se descarta y se vuelve a "
+            "pedir el detalle",
+            SOURCE_NAME,
+        )
+        return {}
     return values
 
 
