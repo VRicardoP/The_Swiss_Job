@@ -20,11 +20,12 @@
   (`zebis` y `publicjobs` a propósito — alimentan la alerta de profesor de primaria,
   que lee `jobs.category='H'` de la base pública; `jobicy`, `proz` y `remoteco` nunca
   se transfirieron) y **13 scrapers**, de los cuales los 8 `swiss_schools_*` son el
-  colector escolar que publica observaciones al core. APScheduler sigue despachando
-  dedup semántico 04:00, chequeo de URLs 03:00, limpieza 03:30, salud de watchlist
-  cada 6 h, digest de watchlist 18:00, alerta profesor cada 6 h y digest diario
-  (opt-in). La cadena `daily_harvest` sigue existiendo pero su etapa de fetch ya no
-  construye las fuentes transferidas
+  colector escolar que publica observaciones al core. APScheduler despacha HOY
+  (DT-148, 2026-10-20): purga de refresh caducados 03:45, idioma de títulos cada
+  5 min, salud de watchlist cada 6 h, digest de watchlist 18:00 y alerta de
+  profesor cada 6 h (que lee el catálogo del core, no `jobs`). El chequeo de URLs,
+  la limpieza de caducadas y el digest diario se RETIRARON: operaban sobre la
+  tabla legacy `jobs`, congelada desde el corte
 - **Core (Fase A)**: paquete `jobhunt_core/` — API v1 FastAPI (`core-api`, puerto 8003), `core-worker` Celery (tareas `jobhunt.*`, broker `redis-core`, colas `core.*`, **beat embebido** `-B`, 14 cadencias: cada **5 min** sampler de lag del outbox, salud del slot, proyector sombra y despacho del outbox; cada **hora** la purga de idempotencia (`CORE_IDEMPOTENCY_PURGE_EVERY_S=3600` — *no* cada 5 min) y la **salud de la cosecha** (`jobhunt.harvest.check_health`, G9 P2-C: alerta si un scope acumula fallos o lleva días sin cosecha completa; G10 P3-4 + G11 P3-2: publica SIEMPRE el censo del parque y avisa cuando no observa a todos los habilitados — `alertas: []` sobre un parque medio invisible se leía como cosecha sana); y **cinco** citas diarias en este orden (leídas del beat vivo el 2026-09-24): dedup-scan 05:20 → archive-sweep 05:35 → ciclo sombra 06:05 → **matching-materialize-ce 06:15** → purga de retención 06:40; al arrancar registra el transporte sombra → `jobhunt.shadow_inbox`), migraciones propias vía `core-migrate` (cadena `core0001..core0051`). **Desde `ae7fbf2` la imagen del core es INMUTABLE**: el compose base ya no monta `./jobhunt_core` en `core-api`/`core-worker`/`core-capture`/`core-migrate`, y para trabajar sobre el árbol de trabajo hay que pedir el override `-f docker-compose.yml -f docker-compose.dev.yml` (ver «Perfiles de compose» abajo)
 - **Sombra (Fase B, SOLO LOCAL)**: CDC legacy→core por slot lógico `jobhunt_shadow` (postgres custom `docker/postgres-core/` con wal2json, `wal_level=logical`) → servicio `core-capture` (staging con ack tras commit) → proyector → métricas y GATE-SOMBRA (7 ciclos). Módulos `jobhunt_core/shadow/`; operación: `jobhunt_core/shadow/RUNBOOK.md`
 - **«AI Job Match» es la ventana del PORTFOLIO** (`/home/lothar/Public/ReactPortfolio`, tres repos git
