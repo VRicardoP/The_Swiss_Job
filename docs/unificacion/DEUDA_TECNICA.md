@@ -1717,6 +1717,30 @@ tocado aquí.
   `unsupported_search_reason` rechaza: la UI sigue ofreciendo filtros que el
   catálogo no puede servir.
 
+#### Hallazgo nuevo surgido del despliegue: el Portfolio sale `unhealthy` por su propio healthcheck
+
+**No lo causó este despliegue y la aplicación está SANA**, pero conviene que
+esté escrito porque el supervisor lo reportará como contenedor caído.
+Comprobado el 2026-10-20 justo después de desplegar:
+
+- `portfolio_backend` y `portfolio_worker` figuran `unhealthy` con cinco fallos
+  seguidos, todos «Health check exceeded timeout (5s)». Su log de arranque está
+  limpio (migraciones al día, startup en 1,05 s, Redis conectado, seis modos de
+  routing precargados, `PROCESS_ROLE=api`).
+- **`/health` responde en 0,06 s** cuando se le pregunta directamente. Lo que
+  no cabe en 5 s es el propio chequeo: arranca un intérprete de Python nuevo
+  cada 30 s, y con **carga 9,19 sobre 2 CPUs** ni eso entra en el presupuesto.
+  Se ve en `top`: los procesos del healthcheck aparecen entre los que más CPU
+  consumen.
+- La diferencia con SwissJob es sólo el límite: `swissjob-core-api-r5` usa el
+  mismo patrón de Python pero con **timeout de 10 s** y va `healthy` con cero
+  fallos; `swissjob-backend` usa un chequeo HTTP ligero. El Portfolio conserva
+  5 s.
+- Arreglo (en ReactPortfolio, fuera del alcance de DT-148): subir su timeout a
+  10 s o cambiar a un chequeo ligero como el del BFF. Es la misma familia que
+  A19-25, que ya bajó la frecuencia de los healthchecks de infraestructura por
+  gastar ~60 procesos/min sólo en vigilarse.
+
 #### Hallazgo nuevo surgido de la verificación
 
 - **URL con host `0.0.0.0:3000` en vacantes de zebis** (visible en el correo
