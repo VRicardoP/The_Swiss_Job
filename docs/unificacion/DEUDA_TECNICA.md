@@ -1427,7 +1427,42 @@ Prueba: la suite del kill-switch.
 
 ### F · Documentación y lo que caduca
 
-#### F1 · El `CLAUDE.md` del proyecto describe un árbol que no existe — ALTA (hacer PRIMERO)
+#### F1 · El `CLAUDE.md` del proyecto describe un árbol que no existe — EJECUTADO el 2026-10-20
+
+**Hecho.** Reescrito comprobando el árbol y la base, no leyendo: contexto
+rápido (cosecha nativa única, `backend/providers/` vacío, `jobs` como archivo
+de sólo lectura), el bloque del core (14 cadencias reales, cadena
+`core0001..core0055`, y el dato que faltaba: **en producción el worker está
+partido en TRES** — `worker`, `harvest-worker`, `ops-worker`), la retirada de
+la CDC sombra, la sección «Arquitectura en una página» entera (describía once
+módulos del BFF que no existen), los contadores de tests (750 BFF / 1.785+1
+core), las cabezas de migración (`a7c3d9e2f5b1` y `core0055`), el puntero del
+estado (§48, no §46), el nombre real de `docker-compose.core-local.yml`, la
+ruta de `warm.py` y la restricción de scraping (la política sigue; el
+`restricted.py` que la implementaba se fue). Añadidas tres trampas medidas del
+comando de los tests del núcleo: `pytest` ya no viaja en la imagen, hay que
+layerearla, y `test_deploy_order.py` necesita la raíz del repo montada.
+
+Medido en producción el mismo día para no copiar cifras viejas: 72 fuentes en
+el registro, 40 con scope habilitado, 50 scopes, 94.807 vacantes activas,
+ninguna apagada por bloqueo. Y con el registro en mano: 41 productores
+nativos, 9 de ellos la familia `swiss_schools_*`.
+
+**Arrastró dos trozos de F2**, porque dejarlos habría creado la contradicción
+que F1 cura: la cota A19-13 de complejidad quedó SIN OBJETO (sus siete
+funciones E/F se retiraron en P3 de DT-145; hoy los dos únicos grados E vivos
+son los `fetch_new` de myscience y schuljobs), y la del lote de re-ranking
+ampara un camino que ya no corre. Además la sección 3 de COTAS entera
+(«Matching, LLM y embeddings») describe el matcher del BFF retirado: lleva ya
+un aviso en cabecera, pero reescribirla con las cotas del núcleo sigue siendo
+F2.
+
+**Y la memoria del agente**, que se carga en cada sesión y repetía lo mismo:
+corregidas las dos secciones de providers/scrapers y siete decisiones falsas
+del índice. `progress.md` (282 KB), `structure.md`, `stack.md` y `tech-debt.md`
+siguen sin revisar y llevan el aviso; es trabajo de `/docsync`.
+
+Texto original del ítem, como referencia:
 
 **Dónde.** `CLAUDE.md:14-27` («Cosecha NATIVA… `LEGACY_DISABLED_PROVIDERS`»,
 «Workers legacy que SIGUEN: 5 providers y 13 scrapers», `daily_harvest`),

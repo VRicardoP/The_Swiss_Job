@@ -178,12 +178,26 @@ no tendría ningún par sobre el que actuar.
 
 ## 3. Matching, LLM y embeddings
 
+> **AVISO (2026-10-20, DT-148 F1): la mayor parte de este bloque describe el
+> matcher del BFF (`services/job_matcher.py`), RETIRADO el 2026-10-13 con el
+> resto del runtime local.** El matching vive hoy en `jobhunt_core/matching.py`
+> con otro diseño —recuperación híbrida RRF, cross-encoder por políticas,
+> evaluación revalidada bajo lock y publicación por generación de corpus—, así
+> que lo de abajo vale como HISTORIA y **no describe lo que corre**: no hay tres
+> etapas, ni los seis pesos, ni re-ranking LLM. Comprobado el mismo día:
+> `MATCH_SCORE_THRESHOLD` sigue en `config.py` y en el `.env` pero **no tiene
+> ningún lector** (DT-148 B3 lo retira, y con él la línea de
+> `gen_env_example.py` que lo trata como valor de producción). Las cotas
+> VIGENTES del matching del núcleo están en DT-144/DT-145 del ledger y en
+> `docs/unificacion/CONTRATOS_FASE_A.md`. Reescribir este bloque con las del
+> núcleo es trabajo de DT-148 F2.
+
 | Cota | Motivo |
 |---|---|
 | **Sin `LIMIT` en la etapa 1** `[V]` | «todas las ofertas activas, sin tope» es deliberado: es lo que permite que el **umbral** decida en la etapa 2, en vez de un top-K fijo |
 | Modo avalancha: `>MATCH_LLM_RERANK_MAX ⇒ top 50` `[I]` | Coste de IA acotado. **Pero no es recuperable**: el `head` se elige por el `score_final` de la etapa 2, calculado con `llm_score=0.0`, así que una oferta bajo el puesto 50 tiende a quedarse ahí |
 | Un lote degradado JAMÁS se cachea `[I]` | Verificado con Redis real: tras forzar degradación, 0 claves. Evita que un fallo del LLM se sirva 7 días |
-| Tamaño de lote de rerank = 10 `[I]` | 3.728 tokens × `GROQ_CONCURRENCY=2` = **93 % del límite de 8k/min** del tramo gratuito. Subirlo a 20 lo reventaría. «La palanca es la caché, no el lote» |
+| ~~Tamaño de lote de rerank = 10~~ `[I]` — **SIN OBJETO desde el corte (anotado 2026-10-20)** | El motivo sigue siendo cierto (3.728 tokens × `GROQ_CONCURRENCY=2` = 93 % del límite de 8k/min del tramo gratuito), pero **el re-ranking LLM ya no corre**: murió con `job_matcher` el 2026-10-13 y sus 442 líneas en `groq_service` son código muerto que DT-148 B1 retira. Si alguna vez vuelve, la cota vuelve con él |
 | Alerta de profesor **sobre-inclusiva a propósito** `[I]` | «esta alerta es opt-in y su razón de ser es NO perder la vacante» |
 
 **Pesos reales del matcher `[V]`** — son **SEIS** factores, no cinco:
@@ -476,15 +490,20 @@ canónica (111/111 revisiones) porque `jobhunt_core/harvest/providers/arbeitnow.
 no limpia como hacía el legacy (`strip_html_tags`). La paridad del traspaso
 comparó identidad y cabeceras, no la forma del texto. Bloque A del diagnóstico.
 
-### Complejidad ciclomática (T16, 2026-09-28)
+### Complejidad ciclomática (T16, 2026-09-28) — COTA SIN OBJETO desde el 2026-10-18
 
-**Cota aceptada:** siete funciones de grado E/F de radon siguen en las
-herramientas de corte de la Fase E — `import_portfolio_manifest._classify_expected`
-(F 66), `import_portfolio_durables.migrate_applications` (F 43),
-`import_portfolio_verify.verify_migration` (F 41), `import_swissjob_searches.prepare_plan/apply_plan`
-(E 35/40) e `import_swissjob_feedback.prepare_plan/apply_plan` (E 40/39). Son de
-un solo uso, ya ejecutadas, sólo alcanzables desde los CLI `*_cutover` y los
-ensayos, y fijadas por sus tests de integración. Reescribirlas no protege nada
-que corra y sí arriesga la única evidencia de cómo se hizo el corte. Todo lo
-demás que corre en producción (BFF y núcleo) está en grado ≤ D; el estándar de
-CC ≤ 10 para código NUEVO sigue vigente (`radon cc -s -n C`).
+**La cota amparaba siete funciones de grado E/F de las herramientas de corte de
+la Fase E** (`import_portfolio_manifest._classify_expected` F 66,
+`import_portfolio_durables.migrate_applications` F 43,
+`import_portfolio_verify.verify_migration` F 41,
+`import_swissjob_searches.prepare_plan/apply_plan` E 35/40 e
+`import_swissjob_feedback.prepare_plan/apply_plan` E 40/39): de un solo uso, ya
+ejecutadas, y reescribirlas no protegía nada que corriese. **Esas herramientas
+se RETIRARON en P3 de DT-145** (`1f415d3`, 2026-10-18), así que la cota se quedó
+sin objeto. Cerrada el 2026-10-20 al comprobar el árbol (DT-148 F1).
+
+**Lo que hay HOY, medido el 2026-10-20:** dos grados E en código vivo, los dos
+`fetch_new` de `native_myscience` y `native_schuljobs` (32 cada uno), y 23
+funciones en grado D. Son providers de cosecha, no herramientas: su complejidad
+está en el bucle de barrido y la aborda DT-148 C1 al extraer el transporte. El
+estándar de CC ≤ 10 para código NUEVO sigue vigente (`radon cc -s -n C`).
