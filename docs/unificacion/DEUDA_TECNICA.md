@@ -840,8 +840,29 @@ medición que justificó la retención, no un censo vigente.
 | Vistas que la usan | 0 |
 | `INSERT INTO shadow_inbox` en todo el repo | **1, y está en un test** |
 
-**La migración se ensayó de IDA Y VUELTA sobre una base desechable** antes de
-acercarla a producción: `core0055` → la tabla existe; `core0056` → no existe;
+**DESPLEGADA en producción el 2026-10-21** con `scripts/deploy_nas.sh core`
+(release `point5-4ffaf7e`, PR #28). El script aplicó la migración en contenedor
+desechable ANTES de recrear, como manda la trampa 5:
+
+```
+INFO:alembic.runtime.migration:Running upgrade core0055 -> core0056,
+  Retira `shadow_inbox`: la tabla se quedó sin productor y sólo la tocaba su purga.
+```
+
+Verificado DESPUÉS, ejecutando: `/v1/ready` →
+`{"status":"ready","alembic":"core0056","release":"4ffaf7e","authoritative":true}`;
+`shadow_inbox` ya no está en `pg_tables` (quedan las otras seis `shadow_*`); y
+`purge_retention` corre limpio sin ella —
+`{"entregas": 0, "eventos": 0, "evaluaciones": 0, "tope_por_pasada": 20000}`—,
+sin la clave `inbox_sombra` que ya no tiene sentido.
+
+**El BFF y el frontend NO se redesplegaron, a propósito**: B6 no cambió ningún
+contrato. Dropeó una tabla INTERNA del núcleo y retiró un ajuste del núcleo; el
+BFF nunca supo que `shadow_inbox` existía. Siguen en `point5-500d8d9`, que es el
+último SHA con código suyo.
+
+**La migración se ensayó antes de IDA Y VUELTA sobre una base desechable**, antes
+de acercarla a producción: `core0055` → la tabla existe; `core0056` → no existe;
 `downgrade` a `core0055` → vuelve con sus cuatro columnas (`consumer_id` text,
 `event_id` uuid, `payload` jsonb, `received_at` timestamptz) y su PK nombrada
 `pk_shadow_inbox`; `core0056` otra vez → no existe. Suite del núcleo: **1.783
