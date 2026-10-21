@@ -36,13 +36,17 @@ class CatalogSearchParams:
     q: str | None = None
     source: str | None = None
     remote_only: bool = False
-    canton: str | None = None
-    language: str | None = None
-    seniority: str | None = None
-    contract_type: str | None = None
-    salary_min: int | None = None
-    salary_max: int | None = None
-    sort: str = "newest"
+    # DT-148 A18-01 (2026-10-21): aquí vivían `canton`, `language`, `seniority`,
+    # `contract_type` y `salary_min/max`. Los seis acababan en 501 porque el
+    # content canónico no los modela, y se midió cuánto: sobre 5.000 vacantes
+    # ACTIVAS de producción, `canton` 9,8 %, `language` 2,9 %,
+    # `contract_type` 2,1 %, `seniority` 0,9 %, `salary_min/max` 1,1 %. Y en lo
+    # cosechado los últimos 14 días es PEOR: canton 8,5 %, los otros 0-0,04 %.
+    # Implementarlos habría servido filtros que esconden el 91-100 % del
+    # corpus, que es peor que el 501: un error se ve, un 0 % se cree.
+    # `location` SÍ está en el 100 % de las canónicas y el `/v1` lo filtra
+    # (substring ci), así que la búsqueda conserva filtro de ubicación.
+    location: str | None = None
     limit: int = 20
     offset: int = 0
 

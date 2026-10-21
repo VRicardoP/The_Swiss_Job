@@ -37,8 +37,6 @@ _LEGACY_SOURCE_PREFIX = "legacy:"
 _SNIPPET_MAX_LEN = 500
 
 # Filtros de CatalogSearchParams sin equivalente en el /v1 (cota del core).
-_UNSUPPORTED_FILTER_FIELDS = ("canton", "language", "seniority", "contract_type")
-
 # Errores de FORMA de un 200 del core (JSON ilegible, esquema incompatible,
 # tipos inesperados): se traducen a CoreUnavailableError — un payload invalido
 # es tan inutilizable como el core caido, y asi core_read tiene fallback REAL
@@ -182,17 +180,11 @@ def expand_sources_csv(csv: str) -> str:
 def unsupported_search_reason(params: CatalogSearchParams) -> str | None:
     """Motivo por el que el /v1 NO puede servir esta busqueda, o None.
 
-    Cotas del contrato vigente (docstring del modulo): orden distinto de
-    'newest', filtros sin columna en el content del core, y un CSV de
-    fuentes expandido que excede el max_length del Query del /v1.
+    DT-148 A18-01: quedaba UNA cota real. Las otras dos —orden distinto de
+    'newest' y los seis filtros sin columna en el content— ya no pueden darse
+    porque la interfaz dejó de ofrecerlos: un 501 que ningun cliente puede
+    provocar no protege nada, sólo documenta un camino muerto.
     """
-    if params.sort != "newest":
-        return f"orden {params.sort!r} sin equivalente en el feed /v1 (solo 'newest')"
-    rejected = [f for f in _UNSUPPORTED_FILTER_FIELDS if getattr(params, f)]
-    if params.salary_min is not None or params.salary_max is not None:
-        rejected.append("salary")
-    if rejected:
-        return "filtros sin equivalente en el /v1 del core: " + ", ".join(rejected)
     if params.source and len(expand_sources_csv(params.source)) > _CORE_QUERY_MAX_LEN:
         return "filtro source expandido excede el limite de 200 del /v1"
     return None
@@ -208,6 +200,11 @@ def _feed_query(params: CatalogSearchParams) -> dict:
     if params.remote_only:
         # remote_only=False significa "no filtrar" (nunca remote=false).
         query["remote"] = "true"
+    if params.location:
+        # El /v1 filtra `city` como substring ci sobre `location`, que el
+        # content lleva SIEMPRE. Se envía como `city` porque es el nombre del
+        # parámetro, no porque el dato sea una ciudad: es texto libre.
+        query["city"] = params.location
     return query
 
 

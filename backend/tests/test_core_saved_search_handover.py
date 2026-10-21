@@ -106,6 +106,59 @@ async def test_core_crud_and_manual_run_do_not_write_legacy(
     assert await db_session.scalar(select(func.count()).select_from(SavedSearch)) == 0
 
 
+async def test_una_busqueda_guardada_acepta_la_ubicacion_del_panel(
+    client, db_session, monkeypatch
+):
+    """DT-148 A18-01: el panel de filtros ya no ofrece cantón sino `location`,
+    y `SavedSearchesPage` hereda los filtros vigentes al crear la busqueda. El
+    contrato de `filters` es `extra="forbid"`, asi que sin este campo el
+    usuario que guardara una busqueda con la ubicacion puesta recibiria un
+    **422** — un filtro que la interfaz ofrece y la API rechaza, que es
+    exactamente el modo de fallo que A18-01 venia a cerrar.
+    """
+    requests: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "POST":
+            return httpx.Response(201, json=item(pid, uuid.uuid4()))
+        return httpx.Response(200, json={"items": [], "next_cursor": None, "total": 0})
+
+    headers, pid, _uid = await setup_owner(client, db_session, monkeypatch)
+    monkeypatch.setattr(
+        adapter,
+        "default_client_factory",
+        lambda: httpx.AsyncClient(
+            base_url="http://core.test/v1", transport=httpx.MockTransport(handler)
+        ),
+    )
+    created = await client.post(
+        "/api/v1/searches",
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        json={"name": "Zurich", "filters": {"location": "Zürich"}},
+    )
+    assert created.status_code == 201, created.text
+    import json as _json
+
+    enviado = _json.loads(next(r for r in requests if r.method == "POST").content)
+    assert enviado["filters"]["location"] == "Zürich"
+
+
+async def test_una_busqueda_guardada_rechaza_un_filtro_que_nadie_sirve(
+    client, db_session, monkeypatch
+):
+    """El `extra="forbid"` se queda: una clave inventada falla en la ENTRADA
+    (422 a quien la escribe) y no en el evaluador del nucleo, que abortaria el
+    barrido de TODOS los usuarios (G3/P2-8)."""
+    headers, _pid, _uid = await setup_owner(client, db_session, monkeypatch)
+    rechazado = await client.post(
+        "/api/v1/searches",
+        headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        json={"name": "x", "filters": {"inventado": "si"}},
+    )
+    assert rechazado.status_code == 422, rechazado.text
+
+
 @pytest.mark.parametrize("broken", ["unavailable", "shape", "owner", "repeat_cursor"])
 async def test_core_failure_never_returns_local_data(
     client, db_session, monkeypatch, broken

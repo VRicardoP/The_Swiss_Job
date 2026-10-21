@@ -26,6 +26,7 @@ def test_full_text_and_structured_filters_over_canonical_offers(db):  # noqa: F8
         "description": "Python backend",
         "company_name": "Example",
         "remote": True,
+        "location": "8000 Zürich",
         "canton": "ZH",
         "language": "de",
         "seniority": "senior",
@@ -82,6 +83,12 @@ def test_full_text_and_structured_filters_over_canonical_offers(db):  # noqa: F8
             all_filters = {
                 "q": "Python backend",
                 "source": "search-query, missing",
+                # DT-148 A18-01: `location` es substring ci, así que «zürich»
+                # casa «8000 Zürich» — y es el filtro de ubicación con
+                # cobertura real (100 % de las canónicas, frente al 9,8 % de
+                # `canton`). Entra en el juego completo para que el caso
+                # siga siendo «todos los filtros a la vez».
+                "location": "zürich",
                 "canton": " be, zh ",
                 "remote_only": True,
                 "language": "de",
@@ -92,6 +99,7 @@ def test_full_text_and_structured_filters_over_canonical_offers(db):  # noqa: F8
             }
             assert await matches(all_filters) == {ids["wanted"]}
             for key, value in (
+                ("location", "Genève"),
                 ("canton", "BE"),
                 ("language", "fr"),
                 ("seniority", "junior"),

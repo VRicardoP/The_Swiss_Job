@@ -377,31 +377,73 @@ SEARCH_FILTER_CASES = {
 }
 
 
-UNSUPPORTED_SEARCH_PARAMS = {
-    "canton": CatalogSearchParams(canton="ZH"),
-    "language": CatalogSearchParams(language="de"),
-    "seniority": CatalogSearchParams(seniority="senior"),
-    "contract_type": CatalogSearchParams(contract_type="full_time"),
-    "salary_min": CatalogSearchParams(salary_min=80000),
-    "salary_max": CatalogSearchParams(salary_max=120000),
-    "sort_oldest": CatalogSearchParams(sort="oldest"),
-    "sort_salary": CatalogSearchParams(sort="salary"),
-    "sort_relevance": CatalogSearchParams(sort="relevance", q="python"),
-}
+def test_los_filtros_del_dto_son_los_que_el_v1_sirve():
+    """DT-148 A18-01: el DTO modelaba nueve parametros que el /v1 rechaza.
+
+    Aqui vivia `UNSUPPORTED_SEARCH_PARAMS` con sus nueve casos —canton,
+    language, seniority, contract_type, salary_min/max y tres ordenes— y un
+    test que comprobaba que la costura los declaraba imposibles SIN emitir
+    peticion. Era correcto y no bastaba: el 501 llegaba igual al usuario,
+    porque la interfaz seguia ofreciendolos. Se retiraron de punta a punta, y
+    lo que se fija ahora es que el DTO no pueda volver a modelar lo que el
+    catalogo no sirve. Si alguien le anade un campo, esto se pone rojo.
+    """
+    campos = set(CatalogSearchParams.__dataclass_fields__)
+    assert campos == {"q", "source", "remote_only", "location", "limit", "offset"}
 
 
-@pytest.mark.parametrize("case", list(UNSUPPORTED_SEARCH_PARAMS))
-async def test_core_search_unsupported_params_make_no_request(case):
-    """Filtros/orden sin equivalente en el /v1 (cota del core): la costura lo
-    declara como CatalogUnsupportedError SIN emitir NI UNA peticion —
-    fallback a local en core_read, 501 en core_primary."""
+async def test_location_viaja_como_city_y_es_el_unico_filtro_de_ubicacion():
+    """`location` sustituye al desplegable de cantones, que daba 501.
+
+    El /v1 lo filtra como substring ci sobre el `location` de la canonica, que
+    es el UNICO campo de ubicacion que el content lleva siempre (medido: 100 %
+    de las vacantes activas, frente al 9,8 % de `canton`). Viaja con el nombre
+    `city` porque asi se llama el parametro del /v1, no porque el dato sea una
+    ciudad: es texto libre y acepta «Remote» igual que «Zurich».
+    """
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(dict(request.url.params))
+        return httpx.Response(200, json={"items": [], "next_cursor": None, "total": 0})
+
+    catalog = make_core_catalog(transport=httpx.MockTransport(handler))
+    await catalog.search(CatalogSearchParams(location="Zurich"))
+    assert seen["city"] == "Zurich"
+    assert "canton" not in seen
+
+
+async def test_una_busqueda_sin_ubicacion_no_envia_city():
+    """Vacio significa «no filtrar», nunca `city=`: un filtro vacio que viaja
+    es un filtro que el core tiene que evaluar para nada."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(dict(request.url.params))
+        return httpx.Response(200, json={"items": [], "next_cursor": None, "total": 0})
+
+    catalog = make_core_catalog(transport=httpx.MockTransport(handler))
+    await catalog.search(CatalogSearchParams(location=""))
+    assert "city" not in seen
+
+
+async def test_un_csv_de_fuentes_demasiado_largo_no_emite_peticion():
+    """El UNICO 501 que sobrevive a DT-148 A18-01, y se queda porque SI puede
+    darse: el filtro de fuente viaja expandido (cada nombre mas su `legacy:`),
+    asi que un CSV legitimo puede pasarse del `max_length=200` del Query del
+    /v1. Enviarlo daria un 422 del core; declararlo imposible aqui evita la
+    peticion. Antes este caso no tenia prueba propia: iba de polizon en la
+    parametrizacion de los nueve filtros que ya no existen.
+    """
 
     def fail_on_any_request(request: httpx.Request) -> httpx.Response:
         pytest.fail(f"busqueda no expresable emitio una peticion: {request.url}")
 
     catalog = make_core_catalog(transport=httpx.MockTransport(fail_on_any_request))
+    # 20 fuentes de 9 caracteres se expanden a mas de 200 con el prefijo.
+    largo = ",".join(f"fuente{i:03d}" for i in range(20))
     with pytest.raises(CatalogUnsupportedError):
-        await catalog.search(UNSUPPORTED_SEARCH_PARAMS[case])
+        await catalog.search(CatalogSearchParams(source=largo))
 
 
 async def test_core_search_source_filter_expands_legacy_prefix():
