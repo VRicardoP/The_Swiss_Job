@@ -35,14 +35,31 @@ def test_filter_values_are_bound_not_interpolated():
     assert params == {"q": hostile, "sources": [hostile], "language": hostile}
 
 
-def test_location_is_a_bound_substring_not_an_equality():
-    """DT-148 A18-01: `location` filtra como substring ci, igual que el `city`
-    del catálogo, porque el campo es TEXTO LIBRE («8000 Zürich», «Zürich, ZH»,
-    «Remote job»). Una igualdad no casaría ninguno de los tres."""
+def test_location_is_a_bound_substring_and_stays_indexable():
+    """DT-148 A18-01: `location` filtra como subcadena ci, porque el campo es
+    TEXTO LIBRE («8000 Zürich», «Zürich, ZH», «Remote job») y una igualdad no
+    casaría ninguno de los tres.
+
+    Y se escribe con `LIKE`, no con `position()`: la diferencia no es de estilo.
+    Un índice trgm (`core0057`) sirve `LIKE` y NO sirve `position()`, y medido
+    en producción eso era 86 s contra un doble Seq Scan sobre 227.053
+    revisiones. Si alguien vuelve a `position()`, el filtro sigue dando el
+    resultado correcto y tardando minuto y medio — un fallo que sólo se ve
+    cronometrando. Por eso se fija aquí la FORMA.
+    """
     sql, params = matching_query({"location": "  Zürich  "})
-    assert params == {"location": "Zürich"}  # recortado, no interpolado
-    assert "Zürich" not in str(sql)
-    assert "position(lower(:location)" in str(sql)
+    assert params == {"location": "%Zürich%"}  # recortado y enlazado
+    assert "Zürich" not in str(sql)  # jamás interpolado
+    assert "LIKE lower(:location)" in str(sql)
+    assert "position(" not in str(sql)
+
+
+def test_location_metacharacters_are_literal_not_wildcards():
+    """El contrato es «contiene este texto», no «este patrón». Sin escapar,
+    un `%` del usuario casaría CUALQUIER ubicación y el filtro parecería
+    aplicarse mientras no filtra nada."""
+    _sql, params = matching_query({"location": "100% remote_work"})
+    assert params == {"location": "%100\\% remote\\_work%"}
 
 
 def test_an_empty_location_does_not_filter():

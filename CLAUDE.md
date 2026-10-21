@@ -55,7 +55,7 @@
   como cosecha sana) y la de las credenciales; las **tres ventanas de cosecha**
   de arriba; y **cuatro citas diarias** en este orden: dedup-scan 05:20 →
   archive-sweep 05:35 → matching-materialize-ce 06:15 → purga de retención 06:40.
-  Migraciones propias vía `core-migrate`, cadena `core0001..core0056`.
+  Migraciones propias vía `core-migrate`, cadena `core0001..core0057`.
   **En PRODUCCIÓN el worker está partido en tres** (`scripts/split_core_workers.py`):
   `swissjob-core-worker-r5`, `swissjob-core-harvest-worker-r5` y
   `swissjob-core-ops-worker-r5`; en local es uno solo. **La imagen del core es
@@ -479,10 +479,12 @@ docker compose run --rm --no-deps -v "$PWD:/repo" -w /repo backend \
 docker compose exec backend alembic upgrade head
 docker compose exec backend alembic revision --autogenerate -m "descripcion"
 
-# Migraciones core (cadena core0001..core0056 — las aplica core-migrate al arrancar).
+# Migraciones core (cadena core0001..core0057 — las aplica core-migrate al arrancar).
 # Sin override: aplica las migraciones DE LA IMAGEN, que es lo correcto al operar.
 # Para probar una migración nueva del árbol de trabajo, añade los dos -f del perfil dev.
-# La última es core0056 (DT-148 B6: retira `shadow_inbox`, que se quedó sin
+# La última es core0057 (DT-148 A18-01: índice GIN trgm del filtro de ubicación
+# del catálogo, que pasó a ser alcanzable desde la interfaz y costaba 86 s).
+# Antes, core0056 (DT-148 B6: retira `shadow_inbox`, que se quedó sin
 # escritor al retirarse la CDC sombra y a la que sólo tocaba su propia purga).
 # La anterior, core0055, es el kill-switch de bloqueos (consecutive_blocks,
 # last_blocked_at y disabled_by_blocks_at en source_scope_state).
