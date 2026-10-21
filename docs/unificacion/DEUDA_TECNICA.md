@@ -926,9 +926,51 @@ ejecuta no protege nada. Comprobados: 11 pasan.
 Frontend: eslint limpio, 60 tests, build correcto. `ruff check` y
 `ruff format --check` limpios en los 663 ficheros del repo y los 247 del BFF.
 
-### Checkpoint de despliegue de E1 + sección B — 2026-10-21
+### Acta de despliegue de E1 + sección B — 2026-10-21 · **DESPLEGADO** `point5-500d8d9`
 
-**Estado: CONSTRUIDO Y VERIFICADO, NO DESPLEGADO.** El bloqueo no es técnico:
+**Estado: DESPLEGADO Y VERIFICADO EN PRODUCCIÓN** (PR #26, merge `500d8d9`).
+Los siete contenedores corren `point5-500d8d9`: `core-api`, los tres workers del
+núcleo, `backend`, `worker` y `frontend`. Orden ejecutado: núcleo → BFF →
+frontend. `/v1/ready` responde
+`{"status":"ready","alembic":"core0055","release":"500d8d9","authoritative":true}`.
+
+#### Antes de poder desplegar: producción estaba CAÍDA, y no por este trabajo
+
+`swissjob-postgres` llevaba **34 minutos en `Exited (127)`** cuando fui a
+desplegar, y con él `/v1/ready` daba 503 `database_unavailable` con una racha de
+35 healthchecks fallidos. Causa exacta, leída del `inspect` y no supuesta:
+
+```
+error mounting "/share/Public/swissjob/docker/postgres/init-pgvector.sql" to
+rootfs at "/docker-entrypoint-initdb.d/init-pgvector.sql": not a directory:
+Are you trying to mount a directory onto a file (or vice-versa)?
+```
+
+La ruta del host **no existía**, así que al reintentar el arranque (08:00 local,
+tras un reinicio del daemon — mismo patrón que el incidente del 2026-09-23)
+Docker la fabricó él, y Docker fabrica rutas ausentes como DIRECTORIOS. El árbol
+entero `/share/Public/swissjob/docker/` tenía marca de tiempo 08:00 y dueño
+`admin:administrators`, distinto del resto del directorio (`Ricardo:everyone`):
+la prueba de que lo creó el daemon y no un despliegue.
+
+**Reparado**: `find` confirmó **3 directorios y 0 ficheros** (nada que perder),
+se retiraron con `rmdir` —no `rm -rf`: `rmdir` falla si hay algo dentro, así que
+no puede destruir datos— desde un contenedor con privilegios, porque el usuario
+de SSH no puede escribir en lo que creó el daemon, y se repuso el fichero real
+de 152 B (`CREATE EXTENSION IF NOT EXISTS vector` + `pg_trgm`). Postgres arrancó
+`healthy`, el corpus intacto: **95.348 vacantes activas**.
+
+**Lección, y es la de la regla de oro del proyecto**: un bind mount a un fichero
+que no existe en el host no falla al crearse el contenedor — falla la PRÓXIMA vez
+que arranca, y entre una cosa y otra pueden pasar meses. El compose versionado
+declaraba la ruta y nadie había comprobado que estuviera. Pendiente para el
+propietario: una sonda que verifique que los ficheros montados por los composes
+de producción EXISTEN y son del tipo correcto, que es más barato que descubrirlo
+en un arranque.
+
+#### El bloqueo que hubo antes: la protección de rama
+
+No era técnico:
 `main` está protegida (PR obligatorio + 9 checks) y `scripts/deploy_nas.sh`
 rechaza cualquier SHA que no sea EXACTAMENTE el de `github/main` —esa guarda es
 la que impide que `RELEASE_SHA` mienta, así que no se puentea—. Los seis
@@ -954,7 +996,8 @@ Además: `alembic check` sin operaciones nuevas, y los cuatro tests de scripts
 nuevos del CI verificados en un `python:3.12-slim` limpio (11 passed, sólo
 stdlib + pytest).
 
-**Despliegue preparado.** Los tres ensayos en seco pasan y fijan las etiquetas:
+**Despliegue EJECUTADO.** Los tres ensayos en seco fijaron las etiquetas y los
+tres despliegues salieron con `exit=0`:
 
 ```
 core      → swissjob-core:point5-<sha>      compose core.configured.yml      proyecto swissjob-r5
@@ -970,8 +1013,42 @@ alerta por proporción, y las dos cosas viven en el núcleo. El frontend va al
 final: B7/B8 sólo tocan su árbol.
 
 **Nada que migrar.** Ni E1 ni la sección B añaden migración: la cabeza del
-núcleo sigue siendo la que ya corre. El único DROP pendiente es el de B6, y
-espera al propietario.
+núcleo sigue siendo `core0055`, la que ya corría. El único DROP pendiente es el
+de B6, y espera al propietario.
+
+#### Verificación POR EJECUCIÓN en producción (no por lectura)
+
+| Qué | Cómo se comprobó | Resultado |
+|---|---|---|
+| E1 vivo en el cursor | tres barridos disparados a mano (`jobhunt.harvest.run_scope` sobre publicjobs, jobroom y zebis) y lectura de `source_scope_state` | los tres escriben `invalid: 0` junto a `items_seen`, y `last_complete_at` AVANZA al 2026-10-21 |
+| E1: la alerta por proporción | `check_harvest_health` ejecutado contra la base real | `CORE_HARVEST_INVALID_RATIO_MAX = 0.5`; censo 80 scopes / 50 habilitados / 50 con estado / **0 apagados por bloqueo**; 0 alertas (silencio correcto: ningún scope tiene mala proporción) |
+| B3: el cliente del catálogo | la alerta de profesor, que usa `CoreCatalog.recent()` —el mismo cliente al que B3 le quitó el resolutor de hashes legacy | **305** ofertas de docencia en 7 d, **2** de primaria, con sus títulos |
+| B8: las clases del tema | `grep` sobre el bundle SERVIDO por nginx | `prose-headings` ausente (0), `[&_h2]:mt-5` presente, `bg-gray-50` ausente del CSS (0) |
+| Frontend | `wget -S` dentro del contenedor | HTTP 200, assets con hash nuevo (`JobDetailPage-DaO_S8qZ.js`) |
+| BFF | `/health` | `{"status":"healthy"}` |
+
+#### Deriva de la topología versionada, encontrada al sincronizar (T13 §7)
+
+Al copiar las etiquetas nuevas a `deploy/nas/` comparé la copia versionada con el
+compose VIVO **estructuralmente** (YAML parseado, no texto), y no sólo las
+etiquetas:
+
+- `core.configured.yml`: sólo las 4 etiquetas. Limpio.
+- `swissjob.configured.yml`: las 3 etiquetas **y dos variables que el NAS SÍ
+  tiene y la copia había perdido** — `PLAYWRIGHT_BROWSERS_PATH` y
+  `SCHEDULER_DAILY_HARVEST_ENABLED`, en `backend` y en `worker`. Deriva en la
+  dirección peligrosa: el repositorio afirmaba algo que la máquina no hace, que
+  es justo lo que A19-04 existe para evitar. Son **residuo inerte** (ningún
+  lector en `backend/` desde que se retiraron la cosecha legacy y los scrapers
+  Playwright), así que se ANOTAN en la copia con su motivo. Retirarlas del NAS es
+  editar el compose de producción: lo decide el propietario.
+- El resto de diferencias es serialización, declarada en la comparación y no
+  «arreglada»: Container Station escribe duraciones en nanosegundos (`30000000000ns`)
+  y `mem_limit` en bytes (`1610612736`); el volcado de la copia usa `30s` y
+  `1536m`. Mismo valor, otra forma.
+
+Tras sincronizar: **0 diferencias semánticas** en los dos ficheros, y
+`check_no_secrets` 0 hallazgos sobre los 5.
 
 ### C · Duplicación (consolidar sin cambiar comportamiento)
 

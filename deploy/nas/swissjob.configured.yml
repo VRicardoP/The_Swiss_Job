@@ -9,7 +9,7 @@
 # decía 254e826 y lo que corre desde hace semanas es acf48b2.
 services:
   backend:
-    image: swissjob-backend:point5-8ffb8b3
+    image: swissjob-backend:point5-500d8d9
     mem_limit: 1536m
     container_name: swissjob-backend
     environment:
@@ -22,6 +22,17 @@ services:
       CORE_HTTP_TIMEOUT_SECONDS: '120'
       CORE_INBOX_TOKEN: ${CORE_INBOX_TOKEN}
       CORE_ERASURE_REPLICA_ID: swissjob-live
+      # DT-148 (2026-10-21): estas DOS variables están en el compose VIVO del NAS
+      # y esta copia las había perdido — deriva en la dirección peligrosa, la que
+      # hace que el repositorio afirme algo que la máquina no hace (es justo lo
+      # que A19-04 existe para evitar). Son RESIDUO INERTE: ni
+      # `SCHEDULER_DAILY_HARVEST_ENABLED` ni `PLAYWRIGHT_BROWSERS_PATH` tienen un
+      # solo lector desde que se retiraron la cosecha legacy y los scrapers
+      # Playwright (`grep -rnw` sobre `backend/` devuelve vacío). Se anotan aquí
+      # porque el fichero debe decir LO QUE CORRE; retirarlas del NAS es una
+      # edición del compose de producción y la decide el propietario.
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      SCHEDULER_DAILY_HARVEST_ENABLED: 'True'
       SECRET_KEY: ${SECRET_KEY}
       SMTP_HOST: smtp.gmail.com
       SCHEDULER_ENABLED: 'True'
@@ -92,7 +103,7 @@ services:
         soft: 65535
         hard: 65535
   worker:
-    image: swissjob-backend:point5-8ffb8b3
+    image: swissjob-backend:point5-500d8d9
     mem_limit: 1g
     container_name: swissjob-worker
     environment:
@@ -103,6 +114,17 @@ services:
       SMTP_USER: ${SMTP_USER}
       POSTGRES_USER: swissjob
       SMTP_HOST: smtp.gmail.com
+      # DT-148 (2026-10-21): estas DOS variables están en el compose VIVO del NAS
+      # y esta copia las había perdido — deriva en la dirección peligrosa, la que
+      # hace que el repositorio afirme algo que la máquina no hace (es justo lo
+      # que A19-04 existe para evitar). Son RESIDUO INERTE: ni
+      # `SCHEDULER_DAILY_HARVEST_ENABLED` ni `PLAYWRIGHT_BROWSERS_PATH` tienen un
+      # solo lector desde que se retiraron la cosecha legacy y los scrapers
+      # Playwright (`grep -rnw` sobre `backend/` devuelve vacío). Se anotan aquí
+      # porque el fichero debe decir LO QUE CORRE; retirarlas del NAS es una
+      # edición del compose de producción y la decide el propietario.
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      SCHEDULER_DAILY_HARVEST_ENABLED: 'True'
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       SMTP_PORT: '587'
       GEMINI_API_KEY: ${GEMINI_API_KEY}
@@ -154,7 +176,7 @@ services:
         soft: 65535
         hard: 65535
   frontend:
-    image: swissjob-frontend:point5-acf48b2
+    image: swissjob-frontend:point5-500d8d9
     mem_limit: 128m
     container_name: swissjob-frontend
     environment:
