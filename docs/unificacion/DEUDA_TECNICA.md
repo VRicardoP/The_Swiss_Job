@@ -793,7 +793,7 @@ y no dijo nada de estos dos: sobrevivieron sin decisión.
 `python3 scripts/check_core_release.py` tras el build; `ls /app/jobhunt_core`
 dentro del contenedor no contiene `dev_eval.py`.
 
-#### B6 · Residuo de la sombra: purga diaria de una tabla sin productor
+#### B6 · Residuo de la sombra: purga diaria de una tabla sin productor — **CERRADO 2026-10-21**
 
 **Dónde.** `jobhunt_core/config.py:142` (`CORE_SHADOW_INBOX_RETENTION_DAYS`),
 `jobhunt_core/retention.py:96-97,130` (`DELETE FROM shadow_inbox`).
@@ -819,12 +819,68 @@ La tabla está **VACÍA en producción**, así que la condición de la vía (b)
 —«dejar la purga hasta que la tabla esté vacía y entonces (a)»— ya se cumple y
 las dos vías convergen en la misma: la migración que la dropea.
 
-**NO SE EJECUTÓ, a propósito.** Es un DROP sobre una tabla de producción y el
-propio punto lo reserva al propietario, no al ejecutor. Lo único que faltaba
-para decidir era este número, y ya está. Cuando el propietario lo autorice, el
-trabajo es: migración `core00NN` con el DROP en `upgrade()` y el CREATE en
-`downgrade()`, fuera `jobhunt_core/retention.py:96-97,130` (la purga) y fuera
-`CORE_SHADOW_INBOX_RETENTION_DAYS` de `config.py:142`.
+**AUTORIZADO Y EJECUTADO el 2026-10-21.** Migración **`core0056`** (`DROP TABLE`
+en `upgrade()`, definición LITERAL de `core0009` en `downgrade()`); fuera
+`_INBOX_SQL`, su llamada y la lectura de los días en `retention.py`; fuera
+`CORE_SHADOW_INBOX_RETENTION_DAYS` de `config.py` (estaba en la 154, no en la
+142: la línea se había movido); fuera el test
+`test_purga_el_inbox_sombra_por_edad`; y fuera el párrafo del criterio que
+afirmaba que la tabla era «la EVIDENCIA del consumo idempotente de ADR-06» —una
+garantía sin productor desde `3ed6462`—. El inventario de las cuatro tablas que
+motivó el módulo SE CONSERVA, anotando que de las cuatro quedan tres: es la
+medición que justificó la retención, no un censo vigente.
+
+**Evidencia recogida antes de tocar nada**, y con el join correcto:
+
+| | |
+|---|---|
+| Filas | **0** |
+| Tamaño | **43 MB** (espacio que `DELETE` nunca devuelve: lo recupera el DROP) |
+| FKs que la apuntan | 0 |
+| Vistas que la usan | 0 |
+| `INSERT INTO shadow_inbox` en todo el repo | **1, y está en un test** |
+
+**La migración se ensayó de IDA Y VUELTA sobre una base desechable** antes de
+acercarla a producción: `core0055` → la tabla existe; `core0056` → no existe;
+`downgrade` a `core0055` → vuelve con sus cuatro columnas (`consumer_id` text,
+`event_id` uuid, `payload` jsonb, `received_at` timestamptz) y su PK nombrada
+`pk_shadow_inbox`; `core0056` otra vez → no existe. Suite del núcleo: **1.783
+passed · 1 skipped** (uno menos que antes, exactamente el test retirado).
+
+#### Tres cosas que este punto tenía mal, vistas al comprobarlo
+
+1. **B6 NO está acoplado a F3.** El punto dice «va junto con F3
+   (`legacy_shadow.py`)» y no es cierto: `legacy_shadow.py` es un resolutor de
+   IDENTIDAD de la cosecha para encarnaciones `legacy:*` y no toca esta tabla
+   (`grep` sobre el repo: ni una referencia). Estaban agrupados por llevar
+   «shadow» en el nombre, no por dependencia. B6 se pudo hacer hoy; F3 no.
+2. **F3 está lejísimos de su condición.** Medido el 2026-10-21: **~40.700
+   encarnaciones `legacy:*` vivas** repartidas en **27 fuentes**, la más reciente
+   vista el 21-09. Esperan a que `archive.py` las retire a los
+   `CORE_CORPUS_STALE_DAYS=120`: enero de 2027, como dice la cota.
+3. **La consulta de verificación que F3 documenta NO CORRE.** Usa
+   `i.source_id` y `source_listing_incarnations` no tiene esa columna; el join
+   va por `source_listings`. Queda corregida en la entrada de F3.
+
+#### El residuo es más grande que B6, y una de las piezas SOSTIENE PESO
+
+En el esquema quedan **siete** tablas `shadow_*`, **260 MB**:
+
+| Tabla | Tamaño | Filas | Referencias en código vivo |
+|---|---|---|---|
+| `shadow_change_log` | 216 MB | 60 979 | **6 — `erasure.py`** |
+| `shadow_inbox` | 43 MB | 0 | 0 → **retirada por `core0056`** |
+| `shadow_cycle_metrics` | 1,3 MB | 1 194 | 0 |
+| `shadow_projection_batches` | 128 kB | 480 | 0 |
+| `shadow_capture_state` | 72 kB | 1 | 0 |
+| `shadow_gate_attestations` | 32 kB | — | 0 |
+| `shadow_declared_downtime` | 16 kB | — | 0 |
+
+`shadow_change_log` **no se agrupa con las demás**: `erasure.py:180`
+(`scrub_capture`, invocada dos veces desde el borrado real) la bloquea y machaca
+los payloads del sujeto. Es parte del camino de borrado GDPR. Las otras cinco
+(1,5 MB en total) son candidatas a un punto propio, no a este.
+
 
 #### B7 · Frontend — exportaciones sin importador — **CERRADO 2026-10-21**
 
@@ -1795,10 +1851,28 @@ de la auditoría de refactorización.
 `registry.py:102-105` para resolver encarnaciones `legacy:*` que quedan en el
 corpus; justificado por COTAS `:420` («conviven hasta que `archive.py` retire
 la rancia, `CORE_CORPUS_STALE_DAYS=120`»). Anotar en COTAS la fecha implícita
-de caducidad y retirarlo junto con B6 (`shadow_inbox`) y los tests que montan
-vacantes `legacy:*` cuando `SELECT count(*) FROM jobhunt.source_listing_incarnations
-i JOIN jobhunt.sources s ON s.id=i.source_id WHERE s.name LIKE 'legacy:%' AND
-i.ended_at IS NULL` sea 0.
+de caducidad y retirarlo con los tests que montan vacantes `legacy:*` cuando la
+cuenta de encarnaciones vivas sea 0.
+
+**CORREGIDO el 2026-10-21.** La consulta que este punto documentaba NO CORRÍA:
+usaba `i.source_id` y `source_listing_incarnations` no tiene esa columna — el
+join va por `source_listings`. La buena es:
+
+```sql
+SELECT s.name, count(*) AS vivas, max(i.last_seen_at)
+  FROM jobhunt.source_listing_incarnations i
+  JOIN jobhunt.source_listings sl ON sl.id = i.source_listing_id
+  JOIN jobhunt.sources s ON s.id = sl.source_id
+ WHERE s.name LIKE 'legacy%' AND i.ended_at IS NULL
+ GROUP BY 1 ORDER BY 2 DESC;
+```
+
+Ejecutada: **~40.700 encarnaciones vivas en 27 fuentes**, la más reciente vista
+el 21-09-2026. Queda muy lejos de 0, así que F3 espera a enero de 2027.
+
+**Y NO va junto con B6**, al contrario de lo que decía: `legacy_shadow.py` no
+toca `shadow_inbox` ni ninguna tabla de la sombra. B6 se cerró el 2026-10-21 por
+su cuenta; esto sigue abierto por el calendario del corpus, no por B6.
 
 ### Veredicto cuantificado (para no prometer de más)
 

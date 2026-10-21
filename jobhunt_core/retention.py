@@ -10,6 +10,12 @@ Cuatro tablas crecían sin cota alguna. Medido en el clúster el 2026-08-27
                                                   -------
                                                   28,9 MB en 28 días
 
+De las cuatro quedan TRES: `shadow_inbox` se retiró con la migración `core0056`
+(DT-148 B6, 2026-10-21). Se había quedado sin escritor cuando `3ed6462` retiró
+`shadow/inbox.py`, y esta purga llevaba meses lanzando un DELETE cada noche
+contra una tabla vacía. La medición de arriba se conserva porque es la que
+motivó el módulo, no porque las cuatro sigan ahí.
+
 Es decir ~377 MB/año de tabla más sus índices, sobre una instancia compartida
 con el legacy cuyo volumen ya estaba al 75 %. `integration_outbox_deliveries`
 agrupada por estado devolvía UNA fila —`delivered = 13 425`—: el 100 % del
@@ -31,10 +37,6 @@ CRITERIO — se borra solo lo que ni el GATE ni una auditoría pueden necesitar:
   habría arrastrado entregas `dead` vivas: por eso la anti-unión explícita.
   `delivery.stats` mide `oldest_pending_s` sobre pending/inflight, que por
   construcción conservan su evento.
-- `shadow_inbox`: por edad. Es la EVIDENCIA del consumo idempotente de
-  ADR-06 (PK (consumer_id, event_id) absorbiendo la re-entrega). La
-  retención tiene que ser mucho mayor que la ventana máxima de re-entrega
-  —lease + backoff + dead-letter, minutos— y 30 días lo es con holgura.
 - `match_evaluations`: la más delicada, con DOS guardas acumulativas. (1) No
   se borra ninguna referenciada por `profile_vacancy_state.current_eval_id`
   (la FK es `ON DELETE RESTRICT`, o sea que un descuido abortaría la pasada
@@ -92,13 +94,6 @@ _OUTBOX_SQL = (
     "               LIMIT :tope)"
 )
 
-_INBOX_SQL = (
-    "DELETE FROM shadow_inbox "
-    "WHERE ctid IN (SELECT ctid FROM shadow_inbox "
-    "               WHERE received_at < now() - make_interval(days => :dias) "
-    "               LIMIT :tope)"
-)
-
 # Evaluación SUPERADA (existe otra más nueva del mismo par) y SIN puntero
 # vivo. Las dos condiciones se acumulan: la última evaluación de un par
 # sobrevive siempre, tenga o no fila de estado apuntándola.
@@ -127,7 +122,6 @@ async def purge_retention(session: AsyncSession) -> dict:
     """
     tope = int(settings.CORE_RETENTION_MAX_ROWS)
     outbox_dias = int(settings.CORE_OUTBOX_RETENTION_DAYS)
-    inbox_dias = int(settings.CORE_SHADOW_INBOX_RETENTION_DAYS)
     evals_dias = int(settings.CORE_EVAL_RETENTION_DAYS)
 
     async def borrar(sql: str, dias: int) -> int:
@@ -138,10 +132,9 @@ async def purge_retention(session: AsyncSession) -> dict:
     result = {
         "entregas": await borrar(_DELIVERIES_SQL, outbox_dias),
         "eventos": await borrar(_OUTBOX_SQL, outbox_dias),
-        "inbox_sombra": await borrar(_INBOX_SQL, inbox_dias),
         "evaluaciones": await borrar(_EVALS_SQL, evals_dias),
         "tope_por_pasada": tope,
     }
-    if any(result[k] for k in ("entregas", "eventos", "inbox_sombra", "evaluaciones")):
+    if any(result[k] for k in ("entregas", "eventos", "evaluaciones")):
         logger.info("purge_retention: %s", result)
     return result

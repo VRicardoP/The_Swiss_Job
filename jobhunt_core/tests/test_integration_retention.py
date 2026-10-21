@@ -132,32 +132,6 @@ def test_el_evento_solo_cae_cuando_se_queda_sin_entregas():
     _en_transaccion_deshecha(escenario)
 
 
-def test_purga_el_inbox_sombra_por_edad():
-    """`shadow_inbox` es la evidencia del consumo idempotente de ADR-06. Se
-    purga por edad, y la retención (30 d) es órdenes de magnitud mayor que la
-    ventana de re-entrega (lease + backoff + dead-letter, minutos)."""
-
-    async def escenario(s):
-        viejo, nuevo = uuid.uuid4(), uuid.uuid4()
-        for eid, dias in ((viejo, 400), (nuevo, 1)):
-            await s.execute(
-                sa.text(
-                    "INSERT INTO shadow_inbox "
-                    "(consumer_id, event_id, payload, received_at) "
-                    "VALUES ('retencion-test', :e, '{}'::jsonb, "
-                    "        now() - make_interval(days => :d))"
-                ),
-                {"e": eid, "d": dias},
-            )
-
-        await purge_retention(s)
-
-        assert await _cuenta(s, "shadow_inbox", event_id=viejo) == 0
-        assert await _cuenta(s, "shadow_inbox", event_id=nuevo) == 1
-
-    _en_transaccion_deshecha(escenario)
-
-
 async def _grafo_evaluable(s) -> dict:
     """Mínimo grafo FK para poder insertar evaluaciones."""
     ids = {
