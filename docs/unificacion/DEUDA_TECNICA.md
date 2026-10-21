@@ -1,5 +1,9 @@
 # Deuda técnica — proyecto jobhunting (SwissJob + jobhunt-core)
 
+> **Si retomas DT-148, empieza por [DT148_RELEVO.md](DT148_RELEVO.md)**: estado
+> exacto, orden recomendado, comandos que funcionan de verdad y las trampas ya
+> pisadas. Este fichero es el plan por ítem; aquél, el contexto para ejecutarlo.
+>
 > **Lectura vigente — 2026-10-21.** DT-148 (abajo) es la auditoría de
 > refactorización con plan de ejecución por ítem. **CERRADAS y DESPLEGADAS:
 > sección A completa, sección B completa (B5 salvo sus pasos 3-4), E1, F1 y
