@@ -1,11 +1,12 @@
 # Deuda técnica — proyecto jobhunting (SwissJob + jobhunt-core)
 
-> **Lectura vigente — 2026-10-20.** DT-148 (abajo) es la auditoría de
-> refactorización con plan de ejecución por ítem. Su **sección A está
-> ejecutada y commiteada** (rama `fix/dt148-auditoria-seccion-a`, sin
-> desplegar); **B a F siguen abiertas** y su fase 0 (F1) corrige el
-> `CLAUDE.md`, que todavía describe providers, scrapers, `job_matcher` y la
-> sombra retirados el 13-15 de octubre.
+> **Lectura vigente — 2026-10-21.** DT-148 (abajo) es la auditoría de
+> refactorización con plan de ejecución por ítem. **CERRADAS y DESPLEGADAS:
+> sección A completa, sección B completa (B5 salvo sus pasos 3-4), E1, F1 y
+> F2** (salvo la reescritura de la sección 3 de COTAS). Producción corre el
+> núcleo en `point5-4ffaf7e` / Alembic `core0056`; BFF y frontend en
+> `point5-500d8d9`, que es su último SHA con código. **SIGUEN ABIERTAS las
+> secciones C y D enteras, E2-E9, F3 y los pasos 3-4 de B5.**
 >
 > **Lectura anterior — 2026-10-19.** Este fichero es un ledger técnico
 > cronológico. Para estado global y releases manda
@@ -25,14 +26,25 @@
 
 ## DT-148 · Auditoría de refactorización 2026-10-20 — bugs, código muerto, duplicación y principios
 
-**Estado: SECCIÓN A + F1 + F2 EJECUTADAS, FUSIONADAS y DESPLEGADAS en
-producción el 2026-10-20** (PR #24, merge `8ffb8b3`; seis commits desde
-`1d16b44`). Núcleo y BFF corren `point5-8ffb8b3`, con el aviso de profesor
-verificado extremo a extremo contra el catálogo del núcleo. **Siguen ABIERTAS
-las secciones B, C, D y E**, más la reescritura de la sección 3 de COTAS que
-quedó de F2. El inventario sigue siendo el plan de
-ejecución por ítem; el acta de la sección A, al final de esta entrada, recoge
-lo hecho, lo medido y los NUEVE puntos en que el código desmintió al plan.
+**Estado al 2026-10-21 — cuatro despliegues, todos verificados ejecutando:**
+
+| Bloque | Estado | Release en producción |
+|---|---|---|
+| Sección A (18 bugs) + F1 + F2 | CERRADO | `point5-8ffb8b3` (PR #24, 2026-10-20) |
+| E1 + sección B (B1-B4, B7, B8) + B5 pasos 1-2 | CERRADO | `point5-500d8d9` (PR #26, 2026-10-21) |
+| Sincronía de `deploy/nas` + limpieza de marcadores retirados del compose vivo | CERRADO | `point5-500d8d9` (PR #27) |
+| B6 (`DROP shadow_inbox`, migración `core0056`) | CERRADO | `point5-4ffaf7e` (PR #28) |
+
+**Siguen ABIERTAS: las secciones C y D enteras, E2-E9, F3 y los pasos 3-4 de
+B5**, más la reescritura de la sección 3 de COTAS que quedó de F2. Y dos
+reaperturas que NO se cerraron por asociación: **A18-01** (la UI ofrece ocho
+filtros que el catálogo rechaza con 501) y la **segunda mitad de A18-03**
+(`WatchlistPage` no consume `isError`: un fallo de red se lee como «aún no hay
+vacantes»).
+
+El inventario sigue siendo el plan de ejecución por ítem; el acta de la sección
+A recoge los NUEVE puntos en que el código desmintió al plan, y la de la
+sección B otros CUATRO.
 
 Auditoría de lectura del árbol `8d01c50` (main, 2026-10-20) con cinco
 revisiones paralelas (core, cosecha, BFF, frontend, transversal), radon 6.0.1,
@@ -840,8 +852,29 @@ medición que justificó la retención, no un censo vigente.
 | Vistas que la usan | 0 |
 | `INSERT INTO shadow_inbox` en todo el repo | **1, y está en un test** |
 
-**La migración se ensayó de IDA Y VUELTA sobre una base desechable** antes de
-acercarla a producción: `core0055` → la tabla existe; `core0056` → no existe;
+**DESPLEGADA en producción el 2026-10-21** con `scripts/deploy_nas.sh core`
+(release `point5-4ffaf7e`, PR #28). El script aplicó la migración en contenedor
+desechable ANTES de recrear, como manda la trampa 5:
+
+```
+INFO:alembic.runtime.migration:Running upgrade core0055 -> core0056,
+  Retira `shadow_inbox`: la tabla se quedó sin productor y sólo la tocaba su purga.
+```
+
+Verificado DESPUÉS, ejecutando: `/v1/ready` →
+`{"status":"ready","alembic":"core0056","release":"4ffaf7e","authoritative":true}`;
+`shadow_inbox` ya no está en `pg_tables` (quedan las otras seis `shadow_*`); y
+`purge_retention` corre limpio sin ella —
+`{"entregas": 0, "eventos": 0, "evaluaciones": 0, "tope_por_pasada": 20000}`—,
+sin la clave `inbox_sombra` que ya no tiene sentido.
+
+**El BFF y el frontend NO se redesplegaron, a propósito**: B6 no cambió ningún
+contrato. Dropeó una tabla INTERNA del núcleo y retiró un ajuste del núcleo; el
+BFF nunca supo que `shadow_inbox` existía. Siguen en `point5-500d8d9`, que es el
+último SHA con código suyo.
+
+**La migración se ensayó antes de IDA Y VUELTA sobre una base desechable**, antes
+de acercarla a producción: `core0055` → la tabla existe; `core0056` → no existe;
 `downgrade` a `core0055` → vuelve con sus cuatro columnas (`consumer_id` text,
 `event_id` uuid, `payload` jsonb, `received_at` timestamptz) y su PK nombrada
 `pk_shadow_inbox`; `core0056` otra vez → no existe. Suite del núcleo: **1.783
@@ -1872,7 +1905,79 @@ el 21-09-2026. Queda muy lejos de 0, así que F3 espera a enero de 2027.
 
 **Y NO va junto con B6**, al contrario de lo que decía: `legacy_shadow.py` no
 toca `shadow_inbox` ni ninguna tabla de la sombra. B6 se cerró el 2026-10-21 por
-su cuenta; esto sigue abierto por el calendario del corpus, no por B6.
+su cuenta.
+
+#### La espera NO está en el calendario: la condición de salida, como está
+#### escrita, NO SE CUMPLE NUNCA (medido el 2026-10-21)
+
+De las **40.709** vacantes con encarnación `legacy:*` viva, **4 tienen
+candidatura** —2 `applied` y 2 `saved`, repartidas en `legacy:arbeitnow` (2),
+`legacy:irishjobs` (1) y `legacy:jobgether` (1)—. Y la rama RANCIA de
+`archive.py` las excluye A PROPÓSITO:
+
+```sql
+AND NOT EXISTS (SELECT 1 FROM applications ap WHERE ap.vacancy_id = v.id)
+```
+
+Es la cota PF.3: archivar no borra, pero con candidatura el contrato dice
+conservar la vacante VIVA para el usuario. La rama MUERTA tampoco las alcanza:
+exige `NOT tiene_activa` y esas cuatro tienen encarnación activa ahora mismo.
+
+Consecuencia: sus `ended_at` se quedan en NULL **indefinidamente**, así que
+`count(*) ... WHERE ended_at IS NULL` nunca llega a 0 y la condición de salida
+de este punto no vence en enero de 2027 ni en ninguna fecha. Vence cuando el
+usuario retire esas cuatro candidaturas, lo que no es una fecha sino una
+decisión suya (dos son `saved`, es decir marcadores).
+
+**Lo que SÍ está en el calendario**: las otras **40.705** se archivan solas
+entre el ~2026-12-30 y el **2027-01-19** (`max(last_seen_at)` va del 01-09 al
+21-09 y `CORE_CORPUS_STALE_DAYS` son 120 d), y al archivarlas `archive.py`
+CIERRA sus encarnaciones (`ended_at = now()`, línea 125) antes de poner
+`archived_at`. El reloj ya corre y no se puede reiniciar: nada cosecha esas
+fuentes —su scope sombra nació deshabilitado—, así que `last_seen_at` está
+congelado.
+
+**Condición de salida CORREGIDA**, que es la que de verdad se puede comprobar:
+
+```sql
+SELECT count(*) FROM jobhunt.source_listing_incarnations i
+  JOIN jobhunt.source_listings sl ON sl.id = i.source_listing_id
+  JOIN jobhunt.sources s ON s.id = sl.source_id
+ WHERE s.name LIKE 'legacy%' AND i.ended_at IS NULL
+   AND NOT EXISTS (SELECT 1 FROM jobhunt.applications ap
+                   WHERE ap.vacancy_id = i.vacancy_id);
+```
+
+Cuando ESA cuenta sea 0 (~2027-01-19), quedarán sólo las vacantes con
+candidatura.
+
+**DECISIÓN DEL PROPIETARIO (2026-10-21): priman las reparaciones inmediatas
+sobre mantener esas candidaturas.** O sea: llegada la fecha, el handler se
+retira sin esperar a que las cuatro candidaturas desaparezcan, y se acepta que
+una reparación de puntero sobre una de esas cuatro vacantes la saque del feed
+(son 4 sobre 40.709, y dos son `saved`, es decir marcadores). Lo que esto NO
+autoriza es borrar las candidaturas: la cota PF.3 sigue conservándolas, lo que
+se deja caer es la vacante del feed servido si el sink tiene que repararla.
+
+Queda por decidir UNA cosa cuando se ejecute: si al retirar el handler conviene
+cerrar a mano las cuatro encarnaciones (`ended_at = now()`), que las archivaría
+y haría el desenlace explícito en vez de esperar a que una reparación fortuita
+lo provoque. Recomendación: sí — un efecto que llega cuando nadie mira es peor
+que el mismo efecto provocado a propósito y anotado.
+
+#### Por qué no se puede retirar antes: qué se rompe exactamente
+
+`legacy_shadow.ensure_registered` da de alta el extractor y el normalizador
+genéricos de una fuente `legacy:*`. Quien los necesita es la REPARACIÓN DEL
+PUNTERO CANÓNICO del sink (`harvest/sink.py:882`): al rehacer
+`current_offer_revision_id` de una vacante, re-normaliza el raw más reciente de
+su encarnación primaria. Sin normalizador registrado, `normalize_offer` devuelve
+None y el sink **anula el puntero** — y el propio comentario del código dice lo
+que eso significa: la vacante VIVA sale de `/v1`, del corpus de matching y del
+de dedup, con re-evaluación completa por `bump_corpus_generation`. El invariante
+de A-06 manda sobre conservar el puntero (jamás servir el contenido del primary
+anterior, que puede ser otra empresa), así que anular es lo correcto cuando de
+verdad no hay normalizador. El handler es justo lo que evita llegar ahí.
 
 ### Veredicto cuantificado (para no prometer de más)
 
