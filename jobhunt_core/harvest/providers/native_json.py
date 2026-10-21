@@ -628,11 +628,15 @@ class NativeJSONProvider(BaseProvider):
             listings, filtered = _workingnomads_filter(
                 self.name, listings, params.get("query", "").lower()
             )
-        error = fetch_error or ("invalid_json_items" if invalid else None)
         return FetchResult(
             listings,
-            {"items_seen": len(rows), "filtered": filtered},
+            {"items_seen": len(rows), "filtered": filtered, "invalid": invalid},
             pages_fetched=pages,
-            complete=not invalid and fetch_error is None,
-            error=error,
+            # DT-148 E1: un item ilegible NO congela `last_complete_at`. Antes
+            # bastaba uno para marcar el barrido incompleto, y un anuncio
+            # permanente dejaba el scope «parcial para siempre» — lo que además
+            # impedía que el kill-switch reseteara su contador de bloqueos. El
+            # recuento viaja en el cursor y `health` vigila la PROPORCIÓN.
+            complete=fetch_error is None,
+            error=fetch_error,
         )

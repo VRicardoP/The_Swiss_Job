@@ -318,10 +318,6 @@ class CoreCatalog:
             raise CoreUnavailableError("invalid core reference response") from exc
         return await self.get(vacancy_id)
 
-    async def _resolve_legacy_hashes(self, urls: list[str]) -> dict[str, str]:
-        """Legacy hashes are resolved by Core listing references after cutover."""
-        return {}
-
     def _guard_credential(self) -> None:
         """Sin credencial no se hace ni una peticion (mismo trato que caida)."""
         if (
@@ -367,12 +363,10 @@ class CoreCatalog:
                 f"payload invalido del core para {vacancy_id}: "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
-        # G1/P2-17: con Job local de respaldo (misma url UNIQUE) se presenta
-        # el hash MD5 legacy — la identidad con la que las ESCRITURAS
-        # (candidaturas/documentos) pueden actuar.
-        by_url = await self._resolve_legacy_hashes([job.url])
-        if job.url in by_url:
-            job.hash = by_url[job.url]
+        # DT-148 B3: aquí se resolvía el hash MD5 legacy de la oferta contra
+        # un Job local de respaldo (G1/P2-17). Tras el corte de DT-144 el
+        # resolutor devolvía `{}` siempre: la identidad servida es la del
+        # núcleo y las escrituras actúan con ella.
         return job
 
     async def search(self, params: CatalogSearchParams) -> JobSearchResponse:
@@ -394,16 +388,7 @@ class CoreCatalog:
                 f"payload invalido del feed de catalogo del core: "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
-        # G1/P2-17: identidad accionable en lote — cada item con Job local de
-        # respaldo (url UNIQUE) se presenta con su MD5 legacy; sin respaldo
-        # conserva el UUID (solo lectura, como los items core-nativos del
-        # matching). Sin esto, /documents/generate
-        # partiendo del buscador morian con 422 (36 chars > max_length=32)
-        # o, aun pasando, con 404 (Job.hash == job_hash).
-        by_url = await self._resolve_legacy_hashes([b.url for b in briefs])
-        for brief in briefs:
-            if brief.url in by_url:
-                brief.hash = by_url[brief.url]
+        # DT-148 B3: ídem en lote. El resolutor legacy ya no existe.
         total = page.total
         return JobSearchResponse(
             data=briefs,

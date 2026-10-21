@@ -57,6 +57,12 @@ def _sha256_bytes(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
+def _leer_bytes(path: str) -> bytes:
+    """Contenido binario con cierre determinista (DT-148 B5)."""
+    with io.open(path, "rb") as fh:
+        return fh.read()
+
+
 def build_dataset(
     judgments_path: str, profiles_content: dict, docs_path: str
 ) -> list[dict]:
@@ -65,12 +71,19 @@ def build_dataset(
     from jobhunt_core import cross_encoder as ce
 
     docs = {}
-    for linea in io.open(docs_path, encoding="utf-8"):
-        d = json.loads(linea)
-        if "vac" in d:
-            docs[d["vac"]] = d
+    # DT-148 B5: los cinco `io.open` de este módulo iban sin gestor de
+    # contexto. El fichero se cerraba cuando el recolector pasaba, no al
+    # terminar de leerlo: en un entrenamiento largo eso deja descriptores
+    # abiertos sin motivo. Mismo comportamiento, cierre determinista.
+    with io.open(docs_path, encoding="utf-8") as fh:
+        for linea in fh:
+            d = json.loads(linea)
+            if "vac" in d:
+                docs[d["vac"]] = d
     filas = []
-    for n, linea in enumerate(io.open(judgments_path, encoding="utf-8"), 1):
+    with io.open(judgments_path, encoding="utf-8") as fh:
+        lineas_juicios = list(enumerate(fh, 1))
+    for n, linea in lineas_juicios:
         linea = linea.strip()
         if not linea:
             continue
@@ -320,8 +333,8 @@ def run_training(
         "n_train": len(train),
         "n_val": len(val),
         "dataset_sha256": _sha256_bytes(dataset_canon.encode()),
-        "judgments_sha256": _sha256_bytes(io.open(judgments_path, "rb").read()),
-        "profiles_sha256": _sha256_bytes(io.open(profiles_content_path, "rb").read()),
+        "judgments_sha256": _sha256_bytes(_leer_bytes(judgments_path)),
+        "profiles_sha256": _sha256_bytes(_leer_bytes(profiles_content_path)),
         "model_fingerprint": huella,
         "artifact_dir": destino,
         "artifact_manifest": ce.model_manifest(os.path.abspath(destino)),

@@ -115,10 +115,11 @@ def test_empty_feed_is_complete():
     assert result.complete and result.listings == ()
 
 
-def test_invalid_neighbor_is_visible_partial():
+def test_invalid_neighbor_is_visible_in_the_cursor():
     result, _ = fetch(pages=[{"items": [raw(), None, {"title": "No identity"}]}])
-    assert len(result.listings) == 1 and not result.complete
-    assert result.error == "invalid_chmedia_items"
+    # DT-148 E1: el ilegible se cuenta en el cursor, el barrido sigue completo.
+    assert len(result.listings) == 1 and result.complete
+    assert result.error is None and result.next_cursor["invalid"] == 2
     with pytest.raises(ProviderResponseError):
         fetch(pages=[{"items": [None, {}]}])
 

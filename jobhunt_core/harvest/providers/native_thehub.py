@@ -127,7 +127,7 @@ class TheHubProvider(BaseProvider):
         if not isinstance(params, dict) or params:
             raise ProviderConfigError("TheHub remote scope has no query parameters")
         started = time.monotonic()
-        listings, pages, seen = [], 0, 0
+        listings, pages, seen, invalid = [], 0, 0, 0
         exhausted, error = False, None
         blocked_with = None
         for page in range(1, MAX_PAGES + 1):
@@ -151,7 +151,9 @@ class TheHubProvider(BaseProvider):
             for index, row in enumerate(rows):
                 job_id = _id(row.get("id")) if isinstance(row, dict) else ""
                 if not job_id:
-                    error = "invalid_thehub_items"
+                    # DT-148 E1: un item sin identidad se cuenta, no marca el
+                    # barrido incompleto. El ratio lo vigila `health.py`.
+                    invalid += 1
                     continue
                 remaining = SWEEP_BUDGET_S - (time.monotonic() - started)
                 if remaining <= 0:
@@ -184,7 +186,7 @@ class TheHubProvider(BaseProvider):
             )
         return FetchResult(
             tuple(listings),
-            {"items_seen": seen, "pages": pages},
+            {"items_seen": seen, "pages": pages, "invalid": invalid},
             pages_fetched=pages,
             complete=exhausted and error is None,
             error=error,

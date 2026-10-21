@@ -175,12 +175,14 @@ def test_an_empty_listing_is_a_visible_failure(monkeypatch):
         fetch({1: page([])}, monkeypatch=monkeypatch)
 
 
-def test_a_row_without_id_title_or_url_is_reported(monkeypatch):
+def test_a_row_without_id_title_or_url_is_counted(monkeypatch):
     rows = [job(1), job(2, title=""), job(3, url="https://evil.test/x"), {"id": 4}]
     result, _requests = fetch({1: page(rows)}, monkeypatch=monkeypatch)
 
     assert [row.external_id for row in result.listings] == ["id:2351631"]
-    assert not result.complete and result.error == "invalid_tes_rows"
+    # DT-148 E1.
+    assert result.complete and result.error is None
+    assert result.next_cursor["invalid"] == 3
 
 
 def test_the_ignored_page_parameter_is_measured_not_hidden(monkeypatch, caplog):
@@ -201,6 +203,8 @@ def test_the_ignored_page_parameter_is_measured_not_hidden(monkeypatch, caplog):
         "harvested": 3,
         "shortfall": 8,
         "pagination_ignored": True,
+        "items_seen": 11,
+        "invalid": 0,
     }
     # Una limitación permanente del portal no debe congelar last_complete_at.
     assert result.complete and result.error is None

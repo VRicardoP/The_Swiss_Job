@@ -35,9 +35,6 @@ export function useMatchResults(
   });
 }
 
-// Carga de una página de resultados con traducciones — para mostrar las tarjetas.
-
-
 export function useSubmitFeedback() {
   const qc = useQueryClient();
   return useMutation({

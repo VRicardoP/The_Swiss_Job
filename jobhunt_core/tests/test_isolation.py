@@ -43,8 +43,11 @@ def test_expected_core_queues_exist():
     }
 
 
-def test_lock_prefix_is_own_namespace():
-    assert settings.CORE_LOCK_PREFIX == "jobhunt:"
+# DT-148 B4 (2026-10-21): aquí se afirmaba `CORE_LOCK_PREFIX == "jobhunt:"`.
+# El ajuste se retiró porque prometía un namespace de locks que no daba: los
+# locks del núcleo son `pg_advisory_xact_lock` sobre claves hasheadas en su
+# propio esquema —lo que fija `test_db_schema_is_own`— y el aislamiento del
+# broker lo da el Redis dedicado, que fija `test_broker_is_dedicated`.
 
 
 def test_db_schema_is_own():

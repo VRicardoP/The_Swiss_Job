@@ -10,9 +10,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    cast,
     func,
-    or_,
     text,
 )
 from sqlalchemy.dialects.postgresql import ENUM, JSONB, TSVECTOR
@@ -134,15 +132,6 @@ class Job(Base):
     def __repr__(self) -> str:
         return f"<Job hash={self.hash} source={self.source} title={self.title!r}>"
 
-    @staticmethod
-    def exclude_student_conditions():
-        """Permanent filter: exclude intern/apprenticeship roles."""
-        return [
-            or_(cast(Job.seniority, String) != "intern", Job.seniority.is_(None)),
-            or_(
-                cast(Job.contract_type, String).notin_(
-                    ["internship", "apprenticeship"]
-                ),
-                Job.contract_type.is_(None),
-            ),
-        ]
+    # DT-148 B3 (2026-10-21): `exclude_student_conditions` (filtro permanente de
+    # prácticas y aprendizaje) se fue con el runtime de matching local que lo
+    # consultaba (`42ecf96`). La admisión del núcleo decide hoy qué entra.

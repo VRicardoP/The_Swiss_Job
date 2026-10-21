@@ -11,10 +11,12 @@ from jobhunt_core.tests.test_native_chmedia import fetch, raw
         raw(id=-1),
     ],
 )
-def test_toxic_identity_is_partial_and_preserves_valid_neighbor(row):
+def test_toxic_identity_is_counted_and_preserves_valid_neighbor(row):
     result, _ = fetch(pages=[{"items": [raw(), row]}])
     assert len(result.listings) == 1
-    assert not result.complete and result.error == "invalid_chmedia_items"
+    # DT-148 E1: el ilegible se cuenta en el cursor, el barrido sigue completo.
+    assert result.complete and result.error is None
+    assert result.next_cursor["invalid"] == 1
 
 
 def test_native_registry_and_admission():

@@ -334,12 +334,16 @@ class ISPWorkdayProvider(BaseProvider):
                 "pages": pages,
                 "items_seen": seen,
                 "vacancies": len(listings),
-                "degraded_items": degraded,
+                # DT-148 E1: la clave es `invalid` en TODOS los proveedores
+                # porque es la que lee `harvest/health.py` para su ratio.
+                "invalid": degraded,
                 "verified_empty": not listings,
             },
             pages_fetched=pages,
-            # The type's invariant: an error means an incomplete sweep. A
-            # degraded item is visible rather than silent, which is the point.
-            complete=not degraded,
-            error="degraded_isp_items" if degraded else None,
+            # DT-148 E1: un item ilegible NO congela `last_complete_at`. Antes
+            # bastaba uno para marcar el barrido incompleto, y un anuncio
+            # permanente dejaba el scope «parcial para siempre» — lo que además
+            # impedía que el kill-switch reseteara su contador de bloqueos. El
+            # recuento viaja en el cursor y `health` vigila la PROPORCIÓN.
+            complete=True,
         )

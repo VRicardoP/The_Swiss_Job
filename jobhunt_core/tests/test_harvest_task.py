@@ -8,7 +8,7 @@ from jobhunt_core.celery_app import celery_app, protect_http_logs
 from jobhunt_core.harvest import identity
 from jobhunt_core.harvest.provider import ProviderConfigError
 from jobhunt_core.harvest.providers import UnknownProviderError
-from jobhunt_core.harvest.sink import _preprocess, content_hash, normalize_url
+from jobhunt_core.harvest.sink import _preprocess, canonical_payload, normalize_url
 from jobhunt_core.harvest.types import RawListing, ScopeRunResult
 
 
@@ -277,9 +277,13 @@ def test_normalize_url_canonical():
     assert normalize_url("https://x/a") == normalize_url("https://x/a/")
 
 
-def test_content_hash_stable_regardless_of_key_order():
-    assert content_hash({"a": 1, "b": 2}) == content_hash({"b": 2, "a": 1})
-    assert content_hash({"a": 1}) != content_hash({"a": 2})
+def test_canonical_payload_stable_regardless_of_key_order():
+    """DT-148 B4: antes se probaba `content_hash`, el envoltorio SHA-256 de
+    `canonical_payload` que producción no usaba. Lo que de verdad importa —y lo
+    que el sink SÍ llama— es que la serialización canónica no dependa del orden
+    de las claves y sí del contenido."""
+    assert canonical_payload({"a": 1, "b": 2}) == canonical_payload({"b": 2, "a": 1})
+    assert canonical_payload({"a": 1}) != canonical_payload({"a": 2})
 
 
 def test_normalize_url_keeps_identity_fragment():

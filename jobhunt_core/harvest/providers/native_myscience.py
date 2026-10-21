@@ -434,16 +434,19 @@ class MyScienceProvider(BaseProvider):
             logger.warning(
                 "%s: %d cards without id, title or link", SOURCE_NAME, invalid
             )
-        error = error or ("invalid_myscience_cards" if invalid else None)
         return FetchResult(
             listings,
             {
                 "pages": pages,
                 "items_seen": seen,
+                "invalid": invalid,
                 "identities": len(by_identity),
                 "details_fetched": details,
             },
             pages_fetched=pages,
+            # DT-148 E1: un item ilegible NO congela `last_complete_at`. El
+            # recuento viaja en el cursor y `harvest/health.py` alerta por
+            # PROPORCIÓN de ilegibles, no por el primer item malformado.
             complete=exhausted and error is None,
             error=error,
             # El barrido lo cortó `first_failure`: si fue un 403/429/503 del

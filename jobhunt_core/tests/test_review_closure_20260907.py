@@ -25,7 +25,7 @@ async def _declare(factory, pid):
 
 async def _pending(factory):
     async with factory() as s:
-        return await matching_tasks._recovery_targets(s, set())
+        return await matching_tasks._recovery_targets(s)
 
 
 def test_exclusion_change_must_rearm_recovery(db):  # noqa: F811  (la fixture, no una redefinición)

@@ -4,6 +4,7 @@ import { jobsApi } from "../config/api";
 import useAuthStore from "../stores/authStore";
 import DocumentGenerator from "../components/DocumentGenerator";
 import { sanitizeHtml } from "../utils/sanitizeHtml";
+import { cn } from "../components/ui";
 
 function formatSalary(min, max) {
   if (!min && !max) return null;
@@ -142,8 +143,26 @@ export default function JobDetailPage() {
         {/* Description */}
         {job.description && (
           <div className="bg-surface p-6 rounded-xl shadow-card">
+            {/* DT-148 B8: aquí había `prose prose-sm prose-headings:… prose-p:…
+                prose-a:…`, clases de @tailwindcss/typography — un plugin que
+                este proyecto NO tiene instalado. Eran INERTES, y con el
+                preflight de Tailwind borrando los márgenes por defecto la
+                descripción se servía como un muro de texto. Estas selectoras
+                de descendiente sí actúan sobre el HTML saneado de la oferta
+                (las etiquetas son las de `sanitizeHtml`) y usan el tema. */}
             <div
-              className="prose prose-sm prose-headings:text-text-primary prose-p:text-text-secondary prose-a:text-swiss-red max-w-none"
+              className={cn(
+                "max-w-none text-sm leading-relaxed text-text-secondary",
+                "[&_h1]:mt-5 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold [&_h1]:text-text-primary",
+                "[&_h2]:mt-5 [&_h2]:mb-2 [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-text-primary",
+                "[&_h3]:mt-4 [&_h3]:mb-1 [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-text-primary",
+                "[&_h4]:mt-4 [&_h4]:mb-1 [&_h4]:text-sm [&_h4]:font-semibold [&_h4]:text-text-primary",
+                "[&_p]:mt-3 [&_strong]:font-semibold [&_strong]:text-text-primary [&_em]:italic",
+                "[&_ul]:mt-3 [&_ul]:ml-5 [&_ul]:list-disc [&_ol]:mt-3 [&_ol]:ml-5 [&_ol]:list-decimal",
+                "[&_li]:mt-1 [&_blockquote]:mt-3 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3",
+                "[&_a]:text-swiss-red [&_a]:underline [&_code]:font-mono [&_code]:text-xs",
+                "[&_pre]:mt-3 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-surface-secondary [&_pre]:p-3",
+              )}
               dangerouslySetInnerHTML={{ __html: sanitizeHtml(job.description) }}
             />
           </div>

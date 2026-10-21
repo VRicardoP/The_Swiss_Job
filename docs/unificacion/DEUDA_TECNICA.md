@@ -674,7 +674,7 @@ Procedimiento común a todos los B: (1) la búsqueda de consumidores de la regla
 (3) `ruff check` (F401 de imports que quedan huérfanos); (4) suite focal del
 fichero; (5) si se tocó `Settings`, regenerar `.env.prod.example`.
 
-#### B1 · Rama de re-ranking LLM de `groq_service.py` — 442 LOC + 721 de tests, cero llamadores
+#### B1 · Rama de re-ranking LLM de `groq_service.py` — **CERRADO 2026-10-21**
 
 **Dónde.** `backend/services/groq_service.py:21-61` (`_solo_textos`,
 `_CACHE_SCHEMA_VERSION`, `_sanear_veredicto`), `:62-105` (`RERANK_SYSTEM_PROMPT`,
@@ -703,7 +703,7 @@ letter_generator, warm.
 **Verificación.** `test_groq_service.py`, `test_translation_service.py`,
 `test_env_example_covers_settings.py`.
 
-#### B2 · `backend/utils/text.py` es una copia literal de `rss_text.py` del core y sólo se usa una función
+#### B2 · `backend/utils/text.py`, copia literal de `rss_text.py` — **CERRADO 2026-10-21** (264 → 21 LOC)
 
 **Dónde.** `backend/utils/text.py` (264 LOC): `SWISS_CANTONS`, `JOB_TAGS`,
 `strip_html_tags`, `extract_job_skills`, `extract_canton`.
@@ -715,7 +715,7 @@ letter_generator, warm.
 `backend/tests/test_utils.py` a sus casos. No importar desde el core: la
 frontera BFF↔core es HTTP, no imports (plan §21).
 
-#### B3 · Módulos, métodos y settings del BFF sin consumidor de producción
+#### B3 · Módulos, métodos y settings del BFF sin consumidor de producción — **CERRADO 2026-10-21**
 
 | Símbolo | Dónde | Consumidores fuera de tests | Acción |
 |---|---|---|---|
@@ -729,7 +729,7 @@ frontera BFF↔core es HTTP, no imports (plan §21).
 | `tasks/example_task.py` (`tasks.ping`) | — | sólo `celery_app.conf.include:43` | borrar fichero y la línea del include |
 | Settings `MATCH_SCORE_THRESHOLD`, `MATCH_LLM_RERANK_TOP`, `MATCH_LLM_RERANK_MAX`, `SEMANTIC_DEDUP_THRESHOLD`, `SEMANTIC_DEDUP_TITLE_OVERLAP_MIN`, `ALERTS_MAX_PUSH_PER_DAY`, `ALERTS_MIN_SCORE_THRESHOLD`, `SCHEDULER_SEARCH_INTERVAL_MINUTES`, `SAVED_SEARCH_INITIAL_LOOKBACK_DAYS` | `backend/config.py:111-165, 244` | 0 lectores fuera de `config.py`/tests (medido con `grep -rnw`) | borrar campo y su comentario; regenerar `.env.prod.example`; `CLAUDE.md:456` cita `MATCH_SCORE_THRESHOLD` (F1) |
 
-#### B4 · Símbolos muertos del core
+#### B4 · Símbolos muertos del core — **CERRADO 2026-10-21**
 
 | Símbolo | Dónde | Evidencia | Acción |
 |---|---|---|---|
@@ -745,7 +745,7 @@ frontera BFF↔core es HTTP, no imports (plan §21).
 | `evaluate_profile(with_corpus_generation=…)` | `matching.py:2069-2071` | `gen_snapshot` se lee SIEMPRE en `:2048` en la misma transacción; el flag sólo elige entre dos lecturas equivalentes, y con `target == 0` devuelve None | `corpus_gen = gen_snapshot`; quitar el parámetro y sus dos usos en `tasks/matching.py:281,312`; mantener `compute_policy_feed(with_corpus_generation=...)` si lo usa alguien más (comprobar) |
 | Settings `CORE_EMBEDDING_MODEL_NAME`, `CORE_ENV`, `CORE_LOCK_PREFIX` | `jobhunt_core/config.py` | 0 lectores fuera de config/tests | borrar |
 
-#### B5 · Herramientas de desarrollo que viajan en la imagen de producción
+#### B5 · Herramientas de desarrollo que viajan en la imagen de producción — **PASOS 1-2 CERRADOS 2026-10-21; 3-4 NO EJECUTADOS (ver acta)**
 
 **Dónde.** `jobhunt_core/dev_eval.py` (777 LOC; `evaluate_dev` D28,
 `_validate_universe_seal` D22; `open()` sin context manager en `:716`),
@@ -804,7 +804,29 @@ hasta que la tabla esté vacía y entonces (a). Recomendación: (a) ahora, con
 `SELECT count(*) FROM jobhunt.shadow_inbox` anotado en el checkpoint antes del
 DROP. Va junto con F3 (`legacy_shadow.py`).
 
-#### B7 · Frontend — exportaciones sin importador
+**MEDIDO el 2026-10-21, antes de decidir nada** (lo que el punto pedía):
+
+```
+$ docker exec swissjob-postgres psql -U jobhunt_core \
+    -d swissjobhunter_r5_rehearsal \
+    -c 'SELECT count(*) FROM jobhunt.shadow_inbox;'
+ filas
+-------
+     0
+```
+
+La tabla está **VACÍA en producción**, así que la condición de la vía (b)
+—«dejar la purga hasta que la tabla esté vacía y entonces (a)»— ya se cumple y
+las dos vías convergen en la misma: la migración que la dropea.
+
+**NO SE EJECUTÓ, a propósito.** Es un DROP sobre una tabla de producción y el
+propio punto lo reserva al propietario, no al ejecutor. Lo único que faltaba
+para decidir era este número, y ya está. Cuando el propietario lo autorice, el
+trabajo es: migración `core00NN` con el DROP en `upgrade()` y el CREATE en
+`downgrade()`, fuera `jobhunt_core/retention.py:96-97,130` (la purga) y fuera
+`CORE_SHADOW_INBOX_RETENTION_DAYS` de `config.py:142`.
+
+#### B7 · Frontend — exportaciones sin importador — **CERRADO 2026-10-21**
 
 **Dónde** (`grep -rnw <nombre> frontend/src` excluyendo tests da sólo la
 definición): `useCreateApplication` (`hooks/useApplications.js:18`) y
@@ -823,7 +845,7 @@ si A4 se cierra y el propietario quiere la acción «guardar candidatura» en la
 UI, se conserva y se conecta; si no, se borra. Anotar la decisión.
 **Verificación.** `npm run lint && npx vitest run && npm run build`.
 
-#### B8 · Clases Tailwind sin efecto y paleta fuera del tema
+#### B8 · Clases Tailwind sin efecto y paleta fuera del tema — **CERRADO 2026-10-21**
 
 **Dónde.** `frontend/src/pages/JobDetailPage.jsx:146` usa `prose prose-sm
 prose-headings:…` sin `@tailwindcss/typography` (no está en `package.json` ni
@@ -834,6 +856,122 @@ otras páginas para texto largo (mirar `DocumentGenerator.jsx:38`
 `MarkdownRenderer`), o instalar el plugin SOLO si el propietario lo aprueba
 (regla «no introducir dependencias sin justificarlo»). `bg-gray-50` →
 `bg-surface-secondary`. Se cierra junto con C8 (AuthShell).
+
+### Acta de ejecución de la sección B — 2026-10-21
+
+**Resultado.** B1, B2, B3, B4, B7 y B8 CERRADOS. B5 cerrado en sus pasos 1-2
+(el objetivo: las herramientas fuera de la imagen) y NO ejecutado en 3-4. B6
+sigue esperando la decisión del propietario, que es lo que el propio punto dice.
+Balance de los commits `f1439fc`, `1b64c31`, `e3b8a5c` y el de B5: **2.811
+líneas netas fuera** sólo en B1-B4.
+
+**Cuatro cosas que el inventario tenía mal y hubo que corregir ejecutando:**
+
+1. **B1 omitía el doble de LLM.** `tests/llm_stub.py` importaba
+   `RERANK_SYSTEM_PROMPT` para despachar su handler de rerank, y
+   `tests_live/test_llm_contract_live.py` ejercitaba `_rerank_prompt` y
+   `_parse_llm_response`. Sin tocarlos, borrar la rama dejaba la suite entera
+   sin recolectar. Se fueron el handler y el caso en vivo.
+2. **B3 decía que `clear_profile_cache` lo usan tres módulos.** Lo usa UNO
+   (`profile_erasure.clear_erased_caches`) y existía para invalidar la caché de
+   ETag de `CoreProfile`. Al irse el adaptador, la función vaciaba un
+   diccionario que nadie escribe: eso no protege ningún dato, sólo lo parece.
+   Se fue con la caché, y la prueba de borrado conserva la mitad que importa
+   (la caché del FEED, que sí sirve contenido del sujeto).
+3. **B4 daba `CORE_ENV` por muerto.** Lo lee `jobhunt_core/config.py:161`, en
+   el validador que exige el aislamiento del DoD en producción. NO se tocó.
+   Sí se fueron `CORE_LOCK_PREFIX` (prometía un namespace de locks que no daba:
+   los locks son `pg_advisory_xact_lock` sobre claves hasheadas) y
+   `CORE_EMBEDDING_MODEL_NAME` (activamente engañoso: el backend carga el
+   `(name, version)` de cada encoder REGISTRADO en la base, nunca este valor).
+4. **B5 buscaba consumidores excluyendo los tests, y eso ocultó una
+   dependencia real.** Dos tests del NÚCLEO dependen de `dev_eval`:
+   `test_integration_cross_encoder.py` construye sobre cinco de sus helpers y
+   `test_review_evidence_20260907.py` reproduce con él la regresión del sello.
+   `dev_eval` es el INSTRUMENTO DE MEDIDA del gate de matching, así que esos
+   tests están en su sitio. Se movieron los dos MÓDULOS a `tools/core/` —que es
+   el objetivo: la imagen reconstruida ya no los contiene, comprobado con
+   `ls /app/jobhunt_core`— y `test_integration_dev_eval.py` se quedó donde
+   están sus consumidores, con la costura declarada UNA vez en
+   `jobhunt_core/tests/dev_tools.py`. El perfil de DESARROLLO monta `./tools`
+   de solo lectura, exactamente como ya montaba `./scripts` por el mismo
+   motivo; el perfil operativo no, que es el punto.
+
+**Dos desviaciones deliberadas del plan, con su motivo:**
+
+- **No se borró `scripts/set_match_facets_flag.py`.** El inventario lo
+  justificaba con «0 referencias», pero edita `CORE_MATCH_FACETS_ENABLED` en el
+  compose de producción, que hoy está en `true`. Cero referencias no es lo
+  mismo que ningún propósito: es herramienta de OPERADOR, de la familia de
+  `rotate_credential.py` y `policy_ctl.py`, que el propio B5 dice no mover. En
+  su lugar su test entró al CI.
+- **No se ejecutaron los pasos 3 y 4 de B5** (reagrupar los 18
+  `provision_*.py` en un subpaquete y mudar las sondas de un solo uso a
+  `tools/probes/`). Son reorganización pura: cambian rutas citadas en actas y
+  los `python -m jobhunt_core.provision_x` de un runbook de operación
+  (`DT144_RELEVO.md`) a cambio de CERO efecto en producción. Equivocarse ahí
+  rompe un procedimiento operativo por ninguna ganancia. Quedan abiertos.
+
+**Lo que sí entró al CI** (parte de B5 paso 4, la que protege algo): `tools` al
+`ruff check` junto a `scripts` y `docs` —un árbol nuevo fuera del linter es
+exactamente cómo esos dos acumularon 53 avisos—, la invocación de
+`tools/core/tests`, y los cuatro tests de scripts que nadie lanzaba
+(`check_no_secrets`, que impide que vuelva un literal a `deploy/nas`;
+`check_core_release`, que es el ritual de verificación tras desplegar;
+`ensure_swissjob_frontend` y `set_match_facets_flag`). Un test que nadie
+ejecuta no protege nada. Comprobados: 11 pasan.
+
+**Pruebas.** BFF 672 passed. Núcleo 1.784 passed · 1 skipped (incluye
+`test_deploy_order` y `tools/core/tests`, con la raíz del repo montada).
+Frontend: eslint limpio, 60 tests, build correcto. `ruff check` y
+`ruff format --check` limpios en los 663 ficheros del repo y los 247 del BFF.
+
+### Checkpoint de despliegue de E1 + sección B — 2026-10-21
+
+**Estado: CONSTRUIDO Y VERIFICADO, NO DESPLEGADO.** El bloqueo no es técnico:
+`main` está protegida (PR obligatorio + 9 checks) y `scripts/deploy_nas.sh`
+rechaza cualquier SHA que no sea EXACTAMENTE el de `github/main` —esa guarda es
+la que impide que `RELEASE_SHA` mienta, así que no se puentea—. Los seis
+commits están en la rama `dt148/e1-and-section-b` del remoto; el merge es del
+propietario, y `gh` no está instalado ni hay token en este entorno.
+
+**Los nueve checks del CI, ejecutados aquí antes de pedir el merge** (para que
+no sea una apuesta):
+
+| Job | Resultado local |
+|---|---|
+| source-ownership | `{"core_owned": 41, "local_pending": 0, "sources": 59}` |
+| backend-lint | ruff check + format limpios (247 ficheros) y `scripts docs tools` limpios |
+| backend-test | 672 passed |
+| frontend-lint | eslint limpio |
+| frontend-test | 60 passed |
+| core-lint | ruff limpio (372 ficheros) |
+| core-test | 1.784 passed · 1 skipped (incluye `tools/core/tests`) |
+| compose-config | los cuatro composes resuelven; `check_no_secrets deploy/nas` 0 hallazgos; C7 ninguno a la LAN |
+| docker-build | las seis imágenes construyen |
+
+Además: `alembic check` sin operaciones nuevas, y los cuatro tests de scripts
+nuevos del CI verificados en un `python:3.12-slim` limpio (11 passed, sólo
+stdlib + pytest).
+
+**Despliegue preparado.** Los tres ensayos en seco pasan y fijan las etiquetas:
+
+```
+core      → swissjob-core:point5-<sha>      compose core.configured.yml      proyecto swissjob-r5
+            recrea core-api core-worker core-harvest-worker core-ops-worker
+bff       → swissjob-backend:point5-<sha>   compose swissjob.configured.yml  proyecto swissjob
+            recrea backend worker
+frontend  → swissjob-frontend:point5-<sha>  compose swissjob.configured.yml  proyecto swissjob
+```
+
+**Orden obligatorio: core ANTES que BFF.** No es preferencia: E1 cambia el
+contrato del cursor de los 19 proveedores (`invalid` e `items_seen`) y la
+alerta por proporción, y las dos cosas viven en el núcleo. El frontend va al
+final: B7/B8 sólo tocan su árbol.
+
+**Nada que migrar.** Ni E1 ni la sección B añaden migración: la cabeza del
+núcleo sigue siendo la que ya corre. El único DROP pendiente es el de B6, y
+espera al propietario.
 
 ### C · Duplicación (consolidar sin cambiar comportamiento)
 
@@ -1295,7 +1433,7 @@ sólo imports). `hooks/useWatchlist.js` (`useWatchlist`, `useSetWatchlistStatus`
 
 ### E · Consistencia, legibilidad y rendimiento menor
 
-#### E1 · `complete = not invalid` en 17 proveedores: un ítem malformado permanente deja el scope «parcial para siempre» y bloquea el reset del kill-switch — MEDIA
+#### E1 · `complete = not invalid` en 17 proveedores: un ítem malformado permanente deja el scope «parcial para siempre» y bloquea el reset del kill-switch — **CERRADO 2026-10-21**
 
 **Dónde.** `complete=not invalid` / `not degraded` / `exhausted and not
 invalid` en `native_dynamitejobs, native_isp_workday, native_jobscout24,
@@ -1321,6 +1459,49 @@ malformado no impide `complete=True`; `items_seen` y `invalid` en el cursor).
 Añadir el setting con su comentario y regenerar el ejemplo de entorno del
 core si existe (`grep -rn "CORE_HARVEST_MISSING_DATE" jobhunt_core docs` para
 encontrar el patrón del ratio ya existente).
+
+**EJECUTADO el 2026-10-21.** Fueron **19** proveedores, no 17: el recuento del
+ledger omitía `native_thehub` (ponía `error = "invalid_thehub_items"` dentro del
+bucle) y `native_json`, que cubre además remotive/himalayas/swisstechjobs/
+ictjobs/workingnomads por composición. La política aplicada es la de
+jobgether/tes, idéntica en los diecinueve:
+
+1. `invalid` **ya no entra** ni en la expresión `complete=` ni en la de
+   `error=`. Esto último era imprescindible y el ledger no lo decía: la
+   invariante de `FetchResult` es «`error is not None` ⇒ `complete is False`»,
+   así que dejar el código `invalid_x_items` habría seguido congelando
+   `last_complete_at` por la otra puerta — y además sumaba un
+   `consecutive_failures` por cada barrido con un anuncio ilegible.
+2. El cursor transporta `{"invalid": n, "items_seen": m}` en los diecinueve.
+   `native_isp_workday` tenía la clave con otro nombre (`degraded_items`) y se
+   **renombró a `invalid`**: la vigilancia lee una sola clave, y dos nombres
+   para el mismo número son la forma de que uno deje de mirarse.
+   `native_tes` no exponía ninguna de las dos y ahora expone ambas.
+3. `jobhunt_core/harvest/health.py` → `_invalid_items_alert(row, ratio_max)`,
+   calcada de `_missing_date_alert`: código `cosecha_con_items_ilegibles`,
+   alerta si `invalid / items_seen > CORE_HARVEST_INVALID_RATIO_MAX`. Silencio
+   deliberado sin cursor, sin contadores o con `items_seen == 0` — un scope que
+   aún no ha cosechado no es un scope roto.
+4. `jobhunt_core/config.py` → `CORE_HARVEST_INVALID_RATIO_MAX: float = 0.5`
+   (`ge=0.0, le=1.0`). Medio feed ilegible es un cambio de forma; un anuncio de
+   cada cien es ruido conocido.
+
+**Pruebas.** No hizo falta un commit por proveedor: la política es una y el
+diff es mecánico. Se INVIRTIERON las 50 aserciones que fijaban la conducta
+vieja (`not result.complete` / `error == "invalid_x"`) a la nueva (`complete`,
+`error is None`, `next_cursor["invalid"] == n`) en 17 ficheros de test, y se
+añadió `test_harvest_health_alerts_by_ratio_of_unreadable_items` en
+`test_integration_harvest.py` con los dos controles negativos (el anuncio
+permanente 1/100 **no** alerta) y el umbral mandando en los dos sentidos.
+Suite del núcleo: **1.783 passed · 1 skipped**; los 3 rojos de
+`test_deploy_order.py` son el artefacto conocido del arnés (exige la raíz del
+repo montada) y pasan los 11 con `-v "$PWD:/repo" -w /repo`.
+
+**Lo que NO se tocó, a propósito.** `error` por causas reales (`page_fetch_failed`,
+`time_budget`, `budget_exhausted`, `soft_block`, el nombre de la excepción) sigue
+marcando el barrido incompleto en todos. Y `native_jobgether.py` conserva su
+segundo caso de barrido parcial (`ProviderResponseError` en la página k>1), que
+no es un item ilegible.
 
 #### E2 · Tres semánticas de «llegué al tope de páginas» — BAJA
 
@@ -4791,7 +4972,7 @@ la funcionalidad completa; no prueban por sí solos que toda la plataforma esté
 
 | ID | Prioridad / dimensión | Evidencia y situación |
 |---|---|---|
-| A18-01 | P2 · funcionalidad/integración | **CERRADO 2026-09-28** — cota C-API-R cerrada en el core: `_catalog_filter_sql` sirve `q`/`source`/`remote`/`country`/`city` con semántica documentada; `test_catalog_contract.py` prueba la equivalencia local↔core por filtro (`test_search_filters_equivalent_local_vs_core`) y que los parámetros no soportados no generan petición. El 501 de `core_primary` ya no puede darse |
+| A18-01 | P2 · funcionalidad/integración | **REABIERTO 2026-10-20 — el cierre del 28-09 afirmaba algo que el código no da.** Lo cerrado es cierto a medias: el core sirve `q`/`source`/`remote`/`country`/`city` y los filtros sin equivalente NO generan petición. Pero la frase «el 501 de `core_primary` ya no puede darse» es FALSA, y se comprueba ejecutando: `GET /api/v1/jobs/search` devuelve **501** con `canton`, `language`, `seniority`, `contract_type`, `salary_min/max` y con `sort=salary` o `sort=relevance` — los ocho los sigue ofreciendo la interfaz (`searchStore.js` los modela y `FilterPanel` los pinta). DT-148 A11 retiró los dos endpoints que daban 501 incondicional y el desplegable de fuentes que nunca se llenaba, pero no tocó estos controles porque retirarlos de la UI es decisión de producto. **Lo que falta:** o la UI deja de ofrecer lo que el catálogo no sirve, o el `/v1` los implementa. Mientras tanto, un usuario que filtre por cantón recibe un error |
 | A18-02 | P2 · bug/eficiencia | **CERRADO 2026-09-28** — el camino escolar ya no pagina: `CoreWatchlist.get_match` resuelve por `GET /school-jobs?dedup_key=<hash>&limit=2` (una petición, ambigüedad = error) y `services/schools/core_client.list()` es una sola llamada. No queda ningún bucle de 100 páginas en `backend/services/matching` ni `services/schools` |
 | A18-03 | P2 · funcionalidad/UX | **CERRADO 2026-09-28** — la pantalla principal pide `limit=3000` (≥ corpus) y la pestaña Watchlist filtra sobre ese lote, así que el corte a 500 no aplica; `MatchPage` renderiza `isError` aparte del vacío. Residuo aceptado: un fallo del corpus ESCOLAR degrada a «sin `school_id`» con `logger.warning` (M5/T12), no con aviso en la UI |
 | A18-04 | P2 · concurrencia | **CERRADO 2026-09-28** — `claim_deliveries` usa `FOR UPDATE OF d SKIP LOCKED` + lease; `test_g7_dos_dispatchers_solapados_retiran_UNA_fila_habiendo_dos_candidatos` lo prueba. Suite del núcleo en verde el 2026-09-28 |

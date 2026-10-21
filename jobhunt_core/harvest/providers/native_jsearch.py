@@ -291,8 +291,14 @@ class JSearchProvider(BaseProvider):
             )
         return FetchResult(
             listings,
-            {"items_seen": len(rows), "last_query": search_params.query},
+            {
+                "items_seen": len(rows),
+                "invalid": invalid,
+                "last_query": search_params.query,
+            },
             pages_fetched=search_params.num_pages,
-            complete=invalid == 0,
-            error="invalid_jsearch_items" if invalid else None,
+            # DT-148 E1: un item ilegible NO congela `last_complete_at`. El
+            # recuento viaja en el cursor y `harvest/health.py` alerta por
+            # PROPORCIÓN de ilegibles, no por el primer item malformado.
+            complete=True,
         )

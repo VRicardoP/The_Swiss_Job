@@ -275,14 +275,21 @@ class JobgetherProvider(BaseProvider):
             raise ProviderResponseError(
                 "Jobgether nonempty feed has no usable identities"
             )
-        error = error or ("invalid_jobgether_items" if invalid else None)
+        # DT-148 E1: un item ilegible NO congela `last_complete_at` ni suma
+        # un fallo consecutivo. El recuento viaja en el cursor y
+        # `harvest/health.py` alerta por PROPORCIÓN de ilegibles.
         if not exhausted and MAX_PAGES_PARAM not in params:
             # Undeclared: hitting the internal safety cap is still partial.
             error = error or "page_budget"
         exhausted = exhausted or (MAX_PAGES_PARAM in params and pages >= budget)
         return FetchResult(
             tuple(listings),
-            {"pages": pages, "items_seen": seen, "ambiguous": len(ambiguous)},
+            {
+                "pages": pages,
+                "items_seen": seen,
+                "invalid": invalid,
+                "ambiguous": len(ambiguous),
+            },
             pages_fetched=pages,
             complete=exhausted and error is None,
             error=error,

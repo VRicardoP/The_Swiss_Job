@@ -257,17 +257,21 @@ class SwissDevJobsProvider(BaseProvider):
             )
         if invalid:
             logger.warning("%s: %d invalid items", SOURCE_NAME, invalid)
-        error = "invalid_swissdevjobs_items" if invalid else None
         return FetchResult(
             listings,
             {
                 "items_seen": len(rows),
+                "invalid": invalid,
                 "details_cached": len(descriptions),
                 "detail_attempts": attempts,
                 "details_fetched": fetched,
                 "descriptions": descriptions,
             },
             pages_fetched=1,
-            complete=not invalid,
-            error=error,
+            # DT-148 E1: un item ilegible NO congela `last_complete_at`. Antes
+            # bastaba uno para marcar el barrido incompleto, y un anuncio
+            # permanente dejaba el scope «parcial para siempre» — lo que además
+            # impedía que el kill-switch reseteara su contador de bloqueos. El
+            # recuento viaja en el cursor y `health` vigila la PROPORCIÓN.
+            complete=True,
         )

@@ -711,11 +711,9 @@ async def _main(argv) -> None:
             if args.cmd == "seal-universe":
                 excluidas = []
                 if args.exclude_vacancies:
-                    excluidas = [
-                        x.strip()
-                        for x in open(args.exclude_vacancies, encoding="utf-8")
-                        if x.strip()
-                    ]
+                    # DT-148 B5: antes sin gestor de contexto.
+                    with open(args.exclude_vacancies, encoding="utf-8") as fh:
+                        excluidas = [x.strip() for x in fh if x.strip()]
                 sello = await build_universe_manifest(
                     s, profiles, model_id=args.model, exclude_vacancy_ids=excluidas
                 )

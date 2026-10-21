@@ -2,8 +2,8 @@
 
 Sustituye SOLO la llamada saliente: el SDK de Groq (`groq.Groq`) y la costura
 HTTP de Gemini (`services.gemini_service._client_factory`). Todo lo que hay
-por encima —construcción del prompt, parseo, saneo, batching, caché, elección
-de fallback— sigue siendo código real y sigue pudiendo fallar.
+por encima —construcción del prompt, parseo, saneo, caché, elección de
+fallback— sigue siendo código real y sigue pudiendo fallar.
 
 Por qué esto AUMENTA la capacidad de refutación en vez de reducirla: un test
 cuya luz verde depende de que la API de un tercero esté arriba no refuta nada
@@ -24,7 +24,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from services.cv_analyzer import _SYSTEM_PROMPT as CV_SYSTEM_PROMPT
-from services.groq_service import RERANK_SYSTEM_PROMPT
 from services.translation_service import (
     _RETRY_SYSTEM_PROMPT,
     TRANSLATION_SYSTEM_PROMPT,
@@ -33,37 +32,6 @@ from services.translation_service import (
 # Texto genérico para las tareas de PROSA (CV, carta, borrador de watchlist):
 # su contrato es «una cadena no vacía», y eso es lo que se devuelve.
 GENERIC_TEXT = "# Documento de prueba\n\nContenido generado por el doble LLM."
-
-_JOBS_MARKER = "## Jobs to Evaluate"
-
-
-def jobs_in_prompt(user_prompt: str) -> list[dict]:
-    """Las ofertas que lleva un prompt de re-ranking.
-
-    Si el prompt cambiara de forma, esto revienta en vez de inventarse un lote
-    — que es exactamente lo que se quiere de un doble.
-    """
-    start = user_prompt.index("[", user_prompt.index(_JOBS_MARKER))
-    jobs, _ = json.JSONDecoder().raw_decode(user_prompt[start:])
-    return jobs
-
-
-def _rerank_response(user_prompt: str) -> str:
-    """Un veredicto por oferta del lote, con los índices que pide el contrato."""
-    return json.dumps(
-        [
-            {
-                "index": i,
-                # Determinista y derivado de la ENTRADA: un test puede
-                # distinguir un lote de otro sin depender de la red.
-                "score": 50 + (i % 5) * 10,
-                "matching_skills": [],
-                "missing_skills": [],
-                "reason": f"Doble LLM: evaluación de «{job.get('title', '')}».",
-            }
-            for i, job in enumerate(jobs_in_prompt(user_prompt))
-        ]
-    )
 
 
 def _translation_response(user_prompt: str) -> str:
@@ -95,7 +63,6 @@ def _cv_response(_user_prompt: str) -> str:
 # reescribe el prompt, el doble le sigue automáticamente en vez de quedarse
 # respondiendo a una forma que ya no se pide.
 _BY_SYSTEM_PROMPT = {
-    RERANK_SYSTEM_PROMPT: _rerank_response,
     TRANSLATION_SYSTEM_PROMPT: _translation_response,
     _RETRY_SYSTEM_PROMPT: _translation_response,
     CV_SYSTEM_PROMPT: _cv_response,

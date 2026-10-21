@@ -35,7 +35,7 @@ Idempotente: `uq_dedup_pair` (LEAST/GREATEST) + ON CONFLICT DO NOTHING.
 import hashlib
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -351,6 +351,11 @@ _INSERT_SQL = (
 # sin umbral ni embedding — y por eso NO comparte la ambigüedad de los stubs
 # que dejó lo intra-fuente fuera del ANN. Motivado además por el hallazgo del
 # canario (§12.9: grupos de hasta 9 repetidas en el feed). Set-based: un pase.
+#
+# DT-148 B4 (2026-10-21): de aquí se DERIVABA `_EXACT_INTRA_HISTORY_SQL`, la
+# variante que no excluye archivadas, con su guarda de importación. Existía
+# sólo para `exact_intra_backfill`, un rescate puntual de un rollback que
+# nunca tuvo llamador de producción. Se fue con él.
 _EXACT_INTRA_SQL = (
     "WITH corpus AS ("
     "  SELECT v.id, orv.text_hash, sl.source_id, "
@@ -367,29 +372,6 @@ _EXACT_INTRA_SQL = (
     "  ON a.text_hash = b.text_hash AND a.source_id = b.source_id "
     "  AND a.loc = b.loc AND a.id < b.id " + _ON_CONFLICT
 )
-# Variante HISTÓRICA del mismo generador: idéntica salvo que NO excluye las
-# archivadas. `merged_into IS NULL` se conserva —un loser fusionado no vuelve a
-# ser candidato— y también la identidad (text_hash + fuente + ubicación).
-#
-# Se deriva por sustitución para que no puedan divergir: una segunda copia del
-# SQL se desincroniza a la primera corrección. Pero `str.replace` NO falla
-# cuando no encuentra su patrón: devuelve la cadena intacta. Si alguien reescribe
-# el WHERE de `_EXACT_INTRA_SQL`, esta variante pasaría a ser IDÉNTICA a la
-# diaria —active-only— y el backfill histórico dejaría de encontrar nada, en
-# silencio y con los tests en verde. Por eso se comprueba aquí, al importar.
-_HISTORY_FILTRO_ORIGEN = "v.archived_at IS NULL AND v.merged_into IS NULL"
-_EXACT_INTRA_HISTORY_SQL = _EXACT_INTRA_SQL.replace(
-    _HISTORY_FILTRO_ORIGEN,
-    "v.merged_into IS NULL",
-    1,
-)
-if _EXACT_INTRA_HISTORY_SQL == _EXACT_INTRA_SQL:  # pragma: no cover - guarda de import
-    raise RuntimeError(
-        "_EXACT_INTRA_HISTORY_SQL no pudo derivarse: el filtro "
-        f"{_HISTORY_FILTRO_ORIGEN!r} ya no aparece en _EXACT_INTRA_SQL. La "
-        "variante histórica habría quedado igual que la diaria (active-only) y "
-        "el backfill no recuperaría ningún candidato archivado"
-    )
 
 
 # Generador LÉXICO cross-portal (TRACK R.2b, 2026-08-24). El examen del
@@ -596,16 +578,6 @@ async def lexical_backfill(session: AsyncSession) -> int:
     ).rowcount
 
 
-async def exact_intra_backfill(session: AsyncSession) -> int:
-    """Restaura candidatos exactos históricos sobre TODO el corpus.
-
-    Incluye archivadas: sus candidatos se conservaban antes del rollback y
-    un holdout congelado puede seguir apuntándolas. El barrido diario sigue
-    limitado al corpus activo.
-    """
-    return (await session.execute(sa.text(_EXACT_INTRA_HISTORY_SQL))).rowcount
-
-
 DEDUP_SCAN_BATCH_SIZE = 250
 
 
@@ -686,50 +658,11 @@ async def _finish_scan(
     return int(exact), int(lexical)
 
 
-async def scan_semantic_candidates(
-    session: AsyncSession, window_hours: int | None = None
-) -> dict:
-    """Run the complete generator, primarily for explicit backfills and tests.
-
-    The daily Celery path uses `scan_semantic_candidates_batch` so every
-    transaction stays below the broker and worker time limits.
-    """
-    if window_hours is None:
-        window_hours = int(settings.CORE_DEDUP_SCAN_WINDOW_H)
-    models = await embeddings.active_models(session)
-    if not models:
-        return {"status": "sin_modelo", "escaneadas": 0, "candidatos_nuevos": 0}
-    model_id = models[0].id
-
-    sql = _CORPUS_SQL
-    params: dict = {"mid": model_id}
-    if window_hours > 0:
-        sql += "AND orv.created_at >= now() - make_interval(hours => :ventana) "
-        params["ventana"] = window_hours
-    rows = (await session.execute(sa.text(sql), params)).all()
-    inserted = await _scan_ann_rows(
-        session,
-        rows,
-        model_id=model_id,
-        sim_min=float(settings.CORE_DEDUP_SIM_MIN),
-        k=int(settings.CORE_DEDUP_KNN),
-    )
-    exact, lexical = await _finish_scan(
-        session,
-        None
-        if window_hours <= 0
-        else datetime.now(timezone.utc) - timedelta(hours=window_hours),
-    )
-    result = {
-        "status": "ok",
-        "escaneadas": len(rows),
-        "candidatos_nuevos": inserted,
-        "candidatos_exactos_intra": exact,
-        "candidatos_lexicos": lexical,
-    }
-    if inserted or exact or lexical:
-        logger.info("dedup_scan: %s", result)
-    return result
+# DT-148 B4 (2026-10-21): `scan_semantic_candidates` —el generador COMPLETO,
+# en una sola transacción— vivía aquí y sólo lo llamaban los tests: producción
+# usa `scan_semantic_candidates_batch`, que acota cada transacción por debajo
+# de los límites del broker y del worker. Se movió a
+# `jobhunt_core/tests/_dedup_helpers.py` con la misma firma.
 
 
 async def scan_semantic_candidates_batch(

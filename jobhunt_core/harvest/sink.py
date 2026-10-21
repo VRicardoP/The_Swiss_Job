@@ -175,11 +175,6 @@ def canonical_payload(payload: dict) -> str:
     )
 
 
-def content_hash(payload: dict) -> str:
-    """Hash ESTABLE del payload raw (orden de claves canónico)."""
-    return hashlib.sha256(canonical_payload(payload).encode()).hexdigest()
-
-
 class RawListingSink:
     """ListingSink de producción (A-04)."""
 

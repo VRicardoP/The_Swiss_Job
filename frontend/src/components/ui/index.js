@@ -8,13 +8,6 @@ export { default as Avatar } from "./Avatar";
 export { default as EmptyState } from "./EmptyState";
 export { default as PageHeader } from "./PageHeader";
 export { default as MetricTile } from "./MetricTile";
-export {
-  default as Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardContent,
-  CardFooter,
-} from "./Card";
+export { default as Card } from "./Card";
 export { default as Skeleton, SkeletonText, SkeletonCard } from "./Skeleton";
 export { cn } from "./cn";

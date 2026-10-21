@@ -218,11 +218,13 @@ class NavProvider(BaseProvider):
                 await asyncio.sleep(min(PAGE_PAUSE_S, remaining))
         if offset and not listings:
             raise ProviderResponseError("NAV nonempty feed has no usable identities")
-        error = error or ("invalid_nav_items" if invalid else None)
+        # DT-148 E1: un item ilegible NO congela `last_complete_at` ni suma
+        # un fallo consecutivo. El recuento viaja en el cursor y
+        # `harvest/health.py` alerta por PROPORCIÓN de ilegibles.
         swept = exhausted or (MAX_PAGES_PARAM in params and pages >= budget)
         return FetchResult(
             tuple(listings),
-            {"items_seen": offset, "pages": pages},
+            {"items_seen": offset, "pages": pages, "invalid": invalid},
             pages_fetched=pages,
             complete=swept and error is None,
             error=error,

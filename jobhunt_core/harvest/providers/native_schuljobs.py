@@ -124,11 +124,12 @@ class _Listing(TagStackParser):
 
     def __init__(self):
         super().__init__()
-        self.stubs: list[dict] = []
+        # DT-148 B4: `stubs` nunca se escribía (las tarjetas viven en `_cards`)
+        # y `_open` SOMBREABA con otra lista vacía la pila de `TagStackParser`,
+        # que es la que de verdad se usa. Dos campos que parecían estado.
         self.searchhash = ""
         self.nextpage = ""
         self._cards: list[dict] = []
-        self._open: list[tuple] = []
         self._link: dict | None = None
         self._link_depth = 0
         self._chunks: list[str] = []

@@ -14,6 +14,10 @@ import redis.asyncio as aioredis
 logger = logging.getLogger(__name__)
 
 SSE_CHANNEL_PREFIX = "sse:"
+# Canal de difusión. DT-148 B3 retiró `broadcast_to_all`, el único PUBLICADOR
+# del árbol (0 llamadores fuera de tests); el lado receptor se queda porque sí
+# tiene consumidor —`_consume` lo atiende— y cualquier proceso contra el mismo
+# Redis puede publicar en él.
 SSE_BROADCAST_CHANNEL = "sse:__broadcast__"
 
 
@@ -108,11 +112,6 @@ class SSEManager:
         message = json.dumps({"event": event_type, "data": data})
         channel = f"{SSE_CHANNEL_PREFIX}{user_id}"
         await self._redis.publish(channel, message)
-
-    async def broadcast_to_all(self, event_type: str, data: dict) -> None:
-        """Publish a broadcast event to all connected users via Redis."""
-        message = json.dumps({"event": event_type, "data": data})
-        await self._redis.publish(SSE_BROADCAST_CHANNEL, message)
 
     # --- Local fanout ---
 
@@ -217,14 +216,6 @@ class SSEManager:
             # Un mensaje entregado prueba que la conexión sirve: la espera
             # del siguiente fallo vuelve a empezar desde el mínimo.
             self._delivered_since_open = True
-
-    # --- Monitoring ---
-
-    def get_active_connections(self) -> dict:
-        """Return count of active connections per user (for monitoring)."""
-        return {
-            str(uid): len(queues) for uid, queues in self._connections.items() if queues
-        }
 
     @property
     def dropped_events(self) -> int:

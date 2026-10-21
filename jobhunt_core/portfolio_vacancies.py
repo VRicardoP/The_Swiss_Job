@@ -31,11 +31,13 @@ PORTFOLIO_IMPORT_SOURCE = "portfolio-import"
 PORTFOLIO_IMPORT_TIER = 0
 # Scope DETERMINISTA: re-ejecutar ensure_source_scope jamás crea scopes nuevos
 PORTFOLIO_IMPORT_SCOPE_ID = uuid.uuid5(uuid.NAMESPACE_URL, "portfolio-import-scope")
+# DT-148 B4: las cuatro razones VALEN su propia cadena, así que el mapeo de
+# abajo era la identidad. Y `PORTFOLIO_IMPORT_SCOPE_ID` estaba definida DOS
+# veces, con el mismo valor: la segunda ocultaba que la primera ya existía.
 _Q_NO_URL = "no_url"
 _Q_NO_TITLE = "no_title"
 _Q_LIMIT = "limit"
 _Q_MALFORMED = "malformed"
-PORTFOLIO_IMPORT_SCOPE_ID = uuid.uuid5(uuid.NAMESPACE_URL, "portfolio-import-scope")
 
 
 def register_handlers() -> None:
@@ -346,9 +348,7 @@ async def synthesize_vacancies(
             # no se crea vacante (ni impresentable ni created-null); con la razón real,
             # elegida por precedencia determinista (independiente del orden del lote).
             reason = _group_reason(grp["reasons"])
-            skipped[
-                {_Q_NO_TITLE: "no_title", _Q_LIMIT: "limit"}.get(reason, "malformed")
-            ] += grp["count"]
+            skipped[reason] += grp["count"]
             logger.warning(
                 "portfolio_vacancies: url no sintetizable (%s) OMITIDA (%s)",
                 url,

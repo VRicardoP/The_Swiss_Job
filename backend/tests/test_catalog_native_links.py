@@ -47,7 +47,6 @@ async def test_legacy_catalog_link_resolves_in_core_without_local_database(monke
     )
     result = await catalog.get(ref)
     assert result.hash == vid and result.title == "Native"
-    assert await catalog._resolve_legacy_hashes([result.url]) == {}
     db.execute.assert_not_called()
     assert len(requests) == 2
 

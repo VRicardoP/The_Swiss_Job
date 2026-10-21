@@ -343,7 +343,11 @@ class NativeRSSProvider(BaseProvider):
             raise ProviderResponseError("nonempty RSS has no usable identities")
         return FetchResult(
             tuple(listings),
-            {"items_seen": len(items), "filtered": filtered},
-            complete=not invalid,
-            error="invalid_rss_items" if invalid else None,
+            {"items_seen": len(items), "filtered": filtered, "invalid": invalid},
+            # DT-148 E1: un item ilegible NO congela `last_complete_at`. Antes
+            # bastaba uno para marcar el barrido incompleto, y un anuncio
+            # permanente dejaba el scope «parcial para siempre» — lo que además
+            # impedía que el kill-switch reseteara su contador de bloqueos. El
+            # recuento viaja en el cursor y `health` vigila la PROPORCIÓN.
+            complete=True,
         )

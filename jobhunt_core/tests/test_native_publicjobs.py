@@ -84,11 +84,13 @@ def test_bad_envelope_fails_closed(body):
 
 
 @pytest.mark.parametrize("bad", [-1, True, 9999, "3"])
-def test_invalid_job_reference_keeps_neighbor_but_is_partial(bad):
+def test_invalid_job_reference_keeps_neighbor_and_is_counted(bad):
     body = envelope()
     body["nodes"][0]["data"][2].append(bad)
     result = fetch(body)
-    assert len(result.listings) == 1 and not result.complete and result.error
+    # DT-148 E1: el ilegible se cuenta en el cursor, el barrido sigue completo.
+    assert len(result.listings) == 1 and result.complete and not result.error
+    assert result.next_cursor["invalid"] == 1
 
 
 @pytest.mark.parametrize(
@@ -107,7 +109,9 @@ def test_invalid_path_not_fabricated(path):
         [{"title": "valid", "path": "/jobs/valid"}, {"title": "bad", "path": path}]
     )
     result = fetch(body)
-    assert len(result.listings) == 1 and not result.complete
+    # DT-148 E1: el ilegible se cuenta en el cursor, el barrido sigue completo.
+    assert len(result.listings) == 1 and result.complete
+    assert result.next_cursor["invalid"] == 1
 
 
 def test_empty_is_complete_and_filter_is_not_upstream_param():

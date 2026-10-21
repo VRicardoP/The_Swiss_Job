@@ -40,7 +40,6 @@ celery_app.conf.update(
 )
 
 celery_app.conf.include = [
-    "tasks.example_task",
     "tasks.maintenance_tasks",
     "tasks.watchlist_tasks",
     "tasks.alert_tasks",

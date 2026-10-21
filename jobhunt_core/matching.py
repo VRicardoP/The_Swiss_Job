@@ -1997,7 +1997,6 @@ async def evaluate_profile(
     policy_id,
     limit: int = 100,
     move_current: bool = True,
-    with_corpus_generation: bool = False,
     on_evaluated=None,
     require_cache_only: bool = False,
 ) -> dict:
@@ -2062,12 +2061,13 @@ async def evaluate_profile(
             policy_id,
             limit=limit,
             exclude_dismissed=False,
-            with_corpus_generation=with_corpus_generation,
             ce_inference=False,
         )
-    corpus_gen = (
-        computed["corpus_generation"] if with_corpus_generation else gen_snapshot
-    )
+    # DT-148 B4: `with_corpus_generation` sólo elegía entre DOS lecturas de
+    # `CORPUS_GENERATION_SQL` hechas en la MISMA transacción —el mismo número—,
+    # y con `target == 0` la de `compute_policy_feed` volvía None mientras
+    # `gen_snapshot` traía el valor real. Se queda la que siempre lo tiene.
+    corpus_gen = gen_snapshot
     if computed["status"] == "sin_vector":
         return {
             "status": "sin_vector",

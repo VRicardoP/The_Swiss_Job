@@ -36,7 +36,6 @@ ACTIVATIONS = {
     "sigmoid": lambda logit: 1.0 / (1.0 + math.exp(-logit)),
     "sigmoid_t4": lambda logit: 1.0 / (1.0 + math.exp(-logit / 4.0)),
 }
-ACTIVATION = "sigmoid"  # compat: la de v1
 
 # Cotas de la entrada v1 (deterministas; parte del contrato de la receta).
 _Q_ROLE_LEN = 120

@@ -174,8 +174,12 @@ class PublicJobsProvider(BaseProvider):
             raise ProviderResponseError("Publicjobs nonempty feed has no usable jobs")
         return FetchResult(
             tuple(listings),
-            {"items_seen": seen},
+            {"items_seen": seen, "invalid": invalid},
             pages_fetched=1,
-            complete=not invalid,
-            error="invalid_publicjobs_items" if invalid else None,
+            # DT-148 E1: un item ilegible NO congela `last_complete_at`. Antes
+            # bastaba uno para marcar el barrido incompleto, y un anuncio
+            # permanente dejaba el scope «parcial para siempre» — lo que además
+            # impedía que el kill-switch reseteara su contador de bloqueos. El
+            # recuento viaja en el cursor y `health` vigila la PROPORCIÓN.
+            complete=True,
         )

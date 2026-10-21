@@ -208,7 +208,7 @@ class _Fragment(TagStackParser):
 
     def on_close(self, tag, depth):
         if self._field is not None and self._field[1] >= depth:
-            name, _depth, verbatim = self._field
+            name, _depth, _ = self._field
             if not self._link[name]:
                 self._link[name] = "".join(self._chunks)
             self._field = None

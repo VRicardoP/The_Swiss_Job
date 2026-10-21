@@ -270,11 +270,17 @@ class TESProvider(BaseProvider):
                 "harvested": len(by_identity),
                 "shortfall": shortfall,
                 "pagination_ignored": ignored_pagination,
+                "items_seen": announced or len(by_identity) + invalid,
+                "invalid": invalid,
             },
             pages_fetched=pages,
             # A permanent portal limitation must not freeze last_complete_at.
-            complete=not invalid,
-            error="invalid_tes_rows" if invalid else None,
+            # DT-148 E1: un item ilegible NO congela `last_complete_at`. Antes
+            # bastaba uno para marcar el barrido incompleto, y un anuncio
+            # permanente dejaba el scope «parcial para siempre» — lo que además
+            # impedía que el kill-switch reseteara su contador de bloqueos. El
+            # recuento viaja en el cursor y `health` vigila la PROPORCIÓN.
+            complete=True,
         )
 
 

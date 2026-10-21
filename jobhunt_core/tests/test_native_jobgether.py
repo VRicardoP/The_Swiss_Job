@@ -107,7 +107,9 @@ def test_invalid_neighbor_and_missing_date_preserve_raw(monkeypatch):
     result, _ = fetch(
         [{"data": [original, raw(slug="../../other")], "maxPages": 1}], monkeypatch
     )
-    assert len(result.listings) == 1 and not result.complete
+    # DT-148 E1: el ilegible se cuenta en el cursor, el barrido sigue completo.
+    assert len(result.listings) == 1 and result.complete
+    assert result.next_cursor["invalid"] == 1
     assert result.listings[0].payload["createdAt"] is None
 
 

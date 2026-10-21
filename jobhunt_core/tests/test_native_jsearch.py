@@ -76,6 +76,7 @@ def test_daily_request_content_and_normalization_are_exact(monkeypatch):
     assert result.complete and result.error is None and result.pages_fetched == 10
     assert result.next_cursor == {
         "items_seen": 1,
+        "invalid": 0,
         "last_query": "software developer",
     }
     assert len(requests) == 1

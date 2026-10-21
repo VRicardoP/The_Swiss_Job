@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from jobhunt_core import train_cross_encoder as tce
+import train_cross_encoder as tce
 
 PERFILES = {
     "P1": {

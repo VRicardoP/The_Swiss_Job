@@ -1,77 +1,22 @@
-"""Core profile transport primitives and the retained read adapter.
+"""Transporte HTTP hacia el /v1 del núcleo para el perfil: una sola cosa.
 
-Profile edits stay local and durable snapshot delivery provisions the linked Core
-identity. The read adapter remains for erasure and contract verification.
+Las ediciones de perfil son LOCALES y la entrega al núcleo va por instantánea
+durable (`profile_sync`, `exclusions_sync`, `profile_erasure`): lo único que
+esos tres necesitan de aquí es el cliente httpx ya autenticado.
+
+DT-148 B3 (2026-10-21): este módulo tenía además `CoreProfile`, un adaptador de
+LECTURA del perfil contra el núcleo (con `CoreProfileView`,
+`_ProjectedContentDTO`, `_view` y una caché de ETag acotada). No lo usaba
+producción: `profiles/seam.resolve_profiles` devuelve SIEMPRE `LocalProfile`,
+así que el adaptador sólo lo instanciaban sus propios tests. Con la caché se
+fue `clear_profile_cache`, cuyo único llamador —`profile_erasure.
+clear_erased_caches`— existía para invalidarla: una función que vacía un diccionario
+que nadie escribe no protege ningún dato, sólo parece hacerlo.
 """
 
-import logging
-import uuid
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Callable
-
 import httpx
-from pydantic import BaseModel, ConfigDict
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
-from models.user import User
-from models.user_profile import UserProfile
-from services.matching.identity import resolve_core_profile_id
-
-from .port import CoreUnavailableError
-
-logger = logging.getLogger(__name__)
-
-# Claves del content proyectado por la sombra (PF.5; proyector B-02).
-PROJECTED_FIELDS = ("title", "cv_text", "skills")
-
-
-class _ProjectedContentDTO(BaseModel):
-    """DTO Pydantic PRIVADO y ESTRECHO del content proyectado (P2 rev.
-    externa): valida TIPOS ademas de presencia, sin importar nada de
-    jobhunt_core (frontera estricta, plan §21). Un content como
-    {"title": "ok", "cv_text": null, "skills": "python"} pasaba la vista y
-    reventaba ProfileResponse FUERA del fallback; validado AQUI se traduce a
-    CoreUnavailableError (fallback real)."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    title: str | None = None
-    cv_text: str | None = None
-    skills: list[str] | None = None
-
-
-# Errores de FORMA de un 200 del core (JSON ilegible, esquema incompatible,
-# tipos inesperados): se traducen a CoreUnavailableError — payload invalido =
-# tan inutilizable como el core caido => fallback REAL en core_read
-# (hallazgo P2 rev. externa A.SEAM; mismo criterio en catalogo y matching).
-_PAYLOAD_ERRORS = (ValueError, KeyError, TypeError, AttributeError, IndexError)
-
-# Cache de representaciones por ETag: clave str(core_profile_id) ->
-# (etag, body). En proceso y acotada (mismo espiritu que la cache del feed
-# de matching): en el refresco tipico el core responde 304 sin cuerpo.
-_ETAG_CACHE_MAX = 512
-_etag_cache: dict[str, tuple[str, dict]] = {}
-
-
-_cache_generation = 0
-_profile_generations: dict[str, int] = {}
-
-
-def clear_profile_cache(profile_id=None) -> None:
-    """Invalidate a deleted subject (or all cached representations)."""
-    global _cache_generation
-    if profile_id is None:
-        _cache_generation += 1
-        _profile_generations.clear()
-        _etag_cache.clear()
-        return
-    pid = str(profile_id)
-    if pid not in _profile_generations and len(_profile_generations) >= _ETAG_CACHE_MAX:
-        clear_profile_cache()  # bounded state; global epoch fences older in-flight requests
-    _profile_generations[pid] = _profile_generations.get(pid, 0) + 1
-    _etag_cache.pop(pid, None)
 
 
 def default_client_factory() -> httpx.AsyncClient:
@@ -82,163 +27,3 @@ def default_client_factory() -> httpx.AsyncClient:
         headers={"Authorization": f"Bearer {settings.CORE_CONSUMER_KEY}"},
         timeout=settings.CORE_HTTP_TIMEOUT_SECONDS,
     )
-
-
-@dataclass
-class CoreProfileView:
-    """Vista duck-type de models.user_profile.UserProfile para el router.
-
-    {title, cv_text, skills} vienen del CORE (revision vigente proyectada);
-    el resto del ESCRITOR LOCAL (mapeo honesto — docstring del modulo)."""
-
-    id: uuid.UUID
-    user_id: uuid.UUID
-    title: str | None
-    skills: list
-    cv_text: str | None
-    experience_years: int | None
-    languages: list
-    locations: list
-    salary_min: int | None
-    salary_max: int | None
-    remote_pref: object
-    score_weights: dict | None
-    watchlist_schools_enabled: bool
-    cv_embedding: object
-    updated_at: datetime
-
-
-def _view(local: UserProfile, content: _ProjectedContentDTO) -> CoreProfileView:
-    return CoreProfileView(
-        # Ids del CONTRATO LEGACY (ProfileResponse.id/user_id): los locales.
-        # El UUID del perfil core es interno a la costura y no se filtra.
-        id=local.id,
-        user_id=local.user_id,
-        title=content.title,
-        skills=content.skills or [],
-        cv_text=content.cv_text,
-        experience_years=local.experience_years,
-        languages=local.languages,
-        locations=local.locations,
-        salary_min=local.salary_min,
-        salary_max=local.salary_max,
-        remote_pref=local.remote_pref,
-        score_weights=local.score_weights,
-        watchlist_schools_enabled=local.watchlist_schools_enabled,
-        # El embedding 384-d es un artefacto del motor LOCAL (el core tiene
-        # los suyos bajo su propia receta y el /v1 no los expone): local.
-        cv_embedding=local.cv_embedding,
-        updated_at=local.updated_at,
-    )
-
-
-class CoreProfile:
-    """Cliente de GET /v1/profiles/{id} detras del puerto ProfilePort."""
-
-    def __init__(
-        self,
-        db: AsyncSession,
-        client_factory: Callable[[], httpx.AsyncClient] | None = None,
-    ):
-        # La sesion sirve para el vinculo de identidad y el overlay local;
-        # factory inyectable para tests (MockTransport), como en matching.
-        self._db = db
-        self._client_factory = client_factory or default_client_factory
-
-    async def get(self, user: User) -> CoreProfileView | None:
-        # RESPALDO LOCAL OBLIGATORIO (docstring): sin fila local, 404 legacy
-        # y CERO peticiones — no hay nada accionable que servir.
-        await self._db.refresh(user, ["profile"])
-        local = user.profile
-        if local is None:
-            return None
-
-        core_profile_id = await resolve_core_profile_id(self._db, user.id)
-        if core_profile_id is None:
-            # Enrutado a core sin enrolar el vinculo: error de operacion =>
-            # misma senal que el core caido, y CERO peticiones de red.
-            raise CoreUnavailableError(
-                f"usuario {user.id} sin vinculo en jobhunt_profile_map"
-            )
-        if (
-            self._client_factory is default_client_factory
-            and not settings.CORE_CONSUMER_KEY
-        ):
-            # Sin credencial no se hace ni una peticion (mismo trato que caida).
-            raise CoreUnavailableError("CORE_CONSUMER_KEY no configurada")
-
-        body = await self._fetch_profile(core_profile_id)
-        try:
-            revision = body.get("current_revision")
-            incomplete = revision is None or any(
-                key not in (revision.get("content") or {}) for key in PROJECTED_FIELDS
-            )
-        except _PAYLOAD_ERRORS as exc:
-            # 200 con forma incompatible (revision no-dict, content no
-            # indexable...): payload invalido => misma senal que caida.
-            raise CoreUnavailableError(
-                f"payload invalido del core para el perfil {core_profile_id}: "
-                f"{type(exc).__name__}: {exc}"
-            ) from exc
-        if incomplete:
-            # REVISION VIGENTE OBLIGATORIA (docstring): proyeccion ausente o
-            # anomala — señal accionable, nunca un perfil con huecos.
-            raise CoreUnavailableError(
-                f"perfil core {core_profile_id} sin revision vigente completa "
-                f"(proyeccion sombra no aterrizada o anomala)"
-            )
-        try:
-            # Validacion de TIPOS con el DTO privado ANTES de construir la
-            # vista (P2): un content con claves presentes pero tipos rotos
-            # jamas debe llegar a ProfileResponse fuera del fallback.
-            content = _ProjectedContentDTO.model_validate(revision["content"])
-        except _PAYLOAD_ERRORS as exc:
-            raise CoreUnavailableError(
-                f"payload invalido del core para el perfil {core_profile_id}: "
-                f"{type(exc).__name__}: {exc}"
-            ) from exc
-        return _view(local, content)
-
-    async def _fetch_profile(self, core_profile_id: uuid.UUID) -> dict:
-        cache_key = str(core_profile_id)
-        generation = (_cache_generation, _profile_generations.get(cache_key, 0))
-        cached = _etag_cache.get(cache_key)
-        headers = {"If-None-Match": cached[0]} if cached else {}
-        try:
-            async with self._client_factory() as client:
-                resp = await client.get(f"/profiles/{core_profile_id}", headers=headers)
-        except httpx.HTTPError as exc:
-            raise CoreUnavailableError(f"core /v1 inaccesible: {exc}") from exc
-        if generation != (_cache_generation, _profile_generations.get(cache_key, 0)):
-            raise CoreUnavailableError("core representation invalidated during request")
-        if resp.status_code == 304:
-            if cached is None:  # defensivo: 304 sin haber mandado If-None-Match
-                raise CoreUnavailableError("core /v1 devolvio 304 sin cache previa")
-            return cached[1]
-        if resp.status_code == 404:
-            # Perfil desconocido para ESTE consumer (vinculo obsoleto o
-            # credencial de otro tenant): configuracion, no datos.
-            raise CoreUnavailableError(
-                f"perfil core {core_profile_id} inexistente para este consumer"
-            )
-        if resp.status_code != 200:
-            raise CoreUnavailableError(
-                f"core /v1 devolvio {resp.status_code} para el perfil {core_profile_id}"
-            )
-        try:
-            body = resp.json()
-        except ValueError as exc:  # JSON ilegible en un 200
-            raise CoreUnavailableError(
-                f"JSON invalido del core para el perfil {core_profile_id}: {exc}"
-            ) from exc
-        if not isinstance(body, dict):
-            # ProfileDTO es un objeto: cualquier otra forma es incompatible.
-            raise CoreUnavailableError(
-                f"payload no-objeto del core para el perfil {core_profile_id}"
-            )
-        etag = resp.headers.get("etag")
-        if etag:
-            if len(_etag_cache) >= _ETAG_CACHE_MAX:
-                _etag_cache.clear()  # acotado y simple; se rellena con 200s
-            _etag_cache[cache_key] = (etag, body)
-        return body

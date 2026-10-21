@@ -118,7 +118,11 @@ def test_guid_fallback_and_missing_identity_neighbor():
     result = fetch("weworkremotely", body)
     assert len(result.listings) == 1
     assert result.listings[0].external_id.startswith("url:")
-    assert result.error == "invalid_rss_items" and not result.complete
+    # DT-148 E1: el item ilegible se CUENTA en el cursor y el barrido sigue
+    # siendo completo — un anuncio permanente no debe congelar la cosecha.
+    assert result.complete and result.error is None
+    assert result.next_cursor["invalid"] == 1
+    assert result.next_cursor["items_seen"] == 2
 
 
 def test_registered_in_worker_without_legacy_imports():

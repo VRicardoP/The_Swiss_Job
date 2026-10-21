@@ -118,16 +118,17 @@ async def _recover_impl(session_factory=None) -> dict[str, Any]:
 async def _recover_with(session_factory) -> dict[str, Any]:
     await _drain_embeddings(session_factory)
     async with session_factory() as session:
-        targets = await _recovery_targets(session, set())
+        targets = await _recovery_targets(session)
     for profile_id in targets:
         await _evaluate_and_record(session_factory, profile_id)
     return {"profiles_evaluated": len(targets)}
 
 
-async def _drain_embeddings(
-    session_factory, limit: int = 200, max_rounds: int = RECOVERY_EMBEDDING_ROUNDS
-) -> None:
-    for _ in range(min(max_rounds, RECOVERY_EMBEDDING_ROUNDS)):
+async def _drain_embeddings(session_factory, limit: int = 200) -> None:
+    # DT-148 B4: el parámetro `max_rounds` existía y se acotaba con
+    # `min(max_rounds, RECOVERY_EMBEDDING_ROUNDS)` sobre una constante que vale
+    # 1: ningún valor pasado podía superarla, así que el mando no mandaba.
+    for _ in range(RECOVERY_EMBEDDING_ROUNDS):
         result = await _run_pending_impl(limit, session_factory=session_factory)
         if not any(result["embedded"].values()) and not any(
             result["profiles_embedded"].values()
@@ -136,21 +137,20 @@ async def _drain_embeddings(
     logger.info("matching recovery: embedding pass reached its per-tick limit")
 
 
-async def _recovery_targets(
-    session, evaluated: set, limit: int = RECOVERY_MAX_PROFILES
-) -> list:
-    cap = min(limit, RECOVERY_MAX_PROFILES)
-    if cap <= 0:
-        return []
+async def _recovery_targets(session) -> list:
+    # DT-148 B4: `limit` se acotaba con `min(limit, RECOVERY_MAX_PROFILES)` — la
+    # constante vale 1 y nadie pasaba un valor— y `evaluated` llegaba SIEMPRE
+    # vacío desde el único llamador, con lo que el NOT IN se ataba al UUID cero.
+    # Ese centinela se queda: un `IN ()` vacío no es SQL válido.
     rows = (
         await session.execute(
             sa.text(_RECOVERY_NEEDED_SQL).bindparams(
                 sa.bindparam("evaluated", expanding=True)
             ),
             {
-                "evaluated": sorted(evaluated, key=str) or [_NO_PROFILE],
+                "evaluated": [_NO_PROFILE],
                 "dim": embeddings.EMBED_DIM,
-                "cap": cap,
+                "cap": RECOVERY_MAX_PROFILES,
             },
         )
     ).all()
@@ -282,7 +282,6 @@ async def _run_profile_with(
                 policy.id,
                 limit=limit,
                 move_current=es_canonico,
-                with_corpus_generation=on_evaluated is not None,
                 on_evaluated=on_evaluated,
             )
             if r.get("status") == "descartado_por_deriva":
@@ -313,7 +312,6 @@ async def _run_profile_with(
                     policy.id,
                     limit=limit,
                     move_current=es_canonico,
-                    with_corpus_generation=on_evaluated is not None,
                     on_evaluated=on_evaluated,
                 )
             recipe = (

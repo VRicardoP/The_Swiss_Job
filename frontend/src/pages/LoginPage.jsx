@@ -18,7 +18,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center bg-gray-50 px-4">
+    <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center bg-surface-secondary px-4">
       <div className="w-full max-w-sm">
         <div className="flex justify-center mb-6">
           <svg className="h-12 w-12" viewBox="0 0 32 32" fill="none">

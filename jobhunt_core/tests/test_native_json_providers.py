@@ -185,7 +185,7 @@ def test_himalayas_three_page_contract_preserves_public_fields(monkeypatch):
     ]
     assert all(request.url.params.get("limit") == "20" for request in requests)
     assert result.complete and result.pages_fetched == 3
-    assert result.next_cursor == {"items_seen": 3, "filtered": 0}
+    assert result.next_cursor == {"items_seen": 3, "filtered": 0, "invalid": 0}
     assert [item.external_id for item in result.listings] == [
         "id:job-1",
         "id:job-2",
@@ -313,7 +313,7 @@ def test_swisstechjobs_wordpress_contract_and_terminal_page(monkeypatch):
     assert [request.url.params.get("page") for request in requests] == ["1", "2"]
     assert all(request.url.params.get("per_page") == "100" for request in requests)
     assert result.complete and result.pages_fetched == 2
-    assert result.next_cursor == {"items_seen": 1, "filtered": 0}
+    assert result.next_cursor == {"items_seen": 1, "filtered": 0, "invalid": 0}
     assert listing.external_id == "id:48213"
     assert listing.url == raw["link"]
     assert listing.apply_url == raw["meta"]["_application"]
@@ -395,7 +395,7 @@ def test_ictjobs_five_page_contract_preserves_acf_and_taxonomies(monkeypatch):
     assert all(request.url.params.get("per_page") == "20" for request in requests)
     assert all(request.url.params.get("_embed") == "" for request in requests)
     assert result.complete and result.pages_fetched == 5
-    assert result.next_cursor == {"items_seen": 5, "filtered": 0}
+    assert result.next_cursor == {"items_seen": 5, "filtered": 0, "invalid": 0}
     assert listing.external_id == "id:1"
     assert listing.url == "https://ictjobs.ch/job-1/"
     assert listing.apply_url == raw["acf"]["direct_link"]

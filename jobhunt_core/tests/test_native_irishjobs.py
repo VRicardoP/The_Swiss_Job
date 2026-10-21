@@ -138,7 +138,9 @@ def test_unusable_url_drops_only_that_offer(url, monkeypatch):
     assert [listing.url for listing in result.listings] == [
         "https://www.irishjobs.ie/job/other-job2"
     ]
-    assert result.error == "invalid_irishjobs_items"
+    # DT-148 E1: el ilegible se cuenta en el cursor, el barrido sigue completo.
+    assert result.complete and result.error is None
+    assert result.next_cursor["invalid"] == 1
 
 
 def test_url_is_rebuilt_without_query_or_fragment(monkeypatch):

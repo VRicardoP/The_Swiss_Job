@@ -443,6 +443,7 @@ class DynamiteJobsProvider(BaseProvider):
             tuple(listings),
             {
                 "items_seen": len(seen),
+                "invalid": invalid,
                 "recent_items": len(retained),
                 "details_cached": len(descriptions),
                 "detail_attempts": attempts,
@@ -450,8 +451,12 @@ class DynamiteJobsProvider(BaseProvider):
                 "descriptions": descriptions,
             },
             pages_fetched=len(CATEGORY_SLUGS),
-            complete=not invalid and soft_block is None,
-            error=("invalid_dynamitejobs_items" if invalid else None)
-            or ("soft_block" if soft_block is not None else None),
+            # DT-148 E1: un item ilegible NO congela `last_complete_at`. Antes
+            # bastaba uno para marcar el barrido incompleto, y un anuncio
+            # permanente dejaba el scope «parcial para siempre» — lo que además
+            # impedía que el kill-switch reseteara su contador de bloqueos. El
+            # recuento viaja en el cursor y `health` vigila la PROPORCIÓN.
+            complete=soft_block is None,
+            error="soft_block" if soft_block is not None else None,
             blocked_with=soft_block,
         )

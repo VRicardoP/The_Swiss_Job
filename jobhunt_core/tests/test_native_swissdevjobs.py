@@ -149,10 +149,12 @@ def test_paused_rows_are_a_valid_empty_board(monkeypatch):
     assert result.complete and result.listings == () and len(requests) == 1
 
 
-def test_invalid_item_keeps_valid_rows_but_marks_the_sweep_partial(monkeypatch):
+def test_invalid_item_keeps_valid_rows_and_travels_in_the_cursor(monkeypatch):
     result, _requests = fetch([row(), None], monkeypatch=monkeypatch)
     assert len(result.listings) == 1
-    assert not result.complete and result.error == "invalid_swissdevjobs_items"
+    # DT-148 E1.
+    assert result.complete and result.error is None
+    assert result.next_cursor["invalid"] == 1
 
 
 def test_active_from_is_the_declared_portal_date():

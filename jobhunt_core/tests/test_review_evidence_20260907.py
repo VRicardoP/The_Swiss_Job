@@ -14,7 +14,8 @@ from types import SimpleNamespace
 
 import sqlalchemy as sa
 
-from jobhunt_core import cross_encoder as ce, dev_eval, embeddings, matching, profiles
+from jobhunt_core import cross_encoder as ce, embeddings, matching, profiles
+from jobhunt_core.tests.dev_tools import dev_eval
 from jobhunt_core.tasks import materialize
 from jobhunt_core.tasks.embedding import _run_pending_impl
 from jobhunt_core.tests.test_integration_cross_encoder import _StubEngine, _xenc_policy
@@ -117,7 +118,7 @@ def test_delegated_ce_does_not_keep_projector_recovery_on_forever(db):  # noqa: 
         await matching_tasks._evaluate_and_record(factory, pid)
         await matching_tasks._evaluate_and_record(factory, pid)
         async with factory() as s:
-            pending = await matching_tasks._recovery_targets(s, set())
+            pending = await matching_tasks._recovery_targets(s)
         assert pid not in pending, (
             "El CE delegado mantiene permanentemente encendida la recuperación"
         )

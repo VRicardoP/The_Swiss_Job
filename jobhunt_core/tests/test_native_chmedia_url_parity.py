@@ -18,4 +18,6 @@ def test_employer_id_does_not_determine_detail_url(identity):
 )
 def test_unsafe_portal_identifier_rejected(identity):
     result, _ = fetch(pages=[{"items": [raw(), raw(id=identity)]}])
-    assert len(result.listings) == 1 and not result.complete
+    # DT-148 E1: el ilegible se cuenta en el cursor, el barrido sigue completo.
+    assert len(result.listings) == 1 and result.complete
+    assert result.next_cursor["invalid"] == 1

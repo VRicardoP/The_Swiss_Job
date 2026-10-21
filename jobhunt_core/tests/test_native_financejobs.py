@@ -115,7 +115,9 @@ def test_unusable_identity_or_title_skips_only_that_offer(job, monkeypatch):
     rows = [{**JOB, "jobId": None, "jcJobId": None, **job}, {**JOB, "jobId": 7}]
     result, _ = fetch([page(rows), page([])], monkeypatch=monkeypatch)
     assert [listing.external_id for listing in result.listings] == ["id:7"]
-    assert result.error == "invalid_financejobs_items"
+    # DT-148 E1: el ilegible se cuenta en el cursor, el barrido sigue completo.
+    assert result.complete and result.error is None
+    assert result.next_cursor["invalid"] == 1
 
 
 def test_blank_company_degrades_exactly_like_a_missing_one(monkeypatch):
