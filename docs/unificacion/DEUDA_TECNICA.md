@@ -1224,6 +1224,41 @@ store y el prefill de `SavedSearchesPage`.
 `employment_type` no se filtran porque la canónica sólo tiene `salary` como
 TEXTO LIBRE. Filtrar números contra texto libre sería inventarse el resultado.
 
+#### Y una distinción que casi me cuesta un 422 en producción
+
+La búsqueda del catálogo (`/v1/vacancies`) y el evaluador de búsquedas
+guardadas (`jobhunt_core/saved_search_query.matching_query`) **no comparten
+contrato**. El evaluador SÍ implementa `canton`, `language`, `seniority`,
+`contract_type` y `salary_min/max` contra el content canónico: ahí no hay 501.
+Así que los seis se QUEDAN en `SwissJobSearchFilters`, y lo que se retiró es
+sólo lo de la búsqueda en vivo.
+
+Pero `SavedSearchFilters` (BFF) y `SwissJobSearchFilters` (núcleo) llevan
+`extra="forbid"`, y `SavedSearchesPage` hereda los filtros vigentes al crear la
+búsqueda. Con `location` en el panel y no en los contratos, **guardar una
+búsqueda con la ubicación puesta habría devuelto 422** — un filtro que la
+interfaz ofrece y la API rechaza: exactamente el modo de fallo que A18-01 venía
+a cerrar, reintroducido por la mitad de un arreglo. Se detectó leyendo quién
+consume el DTO, antes de desplegar.
+
+**Arreglado de forma coherente, no parcheando el síntoma**: `location` entra en
+los DOS contratos y el evaluador del núcleo lo aplica como substring ci sobre
+`location`, igual que el `city` del catálogo. Las dos rutas filtran ahora la
+ubicación de la misma manera y sobre el mismo campo.
+
+**Anotado donde vive, porque es una propiedad del corpus y no un fallo**: una
+búsqueda guardada que filtre por `seniority` alertará de casi nada (0,9 % de
+cobertura). El evaluador no miente —aplica el filtro que le piden— pero el dato
+no está. `location` es el único con cobertura total.
+
+**Pruebas del arreglo**: dos en el núcleo (`location` se enlaza como substring
+recortado y NO se interpola; vacío o en blanco NO filtra) más su entrada en el
+caso de integración de «todos los filtros a la vez» y en la tabla de negativos,
+con **control negativo ejecutado** —retirada la condición del evaluador, caen
+el unitario y el de integración—. Y dos en el BFF: una búsqueda guardada con
+ubicación se crea (201) y viaja al núcleo, y una clave inventada sigue dando
+422, que es la guarda G3/P2-8 que no debía aflojarse.
+
 **Pruebas.** Tres casos nuevos en el frontend
 (`hooks/useJobSearch.test.js`) que fijan que el store modele EXACTAMENTE los
 cuatro filtros servidos y que ninguno de los nueve muertos vuelva — con

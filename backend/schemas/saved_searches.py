@@ -27,6 +27,10 @@ class SavedSearchFilters(BaseModel):
 
     q: str | None = None
     source: str | None = None
+    # DT-148 A18-01: espejo de `location` en el evaluador del núcleo. Sin esto,
+    # `extra="forbid"` devolvía 422 a quien guardara una búsqueda con la
+    # ubicación puesta — y la interfaz ya la rellena desde el panel.
+    location: str | None = None
     canton: str | None = None
     language: str | None = None
     seniority: str | None = None
