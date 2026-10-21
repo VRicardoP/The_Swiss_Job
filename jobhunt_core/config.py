@@ -151,7 +151,6 @@ class CoreSettings(BaseSettings):
     # cuenta por ciclo (_coste_row) y solo se borran las SUPERADAS.
     # gt=0 en todas: un 0 significaría "borra lo de hoy mismo".
     CORE_OUTBOX_RETENTION_DAYS: int = Field(30, gt=0)
-    CORE_SHADOW_INBOX_RETENTION_DAYS: int = Field(30, gt=0)
     CORE_EVAL_RETENTION_DAYS: int = Field(90, gt=0)
     # Tope de filas por tabla y pasada: la purga no coge un lock largo sobre
     # tablas que el dispatcher y el matching están usando. Lo que sobre se lo
