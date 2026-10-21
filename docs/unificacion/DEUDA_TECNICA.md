@@ -1265,6 +1265,26 @@ hacían falta los DOS cambios:
 Ensayada de ida y vuelta en base desechable (`core0056` sin índice → `core0057`
 con él → `downgrade` sin él → otra vez con él).
 
+**MEDIDO DESPUÉS, en producción** (índice de 10 MB, `Bitmap Index Scan` donde
+había `Seq Scan`):
+
+| Caso | Antes | Después |
+|---|---|---|
+| `location=Remote` (2.534) | 86,4 s | **2,0 s** |
+| `location=zzz-no-existe` (0) | 44,9 s | **0,1 s** |
+| `location=Zürich` (2.571) | — | **2,1 s** |
+| `location=Genève` (118) | — | **0,2 s** |
+
+**Y una cota que salió de medir, no de leer**: un patrón de menos de 3
+caracteres NO puede usar el índice —un trigrama son tres caracteres— y vuelve
+al escaneo: `location=a` 34,9 s. Comprobado que `q` hace exactamente lo mismo
+(`q=a` 30,2 s, `q=py` 20,5 s, `q=python` 0,6 s), así que NO es deuda nueva:
+`location` quedó con el mismo perfil que `q`, no peor. Registrada con sus
+números en `COTAS_Y_DECISIONES.md` §6bis, con la mitigación propuesta —exigir 3
+caracteres antes de disparar— **sin aplicar**: cambiaría el comportamiento de
+`q`, que lleva semanas en producción, y es decisión de producto que debe verse
+en la interfaz.
+
 **Lo que el escapado evita, y es nuevo con `LIKE`:** un `%` del usuario casaría
 CUALQUIER ubicación, así que el filtro parecería aplicarse sin filtrar nada.
 Fijado en `test_integration_api` (`city=%` y `city=_eneva` devuelven vacío;

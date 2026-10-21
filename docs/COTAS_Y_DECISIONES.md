@@ -303,6 +303,41 @@ volver a muestrear (protocolo intacto, semilla nueva, excluyendo los pares que y
 
 ---
 
+## 6bis. Búsqueda por subcadena del catálogo — el suelo de los 3 caracteres `[I]`
+
+**Medido en producción el 2026-10-21** (DT-148 A18-01), sobre 227.053
+revisiones y un NAS con loadavg 6,5 en 2 CPUs:
+
+| Consulta | Resultados | Tiempo |
+|---|---|---|
+| `q=python` (6 car.) | 116 | **0,6 s** |
+| `location=zur` (3 car.) | 610 | **0,3 s** |
+| `location=Zürich` | 2.571 | **2,1 s** |
+| `location=Remote` | 2.534 | **2,0 s** |
+| `location=zzz-no-existe` | 0 | **0,1 s** |
+| `q=py` (2 car.) | 440 | **20,5 s** |
+| `q=a` (1 car.) | 93.897 | **30,2 s** |
+| `location=a` (1 car.) | 52.540 | **34,9 s** |
+
+**La cota: por debajo de 3 caracteres el índice trigrama NO SIRVE.** Un
+trigrama son tres caracteres; con uno o dos no hay ninguno que buscar, así que
+Postgres vuelve al escaneo secuencial con recheck. No es un fallo del índice ni
+de la consulta: es cómo funciona `pg_trgm`.
+
+**Qué NO es esta cota.** No es deuda nueva: `q` se comporta así desde
+`core0045` y lleva semanas en producción. DT-148 A18-01 añadió `location` con
+EL MISMO perfil de coste —no peor— y de paso bajó el caso normal de **86,4 s a
+2,0 s** con `core0057`, porque antes la condición era `position()`, que ningún
+índice puede servir.
+
+**La mitigación obvia y por qué NO se aplicó sola**: exigir 3 caracteres antes
+de disparar la búsqueda quitaría los casos de 20-35 s de los dos campos. Son
+pocas líneas en el frontend, que ya debounce. Pero cambia el comportamiento de
+`q`, que lleva semanas en producción y puede estar en uso con dos caracteres, y
+«no busco hasta que escribas tres» es una decisión de producto que debe VERSE
+en la interfaz, no ocurrir en silencio. **Queda propuesta al propietario**, no
+ejecutada.
+
 ## 7. Tests e infraestructura
 
 | Cota | Motivo |
