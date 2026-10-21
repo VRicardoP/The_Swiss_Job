@@ -1,11 +1,12 @@
 # Deuda técnica — proyecto jobhunting (SwissJob + jobhunt-core)
 
-> **Lectura vigente — 2026-10-20.** DT-148 (abajo) es la auditoría de
-> refactorización con plan de ejecución por ítem. Su **sección A está
-> ejecutada y commiteada** (rama `fix/dt148-auditoria-seccion-a`, sin
-> desplegar); **B a F siguen abiertas** y su fase 0 (F1) corrige el
-> `CLAUDE.md`, que todavía describe providers, scrapers, `job_matcher` y la
-> sombra retirados el 13-15 de octubre.
+> **Lectura vigente — 2026-10-21.** DT-148 (abajo) es la auditoría de
+> refactorización con plan de ejecución por ítem. **CERRADAS y DESPLEGADAS:
+> sección A completa, sección B completa (B5 salvo sus pasos 3-4), E1, F1 y
+> F2** (salvo la reescritura de la sección 3 de COTAS). Producción corre el
+> núcleo en `point5-4ffaf7e` / Alembic `core0056`; BFF y frontend en
+> `point5-500d8d9`, que es su último SHA con código. **SIGUEN ABIERTAS las
+> secciones C y D enteras, E2-E9, F3 y los pasos 3-4 de B5.**
 >
 > **Lectura anterior — 2026-10-19.** Este fichero es un ledger técnico
 > cronológico. Para estado global y releases manda
@@ -25,14 +26,25 @@
 
 ## DT-148 · Auditoría de refactorización 2026-10-20 — bugs, código muerto, duplicación y principios
 
-**Estado: SECCIÓN A + F1 + F2 EJECUTADAS, FUSIONADAS y DESPLEGADAS en
-producción el 2026-10-20** (PR #24, merge `8ffb8b3`; seis commits desde
-`1d16b44`). Núcleo y BFF corren `point5-8ffb8b3`, con el aviso de profesor
-verificado extremo a extremo contra el catálogo del núcleo. **Siguen ABIERTAS
-las secciones B, C, D y E**, más la reescritura de la sección 3 de COTAS que
-quedó de F2. El inventario sigue siendo el plan de
-ejecución por ítem; el acta de la sección A, al final de esta entrada, recoge
-lo hecho, lo medido y los NUEVE puntos en que el código desmintió al plan.
+**Estado al 2026-10-21 — cuatro despliegues, todos verificados ejecutando:**
+
+| Bloque | Estado | Release en producción |
+|---|---|---|
+| Sección A (18 bugs) + F1 + F2 | CERRADO | `point5-8ffb8b3` (PR #24, 2026-10-20) |
+| E1 + sección B (B1-B4, B7, B8) + B5 pasos 1-2 | CERRADO | `point5-500d8d9` (PR #26, 2026-10-21) |
+| Sincronía de `deploy/nas` + limpieza de marcadores retirados del compose vivo | CERRADO | `point5-500d8d9` (PR #27) |
+| B6 (`DROP shadow_inbox`, migración `core0056`) | CERRADO | `point5-4ffaf7e` (PR #28) |
+
+**Siguen ABIERTAS: las secciones C y D enteras, E2-E9, F3 y los pasos 3-4 de
+B5**, más la reescritura de la sección 3 de COTAS que quedó de F2. Y dos
+reaperturas que NO se cerraron por asociación: **A18-01** (la UI ofrece ocho
+filtros que el catálogo rechaza con 501) y la **segunda mitad de A18-03**
+(`WatchlistPage` no consume `isError`: un fallo de red se lee como «aún no hay
+vacantes»).
+
+El inventario sigue siendo el plan de ejecución por ítem; el acta de la sección
+A recoge los NUEVE puntos en que el código desmintió al plan, y la de la
+sección B otros CUATRO.
 
 Auditoría de lectura del árbol `8d01c50` (main, 2026-10-20) con cinco
 revisiones paralelas (core, cosecha, BFF, frontend, transversal), radon 6.0.1,
@@ -1937,9 +1949,21 @@ SELECT count(*) FROM jobhunt.source_listing_incarnations i
 ```
 
 Cuando ESA cuenta sea 0 (~2027-01-19), quedarán sólo las vacantes con
-candidatura. Entonces son DOS decisiones, no una: retirar el handler exige o que
-el propietario suelte esas candidaturas, o aceptar que una reparación de puntero
-sobre una de esas cuatro vacantes la saque del feed.
+candidatura.
+
+**DECISIÓN DEL PROPIETARIO (2026-10-21): priman las reparaciones inmediatas
+sobre mantener esas candidaturas.** O sea: llegada la fecha, el handler se
+retira sin esperar a que las cuatro candidaturas desaparezcan, y se acepta que
+una reparación de puntero sobre una de esas cuatro vacantes la saque del feed
+(son 4 sobre 40.709, y dos son `saved`, es decir marcadores). Lo que esto NO
+autoriza es borrar las candidaturas: la cota PF.3 sigue conservándolas, lo que
+se deja caer es la vacante del feed servido si el sink tiene que repararla.
+
+Queda por decidir UNA cosa cuando se ejecute: si al retirar el handler conviene
+cerrar a mano las cuatro encarnaciones (`ended_at = now()`), que las archivaría
+y haría el desenlace explícito en vez de esperar a que una reparación fortuita
+lo provoque. Recomendación: sí — un efecto que llega cuando nadie mira es peor
+que el mismo efecto provocado a propósito y anotado.
 
 #### Por qué no se puede retirar antes: qué se rompe exactamente
 
