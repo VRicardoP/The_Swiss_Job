@@ -1031,6 +1031,15 @@ def test_catalog_filter_remote_and_location(db):
     # Tipo inválido en remote ⇒ 400 del contrato, no 500.
     r = _api(factory, base + "&remote=banana", token=auth)
     assert (r.status_code, r.json()["code"]) == (400, "invalid_request")
+    # DT-148 A18-01: los metacaracteres de LIKE son LITERALES. Al pasar la
+    # condición de `position()` a `LIKE` —para que la sirva el índice trgm de
+    # core0057— apareció la posibilidad de que un `%` del usuario casara
+    # CUALQUIER ubicación: el filtro parecería aplicarse sin filtrar nada.
+    assert _api(factory, base + "&city=%25", token=auth).json()["items"] == []
+    assert _api(factory, base + "&city=_eneva", token=auth).json()["items"] == []
+    # Y la subcadena sigue casando por el medio, que es el contrato.
+    one = _api(factory, base + "&city=enev", token=auth).json()["items"]
+    assert [i["id"] for i in one] == [v1]
 
 
 def test_catalog_filter_category_and_since(db):

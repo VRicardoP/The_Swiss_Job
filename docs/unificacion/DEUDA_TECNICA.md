@@ -1224,6 +1224,56 @@ store y el prefill de `SavedSearchesPage`.
 `employment_type` no se filtran porque la canónica sólo tiene `salary` como
 TEXTO LIBRE. Filtrar números contra texto libre sería inventarse el resultado.
 
+#### El filtro nuevo tardaba 86 s, y eso lo introduje yo
+
+Verificado DESPUÉS de desplegar —que es cuando se vio— el filtro daba el
+resultado correcto y tardaba una eternidad:
+
+```
+location='Zürich'          2.571 resultados
+location='Genève'            118 resultados
+location='Remote'          2.534 resultados en  86,4 s
+location='zzz-no-existe'       0 resultados en  44,9 s
+```
+
+`EXPLAIN` lo explicaba sin ambigüedad: `Seq Scan on vacancies` + `Seq Scan on
+offer_revisions` con `Filter: POSITION('remote' IN lower(...))`, sobre 227.053
+revisiones y un NAS con loadavg 10,85 en 2 CPUs.
+
+**Y el propio código lo avisaba.** El docstring de `_location_conditions` decía
+«Location conserva su coste por fila». Era cierto y era tolerable **mientras
+nadie lo usaba**: el BFF no exponía el filtro. Al sustituir el desplegable de
+cantones por un campo de ubicación lo hice alcanzable desde la interfaz, y un
+filtro que la interfaz ofrece y que tarda minuto y medio es, en la práctica,
+otra forma de no servirlo. El cantón que sustituyó tenía la misma forma
+—igualdad sobre JSONB sin índice— pero NUNCA llegaba a ejecutarse: devolvía
+501 antes.
+
+**Arreglado con el patrón que el propio núcleo ya había elegido para `q`**, y
+hacían falta los DOS cambios:
+
+1. `position(x in y) > 0` **no lo puede servir un índice trgm**. La condición
+   se reescribió como `LIKE` con los metacaracteres del usuario escapados —
+   idéntico a `q`, por el que `core0045` creó sus dos índices gemelos sobre
+   `title` y `company`.
+2. Migración **`core0057`**: `ix_offer_revisions_catalog_location`, GIN trgm
+   sobre `lower(coalesce(content->>'location',''))`. Mismo molde que
+   `core0045`, `lock_timeout='5s'` incluido: construir un GIN sobre una tabla
+   que la cosecha escribe toma un lock, y es mejor que la migración falle
+   rápido y se reintente en un hueco que bloquear un barrido.
+
+Ensayada de ida y vuelta en base desechable (`core0056` sin índice → `core0057`
+con él → `downgrade` sin él → otra vez con él).
+
+**Lo que el escapado evita, y es nuevo con `LIKE`:** un `%` del usuario casaría
+CUALQUIER ubicación, así que el filtro parecería aplicarse sin filtrar nada.
+Fijado en `test_integration_api` (`city=%` y `city=_eneva` devuelven vacío;
+`city=enev` sigue casando por el medio) y en el evaluador
+(`"100% remote_work"` se enlaza como `%100\% remote\_work%`). Y el test del
+evaluador fija la FORMA, no sólo el resultado: si alguien vuelve a
+`position()`, el filtro seguirá siendo correcto y volverá a tardar 86 s — un
+fallo que sólo se ve cronometrando.
+
 #### Y una distinción que casi me cuesta un 422 en producción
 
 La búsqueda del catálogo (`/v1/vacancies`) y el evaluador de búsquedas

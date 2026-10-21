@@ -177,7 +177,7 @@ def _catalog_filter_sql(
     legacy de la que la leía dejó de tener escritores (DT-148 A1).
 
     Remote=true usa el índice parcial core0044; título/empresa, los trigram
-    core0045. Location conserva su coste por fila."""
+    core0045; `location` por `ix_offer_revisions_catalog_location` (core0057)."""
     join = ""
     where: list[str] = []
     params: dict = {}
@@ -245,16 +245,38 @@ def _classified_conditions(
     return join
 
 
+def _like_literal(value: str) -> str:
+    """Patrón LIKE que casa el valor como SUBCADENA LITERAL.
+
+    `%`, `_` y `\\` del usuario se escapan: el contrato de estos filtros es
+    «contiene este texto», no «este patrón». Mismo escapado que `q`.
+    """
+    literal = (
+        value.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    return "%" + literal + "%"
+
+
 def _location_conditions(where: list[str], params: dict, **values: str | None) -> None:
     """Condiciones substring ci sobre `location` (country y city comparten
-    campo: el content no modela country estructurado). Muta where/params."""
+    campo: el content no modela country estructurado). Muta where/params.
+
+    DT-148 A18-01 (2026-10-21): esto era `position(lower(:x) in lower(...)) > 0`
+    y el docstring de arriba decía, con razón, que «location conserva su coste
+    por fila». Era tolerable mientras NADIE lo usaba: el BFF no exponía el
+    filtro. Al sustituir el desplegable de cantones —que siempre acababa en
+    501— por un campo de ubicación, pasó a ser alcanzable desde la interfaz, y
+    medido en producción costaba **45-86 s** con doble Seq Scan sobre 227.053
+    revisiones. `position()` NO lo puede servir un índice trgm; `LIKE` sí, que
+    es justo por lo que `q` se escribió así (core0045). Con `core0057` el
+    filtro usa el índice.
+    """
     for pname, value in values.items():
         if value is not None and value.strip():
             where.append(
-                f"position(lower(:{pname}) "
-                "in lower(coalesce(o.content->>'location', ''))) > 0"
+                f"lower(coalesce(o.content->>'location', '')) LIKE lower(:{pname})"
             )
-            params[pname] = value.strip()
+            params[pname] = _like_literal(value)
 
 
 _CODIGO_DE_IDIOMA = re.compile(r"[a-z]{2}(-[a-z]{2})?")

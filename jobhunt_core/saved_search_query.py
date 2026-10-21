@@ -83,11 +83,20 @@ def matching_query(
         where.append("regexp_replace(src.name, '^legacy:', '') = ANY(:sources)")
         params["sources"] = sources
     if f.location and f.location.strip():
-        where.append(
-            "position(lower(:location) in "
-            "lower(coalesce(o.content->>'location', ''))) > 0"
+        # LIKE, no `position()`: lo primero lo sirve el índice trgm de
+        # `core0057`, lo segundo obliga a un Seq Scan por fila (DT-148 A18-01,
+        # medido en 45-86 s en producción). Los metacaracteres del usuario se
+        # escapan: el contrato es «contiene», no «patrón».
+        literal = (
+            f.location.strip()
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
         )
-        params["location"] = f.location.strip()
+        where.append(
+            "lower(coalesce(o.content->>'location', '')) LIKE lower(:location)"
+        )
+        params["location"] = "%" + literal + "%"
     cantons = [
         name.strip().upper() for name in (f.canton or "").split(",") if name.strip()
     ]
