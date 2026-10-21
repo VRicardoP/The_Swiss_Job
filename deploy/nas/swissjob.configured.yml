@@ -22,17 +22,19 @@ services:
       CORE_HTTP_TIMEOUT_SECONDS: '120'
       CORE_INBOX_TOKEN: ${CORE_INBOX_TOKEN}
       CORE_ERASURE_REPLICA_ID: swissjob-live
-      # DT-148 (2026-10-21): estas DOS variables están en el compose VIVO del NAS
-      # y esta copia las había perdido — deriva en la dirección peligrosa, la que
-      # hace que el repositorio afirme algo que la máquina no hace (es justo lo
-      # que A19-04 existe para evitar). Son RESIDUO INERTE: ni
-      # `SCHEDULER_DAILY_HARVEST_ENABLED` ni `PLAYWRIGHT_BROWSERS_PATH` tienen un
-      # solo lector desde que se retiraron la cosecha legacy y los scrapers
-      # Playwright (`grep -rnw` sobre `backend/` devuelve vacío). Se anotan aquí
-      # porque el fichero debe decir LO QUE CORRE; retirarlas del NAS es una
-      # edición del compose de producción y la decide el propietario.
-      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
-      SCHEDULER_DAILY_HARVEST_ENABLED: 'True'
+      # DT-148 (2026-10-21): el compose VIVO llevaba aquí dos variables de entorno
+      # residuales —la ruta de navegadores del scraping retirado y el interruptor
+      # de la cosecha diaria legacy— que esta copia no recogía. Se RETIRARON del
+      # NAS (autorizado por el propietario) y backend y worker se recrearon sin
+      # ellas: comprobado con `env` dentro de los dos contenedores. Ninguna tenía
+      # lector en el repo, el directorio de navegadores no existe en la imagen y
+      # la librería tampoco está instalada.
+      #
+      # Sus nombres NO se escriben aquí a propósito: `check_source_ownership.py`
+      # los trata como marcadores del runtime retirado y busca el literal en TODO
+      # el fichero, comentarios incluidos. Nombrarlos para explicar que se fueron
+      # pondría el guard en rojo — y el guard tiene razón: este fichero es de
+      # runtime de producción y ahí esos nombres no deben volver a aparecer.
       SECRET_KEY: ${SECRET_KEY}
       SMTP_HOST: smtp.gmail.com
       SCHEDULER_ENABLED: 'True'
@@ -114,17 +116,19 @@ services:
       SMTP_USER: ${SMTP_USER}
       POSTGRES_USER: swissjob
       SMTP_HOST: smtp.gmail.com
-      # DT-148 (2026-10-21): estas DOS variables están en el compose VIVO del NAS
-      # y esta copia las había perdido — deriva en la dirección peligrosa, la que
-      # hace que el repositorio afirme algo que la máquina no hace (es justo lo
-      # que A19-04 existe para evitar). Son RESIDUO INERTE: ni
-      # `SCHEDULER_DAILY_HARVEST_ENABLED` ni `PLAYWRIGHT_BROWSERS_PATH` tienen un
-      # solo lector desde que se retiraron la cosecha legacy y los scrapers
-      # Playwright (`grep -rnw` sobre `backend/` devuelve vacío). Se anotan aquí
-      # porque el fichero debe decir LO QUE CORRE; retirarlas del NAS es una
-      # edición del compose de producción y la decide el propietario.
-      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
-      SCHEDULER_DAILY_HARVEST_ENABLED: 'True'
+      # DT-148 (2026-10-21): el compose VIVO llevaba aquí dos variables de entorno
+      # residuales —la ruta de navegadores del scraping retirado y el interruptor
+      # de la cosecha diaria legacy— que esta copia no recogía. Se RETIRARON del
+      # NAS (autorizado por el propietario) y backend y worker se recrearon sin
+      # ellas: comprobado con `env` dentro de los dos contenedores. Ninguna tenía
+      # lector en el repo, el directorio de navegadores no existe en la imagen y
+      # la librería tampoco está instalada.
+      #
+      # Sus nombres NO se escriben aquí a propósito: `check_source_ownership.py`
+      # los trata como marcadores del runtime retirado y busca el literal en TODO
+      # el fichero, comentarios incluidos. Nombrarlos para explicar que se fueron
+      # pondría el guard en rojo — y el guard tiene razón: este fichero es de
+      # runtime de producción y ahí esos nombres no deben volver a aparecer.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       SMTP_PORT: '587'
       GEMINI_API_KEY: ${GEMINI_API_KEY}

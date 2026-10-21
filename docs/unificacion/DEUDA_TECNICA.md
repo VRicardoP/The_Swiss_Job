@@ -1034,14 +1034,36 @@ compose VIVO **estructuralmente** (YAML parseado, no texto), y no sólo las
 etiquetas:
 
 - `core.configured.yml`: sólo las 4 etiquetas. Limpio.
-- `swissjob.configured.yml`: las 3 etiquetas **y dos variables que el NAS SÍ
-  tiene y la copia había perdido** — `PLAYWRIGHT_BROWSERS_PATH` y
-  `SCHEDULER_DAILY_HARVEST_ENABLED`, en `backend` y en `worker`. Deriva en la
-  dirección peligrosa: el repositorio afirmaba algo que la máquina no hace, que
-  es justo lo que A19-04 existe para evitar. Son **residuo inerte** (ningún
-  lector en `backend/` desde que se retiraron la cosecha legacy y los scrapers
-  Playwright), así que se ANOTAN en la copia con su motivo. Retirarlas del NAS es
-  editar el compose de producción: lo decide el propietario.
+- `swissjob.configured.yml`: las 3 etiquetas **y dos variables de entorno que el
+  NAS SÍ tenía y la copia había perdido** — la ruta de navegadores del scraping
+  retirado y el interruptor de la cosecha diaria legacy, en `backend` y en
+  `worker`. Deriva en la dirección peligrosa: el repositorio afirmaba algo que la
+  máquina no hace, que es justo lo que A19-04 existe para evitar.
+
+  **Y aquí el CI enseñó algo mejor que la anotación.** Al anotarlas en la copia
+  —para que el fichero dijera lo que corre— se puso en rojo el job
+  `source-ownership`: `scripts/check_source_ownership.py` lista
+  `deploy/nas/swissjob.configured.yml` entre los ficheros de runtime que NO
+  pueden contener marcadores del stack retirado, y la ruta de navegadores es uno
+  de ellos. El guard no se equivocaba: señalaba que **el compose VIVO arrastraba
+  un marcador de un runtime borrado**. Esconderlo de la copia la haría mentir;
+  meterlo en una lista blanca cegaría al guard. La única salida coherente era
+  quitarlo de la máquina.
+
+  **Ejecutado el 2026-10-21, autorizado por el propietario**: copia de seguridad
+  `swissjob.configured.yml.before-playwright-cleanup-500d8d9`, las cuatro líneas
+  retiradas con `sed` (diff comprobado: exactamente cuatro, nada más), compose
+  revalidado con `config -q`, y `backend` + `worker` recreados con `-p swissjob`.
+  Comprobado con `env` DENTRO de los dos contenedores: 0 apariciones. Eran peso
+  muerto demostrable — ni el directorio de navegadores existe en la imagen
+  desplegada, ni la librería está instalada, ni ninguna de las dos tenía un solo
+  lector en el repo.
+
+  **Lección de método**: un guard en rojo por documentar la realidad no es un
+  guard mal puesto; es la realidad pidiendo un arreglo. Y sus nombres no se
+  escriben en la copia ni en un comentario, porque el guard busca el literal en
+  TODO el fichero — comentarios incluidos— y en un fichero de runtime de
+  producción tiene razón en no querer verlos nunca más.
 - El resto de diferencias es serialización, declarada en la comparación y no
   «arreglada»: Container Station escribe duraciones en nanosegundos (`30000000000ns`)
   y `mem_limit` en bytes (`1610612736`); el volcado de la copia usa `30s` y
