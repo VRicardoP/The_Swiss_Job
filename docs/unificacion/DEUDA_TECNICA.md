@@ -1893,7 +1893,67 @@ el 21-09-2026. Queda muy lejos de 0, así que F3 espera a enero de 2027.
 
 **Y NO va junto con B6**, al contrario de lo que decía: `legacy_shadow.py` no
 toca `shadow_inbox` ni ninguna tabla de la sombra. B6 se cerró el 2026-10-21 por
-su cuenta; esto sigue abierto por el calendario del corpus, no por B6.
+su cuenta.
+
+#### La espera NO está en el calendario: la condición de salida, como está
+#### escrita, NO SE CUMPLE NUNCA (medido el 2026-10-21)
+
+De las **40.709** vacantes con encarnación `legacy:*` viva, **4 tienen
+candidatura** —2 `applied` y 2 `saved`, repartidas en `legacy:arbeitnow` (2),
+`legacy:irishjobs` (1) y `legacy:jobgether` (1)—. Y la rama RANCIA de
+`archive.py` las excluye A PROPÓSITO:
+
+```sql
+AND NOT EXISTS (SELECT 1 FROM applications ap WHERE ap.vacancy_id = v.id)
+```
+
+Es la cota PF.3: archivar no borra, pero con candidatura el contrato dice
+conservar la vacante VIVA para el usuario. La rama MUERTA tampoco las alcanza:
+exige `NOT tiene_activa` y esas cuatro tienen encarnación activa ahora mismo.
+
+Consecuencia: sus `ended_at` se quedan en NULL **indefinidamente**, así que
+`count(*) ... WHERE ended_at IS NULL` nunca llega a 0 y la condición de salida
+de este punto no vence en enero de 2027 ni en ninguna fecha. Vence cuando el
+usuario retire esas cuatro candidaturas, lo que no es una fecha sino una
+decisión suya (dos son `saved`, es decir marcadores).
+
+**Lo que SÍ está en el calendario**: las otras **40.705** se archivan solas
+entre el ~2026-12-30 y el **2027-01-19** (`max(last_seen_at)` va del 01-09 al
+21-09 y `CORE_CORPUS_STALE_DAYS` son 120 d), y al archivarlas `archive.py`
+CIERRA sus encarnaciones (`ended_at = now()`, línea 125) antes de poner
+`archived_at`. El reloj ya corre y no se puede reiniciar: nada cosecha esas
+fuentes —su scope sombra nació deshabilitado—, así que `last_seen_at` está
+congelado.
+
+**Condición de salida CORREGIDA**, que es la que de verdad se puede comprobar:
+
+```sql
+SELECT count(*) FROM jobhunt.source_listing_incarnations i
+  JOIN jobhunt.source_listings sl ON sl.id = i.source_listing_id
+  JOIN jobhunt.sources s ON s.id = sl.source_id
+ WHERE s.name LIKE 'legacy%' AND i.ended_at IS NULL
+   AND NOT EXISTS (SELECT 1 FROM jobhunt.applications ap
+                   WHERE ap.vacancy_id = i.vacancy_id);
+```
+
+Cuando ESA cuenta sea 0 (~2027-01-19), quedarán sólo las vacantes con
+candidatura. Entonces son DOS decisiones, no una: retirar el handler exige o que
+el propietario suelte esas candidaturas, o aceptar que una reparación de puntero
+sobre una de esas cuatro vacantes la saque del feed.
+
+#### Por qué no se puede retirar antes: qué se rompe exactamente
+
+`legacy_shadow.ensure_registered` da de alta el extractor y el normalizador
+genéricos de una fuente `legacy:*`. Quien los necesita es la REPARACIÓN DEL
+PUNTERO CANÓNICO del sink (`harvest/sink.py:882`): al rehacer
+`current_offer_revision_id` de una vacante, re-normaliza el raw más reciente de
+su encarnación primaria. Sin normalizador registrado, `normalize_offer` devuelve
+None y el sink **anula el puntero** — y el propio comentario del código dice lo
+que eso significa: la vacante VIVA sale de `/v1`, del corpus de matching y del
+de dedup, con re-evaluación completa por `bump_corpus_generation`. El invariante
+de A-06 manda sobre conservar el puntero (jamás servir el contenido del primary
+anterior, que puede ser otra empresa), así que anular es lo correcto cuando de
+verdad no hay normalizador. El handler es justo lo que evita llegar ahí.
 
 ### Veredicto cuantificado (para no prometer de más)
 
