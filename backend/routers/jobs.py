@@ -49,29 +49,30 @@ async def search_jobs(
     q: str | None = Query(None, max_length=200),
     source: str | None = Query(None),
     remote_only: bool = Query(False),
-    canton: str | None = Query(None),
-    language: str | None = Query(None),
-    seniority: str | None = Query(None),
-    contract_type: str | None = Query(None),
-    salary_min: int | None = Query(None, ge=0),
-    salary_max: int | None = Query(None, ge=0),
-    sort: str = Query("newest", pattern="^(newest|oldest|salary|relevance)$"),
+    location: str | None = Query(None, max_length=200),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
 ):
-    """Search jobs with full-text search and structured filters."""
+    """Búsqueda full-text con los filtros que el catálogo SÍ sirve.
+
+    DT-148 A18-01 (2026-10-21): este endpoint aceptaba además `canton`,
+    `language`, `seniority`, `contract_type`, `salary_min/max` y tres órdenes
+    (`oldest`, `salary`, `relevance`). Los nueve devolvían **501**: el content
+    canónico no modela esos campos y el `/v1` sólo ordena por `newest`. Se
+    retiran en vez de implementarse porque la medición lo desaconseja — sobre
+    5.000 vacantes activas de producción, la cobertura va del 9,8 % de `canton`
+    al 0 % de `seniority`, y en lo cosechado los últimos 14 días es peor. Un
+    filtro que esconde el 91-100 % del corpus miente peor que un 501.
+
+    `location` entra en su lugar: el `/v1` lo filtra como substring sobre el
+    `location` de la canónica, que está en el 100 % de las ofertas.
+    """
     catalog = await resolve_catalog(db)
     params = CatalogSearchParams(
         q=q,
         source=source,
         remote_only=remote_only,
-        canton=canton,
-        language=language,
-        seniority=seniority,
-        contract_type=contract_type,
-        salary_min=salary_min,
-        salary_max=salary_max,
-        sort=sort,
+        location=location,
         limit=limit,
         offset=offset,
     )

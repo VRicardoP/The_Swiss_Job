@@ -146,11 +146,14 @@ function NewSearchForm({ onCancel, onSubmit, pending, searchStore }) {
   function handleSubmit(e) {
     e.preventDefault();
     if (!name.trim()) return;
+    // DT-148 A18-01: una búsqueda guardada hereda los filtros vigentes, así
+    // que heredaba también `canton` y `language` — y con ellos guardaba una
+    // búsqueda que al ejecutarse devolvía 501. Hoy sólo se guarda lo que el
+    // catálogo sirve.
     const filters = {};
     if (searchStore.q) filters.q = searchStore.q;
     if (searchStore.source) filters.source = searchStore.source;
-    if (searchStore.canton) filters.canton = searchStore.canton;
-    if (searchStore.language) filters.language = searchStore.language;
+    if (searchStore.location) filters.location = searchStore.location;
     if (searchStore.remoteOnly) filters.remote_only = true;
 
     onSubmit({

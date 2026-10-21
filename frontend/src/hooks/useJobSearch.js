@@ -3,30 +3,15 @@ import { jobsApi } from "../config/api";
 import { useSearchStore } from "../stores/searchStore";
 
 export function useJobSearch() {
-  const {
-    q,
-    source,
-    canton,
-    language,
-    seniority,
-    contractType,
-    remoteOnly,
-    salaryMin,
-    salaryMax,
-    sort,
-  } = useSearchStore();
+  const { q, source, location, remoteOnly } = useSearchStore();
 
+  // DT-148 A18-01: sólo viaja lo que el catálogo sirve. `sort` tampoco: el
+  // `/v1` ordena por `newest` y era el único valor que no daba 501.
   const params = {
     q: q || undefined,
     source: source || undefined,
-    canton: canton || undefined,
-    language: language || undefined,
-    seniority: seniority || undefined,
-    contract_type: contractType || undefined,
+    location: location || undefined,
     remote_only: remoteOnly || undefined,
-    salary_min: salaryMin || undefined,
-    salary_max: salaryMax || undefined,
-    sort,
   };
 
   return useInfiniteQuery({

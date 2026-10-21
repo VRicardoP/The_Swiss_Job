@@ -1,16 +1,19 @@
 import { create } from "zustand";
 
+// DT-148 A18-01 (2026-10-21): el store modelaba `canton`, `language`,
+// `seniority`, `contractType`, `salaryMin`, `salaryMax` y cuatro órdenes. El
+// catálogo del núcleo sirve exactamente q, source, remote y location, así que
+// los nueve restantes acababan en 501 — un usuario que filtraba por cantón
+// recibía un error. No se implementaron en el `/v1` porque la medición lo
+// desaconseja: sobre 5.000 vacantes activas la cobertura va del 9,8 % de
+// `canton` al 0 % de `seniority`. `location` los sustituye y sí funciona: el
+// núcleo lo filtra como substring sobre un campo presente en el 100 % de las
+// canónicas.
 const initialFilters = {
   q: "",
   source: "",
-  canton: "",
-  language: "",
-  seniority: "",
-  contractType: "",
+  location: "",
   remoteOnly: false,
-  salaryMin: "",
-  salaryMax: "",
-  sort: "newest",
 };
 
 export const useSearchStore = create((set) => ({
@@ -19,14 +22,8 @@ export const useSearchStore = create((set) => ({
 
   setQ: (q) => set({ q }),
   setSource: (source) => set({ source }),
-  setCanton: (canton) => set({ canton }),
-  setLanguage: (language) => set({ language }),
-  setSeniority: (seniority) => set({ seniority }),
-  setContractType: (contractType) => set({ contractType }),
+  setLocation: (location) => set({ location }),
   setRemoteOnly: (remoteOnly) => set({ remoteOnly }),
-  setSalaryMin: (salaryMin) => set({ salaryMin }),
-  setSalaryMax: (salaryMax) => set({ salaryMax }),
-  setSort: (sort) => set({ sort }),
   setFiltersOpen: (filtersOpen) => set({ filtersOpen }),
 
   resetFilters: () => set(initialFilters),

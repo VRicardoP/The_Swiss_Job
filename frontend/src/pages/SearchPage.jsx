@@ -8,7 +8,6 @@ import {
   Badge,
   Button,
   EmptyState,
-  Select,
   SkeletonCard,
   cn,
 } from "../components/ui";
@@ -71,7 +70,7 @@ function useActiveFilterChips() {
 }
 
 export default function SearchPage() {
-  const { q, sort, setQ, setSort, setFiltersOpen, resetFilters } = useSearchStore();
+  const { q, setQ, setFiltersOpen, resetFilters } = useSearchStore();
   const chips = useActiveFilterChips();
 
   const {
@@ -151,20 +150,10 @@ export default function SearchPage() {
               />
             </label>
 
-            <Select
-              size="lg"
-              value={sort}
-              onChange={(e) => setSort(e.target.value)}
-              fullWidth={false}
-              aria-label="Sort"
-              className="hidden w-44 sm:block"
-              containerClassName="hidden sm:flex"
-            >
-              <option value="newest">Newest first</option>
-              <option value="oldest">Oldest first</option>
-              <option value="salary">Salary</option>
-              <option value="relevance">Relevance</option>
-            </Select>
+            {/* DT-148 A18-01: aquí había un selector de orden con cuatro
+                opciones y TRES devolvían 501 — el `/v1` sólo ordena por
+                `newest`, que es lo que ya se sirve. Un desplegable en el que
+                tres de cuatro opciones dan error no es una opción. */}
 
             <Button
               variant="secondary"
@@ -218,21 +207,6 @@ export default function SearchPage() {
                 </>
               )}
 
-              {/* Sort móvil */}
-              <Select
-                size="sm"
-                value={sort}
-                onChange={(e) => setSort(e.target.value)}
-                fullWidth={false}
-                aria-label="Sort"
-                className="sm:hidden ml-auto w-36"
-                containerClassName="sm:hidden ml-auto"
-              >
-                <option value="newest">Newest</option>
-                <option value="oldest">Oldest</option>
-                <option value="salary">Salary</option>
-                <option value="relevance">Relevance</option>
-              </Select>
             </div>
           )}
         </div>

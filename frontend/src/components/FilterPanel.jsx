@@ -1,23 +1,12 @@
 import { useEffect } from "react";
 import { X, RotateCcw } from "lucide-react";
 import { useSearchStore } from "../stores/searchStore";
-import { Button, Select, Input, IconButton, cn } from "./ui";
-
-const CANTONS = [
-  "AG", "AI", "AR", "BE", "BL", "BS", "FR", "GE", "GL", "GR",
-  "JU", "LU", "NE", "NW", "OW", "SG", "SH", "SO", "SZ", "TG",
-  "TI", "UR", "VD", "VS", "ZG", "ZH",
-];
-const LANGUAGES = ["de", "fr", "en", "it"];
-const SENIORITY = ["mid", "senior", "lead", "head", "director"];
-const CONTRACT_TYPES = ["full_time", "part_time", "contract", "temporary"];
+import { Button, Input, IconButton, cn } from "./ui";
 
 export default function FilterPanel() {
   const {
-    source, canton, language, seniority, contractType,
-    remoteOnly, salaryMin, salaryMax,
-    setSource, setCanton, setLanguage, setSeniority, setContractType,
-    setRemoteOnly, setSalaryMin, setSalaryMax,
+    source, location, remoteOnly,
+    setSource, setLocation, setRemoteOnly,
     filtersOpen, setFiltersOpen, resetFilters,
   } = useSearchStore();
 
@@ -97,59 +86,20 @@ export default function FilterPanel() {
               onChange={(e) => setSource(e.target.value)}
             />
 
-            <div className="grid grid-cols-2 gap-3">
-              <Select
-                label="Canton"
-                value={canton}
-                onChange={(e) => setCanton(e.target.value)}
-              >
-                <option value="">All cantons</option>
-                {CANTONS.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </Select>
-              <Select
-                label="Language"
-                value={language}
-                onChange={(e) => setLanguage(e.target.value)}
-              >
-                <option value="">All languages</option>
-                {LANGUAGES.map((l) => (
-                  <option key={l} value={l}>
-                    {l.toUpperCase()}
-                  </option>
-                ))}
-              </Select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <Select
-                label="Seniority"
-                value={seniority}
-                onChange={(e) => setSeniority(e.target.value)}
-              >
-                <option value="">All levels</option>
-                {SENIORITY.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </Select>
-              <Select
-                label="Contract"
-                value={contractType}
-                onChange={(e) => setContractType(e.target.value)}
-              >
-                <option value="">All types</option>
-                {CONTRACT_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t.replace("_", " ")}
-                  </option>
-                ))}
-              </Select>
-            </div>
+            {/* DT-148 A18-01: aquí había cuatro desplegables —Canton, Language,
+                Seniority, Contract— y los cuatro acababan en 501. El content
+                canónico no modela esos campos: medido sobre 5.000 vacantes
+                activas de producción, la cobertura va del 9,8 % de `canton`
+                al 0 % de `seniority`, y en lo cosechado los últimos 14 días
+                es peor. Servirlos habría escondido el 91-100 % del corpus.
+                `location` los sustituye porque el núcleo SÍ lo filtra, como
+                substring sobre un campo presente en el 100 % de las ofertas. */}
+            <Input
+              label="Location"
+              placeholder="Zürich, Genève, Remote…"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+            />
 
             <div>
               <span className="block text-sm font-medium text-text-primary mb-1.5">
@@ -183,27 +133,12 @@ export default function FilterPanel() {
               </div>
             </div>
 
-            <div>
-              <span className="block text-sm font-medium text-text-primary mb-1.5">
-                Salary range (CHF)
-              </span>
-              <div className="grid grid-cols-2 gap-3">
-                <Input
-                  type="number"
-                  inputMode="numeric"
-                  placeholder="Min"
-                  value={salaryMin}
-                  onChange={(e) => setSalaryMin(e.target.value)}
-                />
-                <Input
-                  type="number"
-                  inputMode="numeric"
-                  placeholder="Max"
-                  value={salaryMax}
-                  onChange={(e) => setSalaryMax(e.target.value)}
-                />
-              </div>
-            </div>
+            {/* DT-148 A18-01: el rango de salario también daba 501. La canónica
+                sólo lleva `salary` como TEXTO LIBRE y no modela los importes
+                (salary_min aparece en el 1,1 % de las ofertas activas y en el
+                0 % de las últimas dos semanas): filtrar números contra texto
+                libre sería inventarse el resultado. Es la cota que el propio
+                `/v1` documenta y PERMANECE. */}
           </div>
         </div>
 

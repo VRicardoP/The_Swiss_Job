@@ -22,7 +22,13 @@
 > validan DENTRO de cada contenedor con tripwire antes de cada maniobra.
 > Nueva cota aceptada: el `canton` del histórico legacy no se repara (~4.500
 > canónicas por un campo que hoy consume una sola búsqueda semanal); lo nuevo sí
-> lo lleva.
+> lo lleva. **CORREGIDO el 2026-10-21 (DT-148 A18-01): «lo nuevo sí lo lleva» es
+> FALSO medido contra la base** — en las canónicas creadas los últimos 14 días
+> `canton` aparece en el 8,5 %, y en las 5.000 activas muestreadas en el 9,8 %.
+> Los productores nativos tampoco lo pueblan. Por eso el filtro de cantón se
+> retiró de la interfaz en vez de implementarse en el `/v1`: habría escondido el
+> 90 % del corpus. El filtro de ubicación vive hoy sobre `location`, que sí está
+> en el 100 % de las ofertas.
 
 ## DT-148 · Auditoría de refactorización 2026-10-20 — bugs, código muerto, duplicación y principios
 
@@ -1160,6 +1166,74 @@ etiquetas:
 
 Tras sincronizar: **0 diferencias semánticas** en los dos ficheros, y
 `check_no_secrets` 0 hallazgos sobre los 5.
+
+### Acta de A18-01 — 2026-10-21 · la interfaz dejó de ofrecer lo que el catálogo rechaza
+
+**El síntoma.** `GET /api/v1/jobs/search` devolvía **501** con `canton`,
+`language`, `seniority`, `contract_type`, `salary_min/max` y con `sort=oldest`,
+`sort=salary` o `sort=relevance`. Los nueve los ofrecía la interfaz
+(`searchStore` los modelaba, `FilterPanel` pintaba cuatro desplegables y dos
+campos de salario, y `SearchPage` un selector de orden con cuatro opciones de
+las que tres fallaban). Un usuario que filtraba por cantón recibía un error.
+Y `SavedSearchesPage` los heredaba al crear una búsqueda guardada: guardaba una
+búsqueda que al ejecutarse daría 501.
+
+**La decisión: retirar, no implementar. Y no es preferencia, es la medición.**
+El punto dejaba dos salidas («o la UI deja de ofrecerlos, o el `/v1` los
+implementa») y parecía cuestión de producto. Lo es sólo hasta que se mira el
+dato. Cobertura de esos campos en el contenido canónico, sobre **5.000 vacantes
+ACTIVAS** de producción (muestra, `max_parallel_workers_per_gather = 0` porque
+el agregado completo agota la memoria compartida del NAS):
+
+| Campo | Presente | % |
+|---|---|---|
+| `location` | 5.000 | **100 %** |
+| `canton` | 491 | 9,8 % |
+| `language` | 147 | 2,9 % |
+| `contract_type` | 107 | 2,1 % |
+| `salary_min` / `salary_max` | 57 / 55 | 1,1 % |
+| `seniority` | 45 | 0,9 % |
+
+Y **no es deuda del histórico legacy**: en las canónicas creadas los ÚLTIMOS 14
+DÍAS es peor — `canton` 8,5 %, `language` y `contract_type` 0,04 %,
+`seniority` y `salary_min` **0 %**. Los productores nativos simplemente no
+pueblan esos campos. (De paso: la cota que decía «el `canton` del histórico no
+se repara; lo NUEVO sí lo lleva» es FALSA medida contra la base — lo nuevo lo
+lleva el 8,5 % de las veces.)
+
+Implementar los seis filtros habría servido controles que esconden el **91-100 %
+del corpus** no porque las ofertas no casen, sino porque el campo falta. Eso es
+peor que el 501: **un error se ve; un 0 % se cree.**
+
+**Lo que entra en su lugar, y sí funciona.** El `/v1` ya filtraba `city` como
+substring case-insensitive sobre `location` —el único campo de ubicación que la
+canónica lleva SIEMPRE— y la interfaz no lo ofrecía. Ahora el panel tiene un
+campo **Location** de texto libre que viaja como `city`. Comprobado contra
+producción: sin filtro 95.830 vacantes, `Zürich` 2.568, `Genève` 118, `Remote`
+2.534, una cadena inventada 0. El usuario conserva filtro de ubicación —el más
+útil de los seis— con un recuento que no miente.
+
+**Lo retirado, de punta a punta:** los seis campos y el `sort` del
+`CatalogSearchParams` del BFF, los nueve parámetros del router, las dos ramas
+de `unsupported_search_reason` que ya no podían dispararse, los cuatro
+desplegables y el rango de salario de `FilterPanel` (con sus cuatro listas de
+constantes), los dos selectores de orden de `SearchPage`, nueve campos del
+store y el prefill de `SavedSearchesPage`.
+
+**La cota que PERMANECE** (y que el `/v1` ya documentaba): `salary_min/max` y
+`employment_type` no se filtran porque la canónica sólo tiene `salary` como
+TEXTO LIBRE. Filtrar números contra texto libre sería inventarse el resultado.
+
+**Pruebas.** Tres casos nuevos en el frontend
+(`hooks/useJobSearch.test.js`) que fijan que el store modele EXACTAMENTE los
+cuatro filtros servidos y que ninguno de los nueve muertos vuelva — con
+**control negativo ejecutado**: reintroducido `canton` a mano, 2 de los 3 casos
+fallan. En el BFF, `test_catalog_contract.py` cambia los nueve casos de «no
+expresable» por tres que fijan el contrato nuevo (los campos del DTO,
+`location` viajando como `city`, y que vacío NO envíe `city=`), y se añade la
+prueba del **único 501 que sobrevive** —un CSV de fuentes que al expandirse
+rebasa el `max_length=200` del `/v1`—, que antes iba de polizón en la
+parametrización que se retiró y se habría quedado sin cobertura.
 
 ### C · Duplicación (consolidar sin cambiar comportamiento)
 
@@ -5250,7 +5324,7 @@ la funcionalidad completa; no prueban por sí solos que toda la plataforma esté
 
 | ID | Prioridad / dimensión | Evidencia y situación |
 |---|---|---|
-| A18-01 | P2 · funcionalidad/integración | **REABIERTO 2026-10-20 — el cierre del 28-09 afirmaba algo que el código no da.** Lo cerrado es cierto a medias: el core sirve `q`/`source`/`remote`/`country`/`city` y los filtros sin equivalente NO generan petición. Pero la frase «el 501 de `core_primary` ya no puede darse» es FALSA, y se comprueba ejecutando: `GET /api/v1/jobs/search` devuelve **501** con `canton`, `language`, `seniority`, `contract_type`, `salary_min/max` y con `sort=salary` o `sort=relevance` — los ocho los sigue ofreciendo la interfaz (`searchStore.js` los modela y `FilterPanel` los pinta). DT-148 A11 retiró los dos endpoints que daban 501 incondicional y el desplegable de fuentes que nunca se llenaba, pero no tocó estos controles porque retirarlos de la UI es decisión de producto. **Lo que falta:** o la UI deja de ofrecer lo que el catálogo no sirve, o el `/v1` los implementa. Mientras tanto, un usuario que filtre por cantón recibe un error |
+| A18-01 | P2 · funcionalidad/integración | **CERRADO 2026-10-21 — ver el acta al final de DT-148.** Antes: REABIERTO el 2026-10-20 porque el cierre del 28-09 afirmaba algo que el código no da. Lo cerrado es cierto a medias: el core sirve `q`/`source`/`remote`/`country`/`city` y los filtros sin equivalente NO generan petición. Pero la frase «el 501 de `core_primary` ya no puede darse» es FALSA, y se comprueba ejecutando: `GET /api/v1/jobs/search` devuelve **501** con `canton`, `language`, `seniority`, `contract_type`, `salary_min/max` y con `sort=salary` o `sort=relevance` — los ocho los sigue ofreciendo la interfaz (`searchStore.js` los modela y `FilterPanel` los pinta). DT-148 A11 retiró los dos endpoints que daban 501 incondicional y el desplegable de fuentes que nunca se llenaba, pero no tocó estos controles porque retirarlos de la UI es decisión de producto. **Lo que falta:** o la UI deja de ofrecer lo que el catálogo no sirve, o el `/v1` los implementa. Mientras tanto, un usuario que filtre por cantón recibe un error |
 | A18-02 | P2 · bug/eficiencia | **CERRADO 2026-09-28** — el camino escolar ya no pagina: `CoreWatchlist.get_match` resuelve por `GET /school-jobs?dedup_key=<hash>&limit=2` (una petición, ambigüedad = error) y `services/schools/core_client.list()` es una sola llamada. No queda ningún bucle de 100 páginas en `backend/services/matching` ni `services/schools` |
 | A18-03 | P2 · funcionalidad/UX | **CERRADO 2026-09-28** — la pantalla principal pide `limit=3000` (≥ corpus) y la pestaña Watchlist filtra sobre ese lote, así que el corte a 500 no aplica; `MatchPage` renderiza `isError` aparte del vacío. Residuo aceptado: un fallo del corpus ESCOLAR degrada a «sin `school_id`» con `logger.warning` (M5/T12), no con aviso en la UI |
 | A18-04 | P2 · concurrencia | **CERRADO 2026-09-28** — `claim_deliveries` usa `FOR UPDATE OF d SKIP LOCKED` + lease; `test_g7_dos_dispatchers_solapados_retiran_UNA_fila_habiendo_dos_candidatos` lo prueba. Suite del núcleo en verde el 2026-09-28 |
