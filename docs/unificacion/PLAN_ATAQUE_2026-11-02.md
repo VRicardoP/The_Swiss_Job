@@ -24,7 +24,9 @@ Medidas hoy, no supuestas. Cada una elimina opciones:
 |---|---|
 | `main` local = `89e0e5f`, **2 commits por delante de `github/main` (`6efebe5`)**, idéntico a `github/dt148/a1801-receipt` | El PR del recibo está **pendiente de merge del propietario**. `deploy_nas.sh` exige el SHA exacto de `github/main`, así que **no se puede desplegar nada hasta que ese PR entre**. Todo el trabajo nuevo se apila sobre un `main` que aún no es el remoto |
 | `main` está protegida: PR obligatorio + 9 checks, y **`gh` no está instalado ni hay token** | Yo no puedo abrir ni fusionar PRs. Cada tanda termina en una rama + los nueve checks verificados en local, y el merge lo hace el propietario |
-| Entorno local: lo levanté (`postgres`, `redis`, `backend`, `core-api` sanos) | Ya se pueden correr tests. Pero `pytest` y `ruff` **no viajan en la imagen del BFF** (A-65): hace falta la imagen auxiliar |
+| Entorno local: lo levanté (`postgres`, `redis`, `backend`, `core-api` sanos) | Los tests del frontend y de `scripts/` corren ya |
+| ⚠ **A-65 es un PREREQUISITO, no un ítem más de la lista** (añadido el 2026-11-03 tras subestimarlo) | `docker compose exec -T backend python -m pytest` devuelve **`ModuleNotFoundError: No module named 'pytest'`**, y `check_source_ownership.py:89-96` **prohíbe** devolver `pytest`/`ruff` a `backend/requirements.txt`. O sea: **ningún ítem de `backend/` se puede verificar hasta resolverlo.** Hacerlo bien una vez (servicio `backend-dev` con `requirements-dev.txt`) es más barato que layerear una imagen a mano en cada tanda — y es el propio arreglo de A-65. **Ponlo primero** |
+| Cada corrida de la suite del BFF son **10-12 minutos** | Eso manda el AGRUPAMIENTO: los ítems de `backend/` se hacen en **una tanda con una sola corrida al final**, no uno a uno. Es el error que cometí al prometer que se podían encadenar «sin pararme» |
 | **NO lanzar dos `pytest` contra la misma base** | La suite del BFF y la del núcleo sí pueden ir en paralelo (bases distintas); dos del BFF, nunca |
 | Producción sana: núcleo `point5-6efebe5`, BFF/frontend `point5-14438b7`, 12 d arriba | Hay margen para trabajar sin prisa, salvo A-01 y A-02 |
 | Rotación de secretos: **pendiente de confirmación del propietario** (relevo §5) | A-02 no la puedo cerrar yo. Puedo preparar todo lo demás |
@@ -48,16 +50,52 @@ listos.
 
 ### Tanda 1 — seguridad y fiabilidad de producción
 
-| # | Qué | Por qué aquí | Coste |
+> ### ⚠ CORRECCIÓN DEL 2026-11-03 — las estimaciones de esta tabla estaban mal
+>
+> La primera versión de esta tanda decía que los puntos 1.2 a 1.8 eran «todos de
+> menos de treinta líneas y no tocan composes», y que se podían encadenar sin
+> pararse. **Medido, era falso en tres cosas**, y se deja escrito porque una
+> estimación equivocada en un plan es deuda igual que el código:
+>
+> 1. **«No tocan composes» es falso para A-16.** `RATE_LIMIT_TRUST_PROXY` existe
+>    **sólo** en `backend/config.py:144` (defecto `False`) y en
+>    `backend/.env.prod.example:44`. **No está en ningún compose**, así que
+>    activarlo en producción exige tocar `deploy/nas/swissjob.configured.yml` o el
+>    `.env` del NAS → **mismo bloqueo que 1.1**, no un arreglo libre.
+> 2. **A-10 no es «decisión + ~30 líneas», y no es tarea de código.** El cuerpo de
+>    `send_watchlist_digest` son ~60 líneas de lógica real (marcadores de
+>    idempotencia, marca de agua, envío). Reescribirlo contra el feed del núcleo
+>    tiene el tamaño que tuvo DT-148 A1, que era un ítem entero; retirarlo es
+>    decidir si la capacidad se quiere. **Es del propietario.**
+> 3. **Faltaba un PREREQUISITO que esta misma auditoría había encontrado (A-65):**
+>    la suite del BFF **no se puede lanzar** — `ModuleNotFoundError: No module
+>    named 'pytest'`. Cada ítem de `backend/` necesita layerear una imagen de test
+>    antes, y cada corrida son 10-12 minutos. Eso cambia el AGRUPAMIENTO, no sólo
+>    el coste.
+>
+> **Agrupamiento correcto**, que es lo que de verdad se puede hacer «de una
+> tirada»:
+>
+> - **Paso 0, coste único:** layerear la imagen de test del BFF
+>   (`requirements-dev.txt` son 4 líneas), o añadir un servicio `backend-dev`
+>   —que es además el arreglo de A-65 y conviene hacerlo bien una vez.
+> - **Tanda de BACKEND, una sola corrida de suite al final:** 1.3 (A-17) + 1.8
+>   (A-68) + 1.4 (A-13/A-18).
+> - **Tanda de FRONTEND, aparte y rápida** (la suite tarda 1,2 s): 1.5 (A-11) +
+>   1.6 (A-12).
+> - **Bloqueados a tu confirmación** (tocan compose, `.env` o `nginx.conf`): 1.1,
+>   1.2 y 1.7.
+
+| # | Qué | Por qué aquí | Coste MEDIDO (2026-11-03) |
 |---|---|---|---|
-| **1.1** | **A-61 + A-62** · `--requirepass` y `noeviction` en el redis del NAS, y `check_compose_exposure.py` sobre **los nueve** composes | Verificado ejecutando: `PONG` sin credencial, `allkeys-lru` sobre un broker. El guard existe y **mira el único fichero que está bien** | ~20 líneas + despliegue |
-| **1.2** | **A-16** · `RATE_LIMIT_TRUST_PROXY=true` + test que fije el `proxy_set_header` | Una variable. Hoy son **5 logins/minuto para todo el despliegue**, y la precondición de seguridad ya la cumple `nginx.conf:39` | 1 línea + 1 test |
-| **1.3** | **A-17** · que el rate limiter falle ABIERTO ante un fallo del almacén | Hoy un corte de Redis devuelve **500 en toda la API**, `/health` incluido | ~6 líneas |
-| **1.4** | **A-13 + A-18** · cota de descompresión y firma del fichero en la subida de CV | Un solo parche cierra los dos. Una petición autenticada mata el worker por OOM con `mem_limit: 1536m` | ~25 líneas |
-| **1.5** | **A-11** · `authApi.logout()` y llamarlo desde `useLogout` | Una línea **resucita el mecanismo entero de T9**, hoy muerto | 1 línea |
-| **1.6** | **A-12** · ventana de gracia en el canje del refresh (BCP de OAuth 2.1) | Dos pestañas abiertas = logout sorpresa de las dos. Y **envenena la señal de robo** | ~15 líneas |
-| **1.7** | **A-25** · cuatro `add_header` en `nginx.conf` | Única capa ante XSS es DOMPurify, con el JWT en `localStorage` | 4 líneas |
-| **1.8** | **A-68** · `assert` de host/entorno en `_ensure_test_db` | El proyecto YA truncó producción una vez con el teardown. El **nombre** está fijado; el **servidor** no | 4 líneas |
+| **1.1** | **A-61 + A-62** · `--requirepass` y `noeviction` en el redis del NAS, y `check_compose_exposure.py` sobre **los nueve** composes | Verificado ejecutando: `PONG` sin credencial, `allkeys-lru` sobre un broker. El guard existe y **mira el único fichero que está bien** | ~20 líneas + despliegue · **BLOQUEADO: toca compose** |
+| **1.2** | **A-16** · `RATE_LIMIT_TRUST_PROXY=true` + test que fije el `proxy_set_header` | Hoy son **5 logins/minuto para todo el despliegue**, y la precondición de seguridad ya la cumple `nginx.conf:39` | 1 variable · **BLOQUEADO: no está en ningún compose, hay que añadirla al del NAS o a su `.env`** |
+| **1.3** | **A-17** · que el rate limiter falle ABIERTO ante un fallo del almacén | Hoy un corte de Redis devuelve **500 en toda la API**, `/health` incluido | **~6 líneas** en un fichero de 68. Pequeño de verdad · necesita la imagen de test |
+| **1.4** | **A-13 + A-18** · cota de descompresión y firma del fichero en la subida de CV | Un solo parche cierra los dos. Una petición autenticada mata el worker por OOM con `mem_limit: 1536m` | **~30-40 líneas en dos ficheros + tests** (no 25). `cv_parser.py` son 102 líneas: es MEDIO, no corto |
+| **1.5** | **A-11** · `authApi.logout()` y llamarlo desde `useLogout` | **Resucita el mecanismo entero de T9**, hoy muerto | 1 método + 1 llamada + test · **el único corto y desbloqueado de la tanda** |
+| **1.6** | **A-12** · ventana de gracia en el canje del refresh (BCP de OAuth 2.1) | Dos pestañas abiertas = logout sorpresa de las dos. Y **envenena la señal de robo** | ~15 líneas en `token_store.py` + listener de `storage` en el frontend · toca los DOS lados |
+| **1.7** | **A-25** · cuatro `add_header` en `nginx.conf` | Única capa ante XSS es DOMPurify, con el JWT en `localStorage` | 4 líneas · **confirmación: la CSP hay que verificarla contra el bundle de Vite antes de desplegar** |
+| **1.8** | **A-68** · `assert` de host/entorno en `_ensure_test_db` | El proyecto YA truncó producción una vez con el teardown. El **nombre** está fijado; el **servidor** no | ~4-8 líneas, **pero en `conftest.py`**: un error ahí pone TODA la suite en rojo. Necesita la imagen de test y diseñar la válvula de escape |
 
 ### Tanda 2 — lo que miente en verde (observabilidad)
 
@@ -66,7 +104,7 @@ de salud mientras no funciona**.
 
 | # | Qué | Coste |
 |---|---|---|
-| **2.1** | **A-10** · retirar o reescribir `send_watchlist_digest` (hoy devuelve `ok` sin poder notificar nada) | decisión + ~30 líneas |
+| **2.1** | **A-10** · retirar o reescribir `send_watchlist_digest` (hoy devuelve `ok` sin poder notificar nada) | **DECISIÓN DEL PROPIETARIO, no tarea de código** (re-medido el 2026-11-03): el cuerpo son ~60 líneas de lógica real —marcadores de idempotencia, marca de agua, envío— y lo cubre `tests/test_scheduler.py`. Reescribirlo contra el feed del núcleo tiene el tamaño que tuvo DT-148 A1, que era un ítem entero. La estimación anterior («decisión + ~30 líneas») lo subestimaba |
 | **2.2** | **A-22** · `return_exceptions=True` + `bind=True` en `check_watchlist_health` (una fuente tumba las ocho; cualquier fallo sale SUCCESS) | ~8 líneas |
 | **2.3** | **A-23** · derivar `_WATCHLIST_SOURCES` del núcleo (le falta `swiss_schools_vis`) o test que compare | ~10 líneas |
 | **2.4** | **A-20** · 404 de Groq como error de CONFIGURACIÓN, no transitorio (hoy reintenta en vano para siempre) | ~10 líneas |

@@ -66,26 +66,39 @@
 >   razonamiento suponía. Su mitad real y accionable es el **1,15 M de filas** de
 >   `saved_search_observations`, sin purga ni TTL.
 >
-> ### Lo siguiente, por orden (detalle en el plan)
+> ### Lo siguiente, por orden — RE-MEDIDO el 2026-11-03
 >
-> 1. **A-61 + A-62** · el redis del BFF corre en producción **sin contraseña**
->    (verificado: `PONG` sin credencial, mientras el del núcleo da `NOAUTH`) y con
->    `allkeys-lru` sobre un broker. Y `check_compose_exposure.py` **sólo mira
->    `docker-compose.yml`**, que es el único fichero que está bien.
-> 2. **A-16** · `RATE_LIMIT_TRUST_PROXY=true`: hoy son **5 logins/minuto para
->    todo el despliegue**.
-> 3. **A-17** · el rate limiter falla CERRADO: un corte de Redis devuelve 500 en
->    toda la API, `/health` incluido.
-> 4. **A-13 + A-18** · bomba de descompresión y firma del fichero en la subida de
->    CV (un solo parche).
-> 5. **A-11** · `authApi.logout()`: una línea resucita el mecanismo entero de T9,
->    hoy muerto porque **ningún cliente llama a `POST /auth/logout`**.
-> 6. **A-12** · ventana de gracia en el canje del refresh: dos pestañas abiertas
->    tumban la familia entera.
-> 7. **A-10** · `send_watchlist_digest` es un **no-op garantizado** que devuelve
->    `ok`. Mismo fallo que A1 cerró para la alerta de profesor.
-> 8. **A-68** · `assert` de host en `conftest.py`: hoy sólo el NOMBRE de la base
->    de test está garantizado, no el SERVIDOR.
+> **Aviso sobre la versión anterior de esta lista.** Estaba ordenada por
+> severidad y daba a entender que los puntos 2-8 eran todos cortos y
+> encadenables. Al medirlos, **no**: uno está bloqueado como el 1, otro no es
+> tarea de código, y **faltaba un prerequisito que esta misma auditoría había
+> encontrado**. Una estimación equivocada en un plan es deuda igual que el
+> código, así que queda corregida y dicha.
+>
+> **PASO 0 · A-65 es PREREQUISITO de todo lo de `backend/`.**
+> `docker compose exec -T backend python -m pytest` →
+> **`ModuleNotFoundError: No module named 'pytest'`**, y
+> `check_source_ownership.py:89-96` **prohíbe** devolver `pytest`/`ruff` a
+> `backend/requirements.txt`, así que no es un descuido reversible. Hasta
+> resolverlo **ningún cliente puede verificar un cambio del BFF**. Hacerlo bien
+> una vez (servicio `backend-dev` con `requirements-dev.txt`, 4 líneas) es más
+> barato que layerear una imagen a mano en cada tanda.
+>
+> **Y cada corrida de la suite son 10-12 min**, lo que manda el agrupamiento: los
+> ítems de `backend/` van **en una tanda con una sola corrida al final**.
+>
+> | Orden | Ítem | Tamaño medido | Estado |
+> |---|---|---|---|
+> | **0** | **A-65** · imagen o servicio de test del BFF | 4 líneas de `requirements-dev.txt` + un servicio de compose | **Prerequisito de 2, 4 y 5** |
+> | **1** | **A-11** · `authApi.logout()` + llamada en `useLogout` | 1 método + 1 llamada + test; la suite del frontend tarda **1,2 s** | ✅ **El único corto y desbloqueado.** Resucita todo T9 |
+> | **2** | **A-17** · rate limiter que falle ABIERTO | **~6 líneas** en un fichero de 68 | Pequeño de verdad · tras el paso 0 |
+> | **3** | **A-12** · ventana de gracia en el canje del refresh | ~15 líneas en `token_store.py` + listener de `storage` en el frontend | Toca los dos lados |
+> | **4** | **A-68** · `assert` de host en `_ensure_test_db` | ~4-8 líneas, **pero en `conftest.py`**: un error ahí pone TODA la suite en rojo | Delicado · tras el paso 0 |
+> | **5** | **A-13 + A-18** · cota de descompresión y firma del fichero en el CV | **~30-40 líneas en dos ficheros + tests** (`cv_parser.py` son 102). **MEDIO, no corto** | Tras el paso 0 |
+> | — | **A-61 + A-62** · redis de producción **sin contraseña** y con `allkeys-lru` sobre un broker | ~20 líneas + despliegue | 🔒 **BLOQUEADO: toca compose** |
+> | — | **A-16** · `RATE_LIMIT_TRUST_PROXY=true` (hoy **5 logins/minuto para todo el despliegue**) | 1 variable | 🔒 **BLOQUEADO.** Existe **sólo** en `config.py:144` y `.env.prod.example:44`, **en ningún compose**: activarlo exige tocar el del NAS o su `.env` |
+> | — | **A-25** · cuatro `add_header` en `nginx.conf` | 4 líneas | 🔒 La CSP hay que verificarla contra el bundle de Vite antes de desplegar |
+> | — | **A-10** · `send_watchlist_digest`, no-op que devuelve `ok` | ~60 líneas de lógica real + `tests/test_scheduler.py`; reescribirlo contra el núcleo tiene el tamaño que tuvo DT-148 A1 | 🔒 **DECISIÓN DEL PROPIETARIO**, no tarea de código: retirar la capacidad o reescribirla |
 >
 > ---
 

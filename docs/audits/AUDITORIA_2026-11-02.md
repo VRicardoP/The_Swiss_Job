@@ -39,6 +39,17 @@ corrección está en sus fichas: **A-04** (el detonante está desarmado:
 `jobgether` SÍ declara `max_pages`, las siete fuentes con `fallos=0`) y **A-08**
 (no hay bucle absorbente; su mitad real es el 1,15 M de tombstones).
 
+**Y una estimación MÍA quedó corregida el 2026-11-03.** Dije que los seis
+arreglos siguientes eran «todos de menos de treinta líneas y no tocan composes»
+y se podían encadenar sin pararse. Medido, estaba mal en tres cosas: **A-16 sí
+está bloqueado** (la variable no vive en ningún compose), **A-10 no es tarea de
+código** sino una decisión, y **faltaba el prerequisito A-65** — la suite del BFF
+no se puede lanzar, así que ningún cambio de `backend/` es verificable hasta
+resolverlo, y a 10-12 min por corrida eso obliga a agrupar. Los tamaños reales
+están en `PLAN_ATAQUE_2026-11-02.md` §Tanda 1. **Una estimación equivocada en un
+plan es deuda igual que el código**, y por eso se deja escrita en vez de
+corregirse en silencio.
+
 **No hay segunda fuga de credenciales**: los otros 10 hallazgos que el guard
 nuevo levantó sobre `docs/` se clasificaron uno a uno y son todos marcadores
 (`***` ya redactado, `audit-not-a-real-secret`, dummies `ci` del CI,
@@ -1529,7 +1540,11 @@ veinte líneas cada uno.
    guard comprueba el único fichero que está bien.
 5. **A-16 · `RATE_LIMIT_TRUST_PROXY=true`** — una variable; la precondición de
    seguridad ya la cumple `nginx.conf:39`, y hoy son 5 logins/minuto para todo el
-   despliegue.
+   despliegue. **Pero no es un arreglo libre** (comprobado el 2026-11-03): existe
+   **sólo** en `backend/config.py:144` y `backend/.env.prod.example:44`, **en
+   ningún compose**, así que activarlo en producción exige tocar
+   `deploy/nas/swissjob.configured.yml` o el `.env` del NAS → **mismo bloqueo que
+   el punto 4**.
 6. **A-13 + A-18 · cota de descompresión y firma del fichero en la subida de CV** —
    un solo parche cierra los dos.
 7. **A-03 · no sellar como verificado lo que no se confirmó** — restaura la cuarta
@@ -1537,7 +1552,11 @@ veinte líneas cada uno.
 8. **A-14 + A-29 · versionar `erasure-cdc` y reconstruirlo** con la imagen vigente.
    Van juntos y es el camino de borrado GDPR.
 9. **A-10 · retirar o reescribir `send_watchlist_digest`** — una cita diaria que
-   devuelve `ok` sin poder notificar nada es peor que una que falla.
+   devuelve `ok` sin poder notificar nada es peor que una que falla. **Es
+   DECISIÓN del propietario, no tarea de código** (re-medido el 2026-11-03): son
+   ~60 líneas de lógica real —marcadores de idempotencia, marca de agua, envío—
+   cubiertas por `tests/test_scheduler.py`, y reescribirlo contra el feed del
+   núcleo tiene el tamaño que tuvo DT-148 A1, que era un ítem entero.
 10. **A-07 + A-04 + A-05 · el contrato de `fetch_new`** — `blocked_with` en los
     cuatro providers ciegos, separar «presupuesto» de «fallo», **y un test de
     contrato sobre el registro** para que no se vuelva a aplicar provider a
