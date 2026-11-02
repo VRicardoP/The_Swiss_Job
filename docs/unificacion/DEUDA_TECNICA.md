@@ -1,8 +1,99 @@
 # Deuda técnica — proyecto jobhunting (SwissJob + jobhunt-core)
 
+> ## ⚠ DT-149 · Auditoría del 2026-11-02 — LEER ANTES DE RETOMAR DT-148
+>
+> **Acta: [`../audits/AUDITORIA_2026-11-02.md`](../audits/AUDITORIA_2026-11-02.md)
+> · Plan priorizado: [`PLAN_ATAQUE_2026-11-02.md`](PLAN_ATAQUE_2026-11-02.md)**
+>
+> Pasada fresca con cinco auditores en paralelo: **79 hallazgos nuevos**
+> (`A-01`…`A-79`), ninguno de ellos en DT-148 ni en COTAS. Dos conclusiones que
+> cambian el orden de trabajo:
+>
+> **1. La deuda estructural de DT-148 NO era lo urgente.** Había **dos fallos
+> CRITICAL vivos en producción**: la pantalla principal del producto llevaba
+> **13 días en blanco** (A-01, verificado en el bundle servido) y una
+> **credencial de producción llevaba semanas commiteada y publicada en el
+> remoto** (A-02). Los dos están **CERRADOS** (ver abajo). Quedan once arreglos
+> de corrección y seguridad, la mayoría de menos de veinte líneas, que valen más
+> que cualquiera de los quince puntos de los bloques C y D.
+>
+> **2. El inventario de DT-148 se verificó punto por punto y NUEVE de sus quince
+> tenían algo mal** — y **dos habrían dejado tests en VERDE que ya no prueban
+> nada**:
+> - **D3 paso 4** afirma «Ningún otro test llama a privados (grep: 0)». Hay
+>   **dos**: `test_integration_archive.py:329-338` **hereda y sobreescribe
+>   `_lock_vacancies`** para reproducir una carrera —si deja de ser método, el
+>   test pasa sin reproducir nada— y `test_integration_identity.py:697` llama a
+>   `_write_dedup_candidates` directo.
+> - **D1** omite `MAX_SCAN_TUPLES`, que `dedup.py:45` importa de `matching` y que
+>   `test_integration_matching.py:782` parchea para forzar la inanición.
+> - **Toda ubicación del plan hay que recalcularla**: `api/v1.py` se desplazó
+>   **+98 líneas** desde que se escribió. Cortar por las líneas del plan, como
+>   el §8 del relevo manda, cortaría 98 líneas equivocadas.
+> - Detalle completo en la sección «Correcciones al propio inventario DT-148»
+>   del acta, con tabla punto por punto.
+>
+> **Dos puntos nuevos que deben entrar antes de dar DT-148 por cerrada:**
+> **A-32** (`harvest/providers/native_json.py` es un **segundo** fichero con
+> mantenibilidad C — contradice la premisa de D1, que dice que `matching.py` es
+> el único) y **A-33** (`scripts/check_source_ownership.py:242` tiene **CC 80**,
+> la peor cifra del repositorio, sin cota que la ampare, en el paso 1 del CI y
+> sin un solo test).
+>
+> ### Lo CERRADO el 2026-11-02
+>
+> | Hallazgo | Qué se hizo |
+> |---|---|
+> | **A-01** `/match` en blanco | Acceso sacado del array de dependencias (`MatchPage.jsx:84-85`) + `ErrorBoundary` por ruta (`components/ErrorBoundary.jsx`, una envoltura con `key` de ruta en vez de doce) + `MatchPage.firstrender.test.jsx` (4 casos, sin dependencias nuevas). Verificado en el artefacto COMPILADO y con control negativo |
+> | **A-02** credencial publicada | `check_no_secrets.py` entiende ahora sintaxis `.env` y URLs con credencial embebida, con criterio por FORMA; 4 ocurrencias saneadas en `docs/DEPLOY_NAS.md`; CI ampliado a `docs`. 3 → **11 tests** |
+>
+> **A-02 sigue ABIERTO en su parte del propietario:** la credencial **continúa en
+> el historial de git y en `github/main`**. Limpiar el árbol no deshace lo
+> publicado. Orden correcto: **rotar el rol `swissjob` primero**, y sólo después
+> decidir sobre `git filter-repo`.
+>
+> ### Lo que la verificación contra producción REBAJÓ
+>
+> Dos hallazgos de los auditores bajaron de severidad al consultar la base, y se
+> dejan escritos para que nadie los persiga como urgencias:
+> - **A-04** (presupuesto de cosecha reportado como fallo): el defecto está en el
+>   código, pero **el detonante está desarmado** — `jobgether` SÍ declara
+>   `max_pages: 3`, y las siete fuentes implicadas están con `fallos=0`,
+>   `bloqueos=0` y cosecha completa reciente. Trampa latente, no urgencia.
+> - **A-08** (recorrido completo de búsquedas guardadas): **no hay bucle
+>   absorbente** — los `last_attempt_at` de las 10 búsquedas están repartidos, no
+>   refrescándose cada 5 min, y la tabla no tiene las columnas que el
+>   razonamiento suponía. Su mitad real y accionable es el **1,15 M de filas** de
+>   `saved_search_observations`, sin purga ni TTL.
+>
+> ### Lo siguiente, por orden (detalle en el plan)
+>
+> 1. **A-61 + A-62** · el redis del BFF corre en producción **sin contraseña**
+>    (verificado: `PONG` sin credencial, mientras el del núcleo da `NOAUTH`) y con
+>    `allkeys-lru` sobre un broker. Y `check_compose_exposure.py` **sólo mira
+>    `docker-compose.yml`**, que es el único fichero que está bien.
+> 2. **A-16** · `RATE_LIMIT_TRUST_PROXY=true`: hoy son **5 logins/minuto para
+>    todo el despliegue**.
+> 3. **A-17** · el rate limiter falla CERRADO: un corte de Redis devuelve 500 en
+>    toda la API, `/health` incluido.
+> 4. **A-13 + A-18** · bomba de descompresión y firma del fichero en la subida de
+>    CV (un solo parche).
+> 5. **A-11** · `authApi.logout()`: una línea resucita el mecanismo entero de T9,
+>    hoy muerto porque **ningún cliente llama a `POST /auth/logout`**.
+> 6. **A-12** · ventana de gracia en el canje del refresh: dos pestañas abiertas
+>    tumban la familia entera.
+> 7. **A-10** · `send_watchlist_digest` es un **no-op garantizado** que devuelve
+>    `ok`. Mismo fallo que A1 cerró para la alerta de profesor.
+> 8. **A-68** · `assert` de host en `conftest.py`: hoy sólo el NOMBRE de la base
+>    de test está garantizado, no el SERVIDOR.
+>
+> ---
+
 > **Si retomas DT-148, empieza por [DT148_RELEVO.md](DT148_RELEVO.md)**: estado
 > exacto, orden recomendado, comandos que funcionan de verdad y las trampas ya
 > pisadas. Este fichero es el plan por ítem; aquél, el contexto para ejecutarlo.
+> **Pero lee primero el aviso DT-149 de arriba**: nueve de sus quince puntos
+> necesitan corrección antes de ejecutarse.
 >
 > **Lectura vigente — 2026-10-21.** DT-148 (abajo) es la auditoría de
 > refactorización con plan de ejecución por ítem. **CERRADAS y DESPLEGADAS:

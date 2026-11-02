@@ -10,6 +10,42 @@
 >
 > Última actualización: **2026-10-21**. Secciones A, B y E1 cerradas y
 > desplegadas; A18-01 cerrada y desplegada; C, D, E2-E9 y F3 abiertas.
+>
+> ⚠ **AVISO DEL 2026-11-02 — NO EJECUTES ESTE PLAN SIN LEER ESTO.** La auditoría
+> `../audits/AUDITORIA_2026-11-02.md` verificó los quince puntos de C y D
+> midiendo, y **nueve tenían algo mal**. Dos de los errores **dejarían tests en
+> VERDE que ya no prueban nada**, que es el peor modo de fallo posible:
+>
+> 1. **D3 paso 4** dice «Ningún otro test llama a privados (grep: 0)». Hay
+>    **dos**, y los dos caen en el grupo (4) que el paso convierte en funciones
+>    de módulo: `test_integration_archive.py:329-338` **hereda de `RawListingSink`
+>    y sobreescribe `_lock_vacancies`** para reproducir una carrera (si deja de
+>    ser método, el override no se llama y **el test pasa sin reproducir nada**),
+>    y `test_integration_identity.py:697` llama a `_write_dedup_candidates`
+>    directo sobre la instancia.
+> 2. **D1** no inventaría `MAX_SCAN_TUPLES` (`matching.py:38`), que **`dedup.py:45`
+>    importa** y que `test_integration_matching.py:782` **parchea para forzar la
+>    inanición**. Si se muda con su lector, el parche deja de surtir efecto. Es
+>    textualmente la trampa de «objetivos de monkeypatch» que D1 advierte, en un
+>    nombre que D1 no vio.
+> 3. **Las líneas del plan están desfasadas**: `api/v1.py` **+98**, `sink.py` +5,
+>    `matching.py` −4, `_persist_eval_rows` −68. El §8 de este mismo fichero
+>    manda cortar por rango verificado: hacerlo con las líneas del plan cortaría
+>    98 líneas equivocadas de `api/v1.py`.
+> 4. **C6 se midió antes de ejecutar B3 y B3 ya invalidó dos de sus cifras**, y
+>    enumera `backend/services/applications/`, que **no existe**.
+> 5. **D4 se puede recortar a la mitad**: `review_suggestion` (CC B 8) y
+>    `delete_all_user_data` (CC A 5) **ya cumplen el criterio de cierre del propio
+>    punto**. Y la fila de `FilterPanel` de **D7 está CADUCA** (A11 ya retiró el
+>    desplegable; `useState` no está en el fichero y `getSources` no existe).
+>
+> **Y el §4 de este fichero afirma que `matching.py` es «el único fichero del
+> repo con mantenibilidad C». Es falso**: `harvest/providers/native_json.py` es
+> C (8,07), medido con radon 6.0.1. Eso contradice la premisa de D1.
+>
+> **Orden revisado:** **C3 antes que D1** — son **5** bloques de tenencia (no 4;
+> el quinto en `v1.py:713-719`), el helper los cubre todos, no depende de D1 y es
+> el único punto de C con riesgo nulo.
 
 ---
 

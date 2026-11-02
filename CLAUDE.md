@@ -9,9 +9,21 @@
 > sombra, `job_matcher` y diez módulos más, las cadencias de cosecha, las
 > cabezas de migración, los contadores de tests y el comando de los tests del
 > núcleo (que ya no trae `pytest`). Lo verificado se cita con su fecha; si una
-> cifra no la lleva, desconfía y mídela. Las secciones de puertos, perfiles de
-> compose, sesiones (T9), operación del NAS y rendimiento del feed NO se
-> tocaron: siguen siendo ciertas.
+> cifra no la lleva, desconfía y mídela.
+>
+> ⚠ **AUDITORÍA DEL 2026-11-02 — `docs/audits/AUDITORIA_2026-11-02.md`.**
+> 79 hallazgos nuevos, y **la revisión de arriba resultó NO ser suficiente**:
+> varias de sus cifras llevaban fecha y aun así mentían. Lo corregido en este
+> fichero va marcado con esa fecha. **La sección que decía «operación del NAS y
+> rendimiento del feed NO se tocaron: siguen siendo ciertas» era FALSA** —
+> `CORE_HTTP_TIMEOUT_SECONDS` vale 120 en producción y no 5, la topología de
+> `deploy/nas/` está incompleta en dos sitios, el redis del BFF corre **sin
+> contraseña**, el censo de complejidad omitía el único grado F del repo, y una
+> credencial de producción llevaba semanas commiteada.
+> **Plan priorizado de lo que queda: `docs/unificacion/PLAN_ATAQUE_2026-11-02.md`.**
+> Lección de método que vale para el próximo que lea esto: en esa pasada la
+> EJECUCIÓN desmintió tres cosas que parecían ciertas leyendo, y confirmó dos
+> que parecían exageradas.
 
 ---
 
@@ -45,9 +57,13 @@
   diario de matches y el vertical local de candidaturas (`job_applications`,
   con cero filas en toda su vida)
 - **Core**: paquete `jobhunt_core/` — API v1 FastAPI (`core-api`, puerto 8003 en
-  local) y Celery con **beat embebido** (`-B`) y **14 cadencias** (leídas del
-  fichero el 2026-10-20): cada **5 min** el despacho del outbox, la salud de la
-  entrega, la recuperación de matching y el barrido de búsquedas guardadas; cada
+  local) y Celery con **beat embebido** (`-B`) y **13 cadencias incondicionales
+  + 1 condicional** (re-contadas el 2026-11-02; antes decía «14» a secas): cada
+  **5 min** el despacho del outbox, la salud de la entrega y la recuperación de
+  matching — **el barrido de búsquedas guardadas (`saved-searches-run-due`) es la
+  condicional**: sólo entra al beat si `CORE_SAVED_SEARCH_EXECUTION_ENABLED`, que
+  es `False` por defecto y **no se fija en ningún compose ni `.env*.example` del
+  repo**, aunque SÍ está a `'true'` en los cuatro servicios de producción; cada
   **hora** la purga de idempotencia (`CORE_IDEMPOTENCY_PURGE_EVERY_S=3600` — *no*
   cada 5 min), la salud de la cosecha (`jobhunt.harvest.check_health`: alerta si
   un scope acumula fallos o lleva días sin cosecha completa, y publica SIEMPRE el
@@ -222,11 +238,28 @@ solape que lleva más de 7 d sin cerrar.
 
 ## Operación: lo que existe desde el 2026-09-28 (T13, A19-04, A19-17)
 
-- **La topología REAL del NAS está versionada en `deploy/nas/`** (A19-04): copias
+- **La topología del NAS está versionada en `deploy/nas/`** (A19-04): copias
   literales de `core.configured.yml` y `swissjob.configured.yml` con cada secreto o
   identificador sustituido por `${VARIABLE}`. `scripts/check_no_secrets.py` (en
   CI) impide que vuelva un literal. `deploy/nas/README.md` explica cómo renderizarlo.
   El del Portfolio vive en su repo (`ReactPortfolio/backend/deploy/nas/`).
+
+  **PERO esa copia NO es completa, y decir «la topología REAL» es falso**
+  (medido el 2026-11-02, A-61/A-14). Le faltan dos cosas:
+  1. **`swissjob.configured.yml` define sólo TRES servicios** (`backend`,
+     `worker`, `frontend`). **No define `redis` ni `postgres`** del BFF, que son
+     los que de verdad guardan los datos. Los únicos ficheros de `deploy/nas/`
+     con una definición de redis son `containerstation-swissjob.yml` y
+     `rehearsal-r5.yml`.
+  2. **`swissjob-erasure-cdc` no está en ningún sitio.** Es un TERCER proyecto de
+     compose (`swissjob-erasure`), corre el borrado GDPR
+     (`python -m services.profile_erasure --watch`) desde la imagen
+     `swissjob-backend:d2a38e9` (de 2026-09-13), y su compose vivía en
+     `/share/CACHEDEV1_DATA/Public/unification-e10.XXkEjw88/e13-erasure/replica.yml`
+     — **directorio que ya NO existe** (nombre de `mktemp -d`, se limpió). Está
+     en la lista del supervisor, así que su muerte se notaría; pero **no se
+     podría recrear**, no hay definición. `deploy_nas.sh` (`core|bff`) no lo
+     toca, así que nunca se actualiza.
 - **`backend/.env.prod.example` se GENERA** con `backend/scripts/gen_env_example.py`
   desde `Settings`; `tests/test_env_example_covers_settings.py` falla si alguien lo
   edita a mano y se queda corto. El de la raíz (28 claves de 130) se retiró.
@@ -240,8 +273,10 @@ solape que lleva más de 7 d sin cerrar.
   todos; comprobar con `docker ps` que los tres vuelven.
 - **Supervisor de contenedores (A19-17)**: lo ejecuta el **crontab del QTS** cada
   5 min (`/etc/config/crontab` → `/share/Public/swissjob/supervisor_contenedores.sh`),
-  y alerta si falta o no corre cualquiera de los 15 esperados (incluido
-  `portfolio_worker`, el proceso de fondo del Portfolio — ver su `backend/CLAUDE.md`),
+  y alerta si falta o no corre cualquiera de los **16** esperados (contados en
+  `scripts/nas/supervisor_contenedores.sh:47` el 2026-11-02; antes decía 15) —
+  incluidos `portfolio_worker`, el proceso de fondo del Portfolio (ver su
+  `backend/CLAUDE.md`), y `swissjob-erasure-cdc`, el del aviso de arriba —,
   con anti-ruido (sólo cambios de estado + recordatorio cada 6 h). Fuente:
   `scripts/nas/`; al host se sube con `scp` y 700.
   **NO levantes además el contenedor `swissjob-supervisor`** (retirado el
@@ -268,13 +303,35 @@ solape que lleva más de 7 d sin cerrar.
   `docker-compose.prebuilt.yml` se retiró (rompía la CDC); `docker-compose.core-local.yml`
   exige `CORE_IMAGE_TAG` en vez de una etiqueta de hace un mes.
 
-- **Complejidad medida el 2026-10-20** (DT-148 F1): en código vivo quedan **dos
-  grados E**, los dos `fetch_new` de `native_myscience` y `native_schuljobs` (32
-  cada uno), y 23 funciones en grado D. La cota A19-13, que amparaba siete E/F
-  de las herramientas de corte de la Fase E, se quedó sin objeto: esas
-  herramientas se retiraron en P3 de DT-145. El estándar de CC ≤ 10 para código
-  NUEVO sigue vigente (`radon cc -s -n C`). El bucle por oferta de la cosecha
-  legacy (`tasks/harvest_persist.py`, T16) ya no existe: lo cosecha el core.
+- **Complejidad RE-MEDIDA el 2026-11-02** con radon 6.0.1 (auditoría A-33/A-32,
+  `docs/audits/AUDITORIA_2026-11-02.md`). La cifra anterior («dos grados E, 32
+  cada uno, 23 en grado D», del 2026-10-20) **llevaba fecha y aun así mentía en
+  las dos direcciones**:
+
+  | | Decía | Es (2026-11-02) |
+  |---|---|---|
+  | Grado **F** | no lo mencionaba | **1** — `scripts/check_source_ownership.py:242 validate` = **CC 80** |
+  | Grado E | 2 (myscience + schuljobs) | **1** — sólo `native_schuljobs.fetch_new` (32) |
+  | Grado D | 23 | **20** en código vivo (`native_myscience.fetch_new` es D(30), no E) |
+
+  Reparto total del repo: 3.729 A · 584 B · 209 C · 24 D · 1 E · 1 F.
+  **Lo que importa es el F omitido**: `validate` es la función más compleja del
+  repositorio con diferencia (la siguiente es 32), corre como **paso 1 del CI** y
+  es la primera línea de `deploy_nas.sh`, **no tiene ni un test**, y **ninguna
+  cota la ampara** (la A19-13 se quedó sin objeto al retirarse las herramientas
+  de la Fase E en P3 de DT-145). Quien leyera el párrafo anterior concluía que no
+  había nada peor que un E.
+
+  **Y `matching.py` NO es el único fichero con mantenibilidad C**, como afirmaban
+  este fichero y `DT148_RELEVO.md` §4: `harvest/providers/native_json.py` es
+  **C (8,07)** con 7 funciones en grado C, y su grado no es artefacto de
+  narrativa (11 líneas de comentario, frente a las 509 de docstrings que arrastra
+  el 0,59 de `matching.py`). Eso contradice la premisa de DT-148 D1.
+
+  El estándar de CC ≤ 10 para código NUEVO sigue vigente (`radon cc -s -n C`), y
+  `radon` está instalado en el host (`~/.local/bin/radon`): **mídelo, no lo
+  cites**. El bucle por oferta de la cosecha legacy
+  (`tasks/harvest_persist.py`, T16) ya no existe: lo cosecha el core.
 - **Análisis profundo de código del 2026-09-28: 23 hallazgos A20-01..23, TODOS
   corregidos el mismo día** (`docs/unificacion/DEUDA_TECNICA.md` §0.C, con una prueba
   por hallazgo en `backend/tests/test_a20_fixes.py`). Lo que cambia para quien opere:
@@ -298,7 +355,13 @@ solape que lleva más de 7 d sin cerrar.
   core por ruta autorizada (credencial partner / feed oficial) y deshabilitado
   sin credencial — hoy no existe ninguno
 - Nunca modificar `.env` ni `docker-compose.yml` sin confirmación explícita
-- Tests siempre contra la DB `swissjobhunter_test` — nunca contra producción
+- Tests siempre contra la DB `swissjobhunter_test` — **pero sólo el NOMBRE está
+  garantizado, no el SERVIDOR** (A-68, 2026-11-02): `backend/tests/conftest.py:36`
+  deriva la base cambiando sólo el nombre de `DATABASE_URL`, y `:89` abre un motor
+  admin contra `…/swissjobhunter` del MISMO servidor para el `CREATE DATABASE`.
+  No hay ninguna aserción sobre el host. **Un `.env` apuntando al NAS bastaría
+  para que el teardown hiciera `TRUNCATE … CASCADE` en producción**, que es un
+  accidente que este proyecto YA tuvo una vez
 - Tareas Celery con `def`, no `async def`. Patrón: `def task(): asyncio.run(_impl())`
 - Comentarios en español para lógica no obvia; código y nombres en inglés
 
@@ -327,13 +390,29 @@ p50 2,147 s** (p95 2,554 s) y la primera carga de ~54 s a 10,196 s. Aun así
 completa con veredicto por escenario en §9-bis del acta; lo que falta, en §10.
 Los invariantes de abajo valen igual.
 
-**El recorrido que de verdad pide la pantalla principal es `limit=3000`**
-(`MatchPage.jsx:40` → `useMatchResults(3000, 0)`, `translate=false`), no una
-página de 20. Es la LECTURA HABITUAL, no una exportación: el lote completo
-alimenta las categorías y sus contadores, la pestaña Watchlist, el top score,
-los matches ≥ 70 **y** las tarjetas visibles. Bajar el límite sin mover esos
-agregados al servidor rompe las cinco cosas. (`useMatchResultsPage`, la única
-consulta con `translate=true`, es código muerto.)
+**El `limit=3000` ya NO es la lectura habitual de producción** (corregido el
+2026-11-02; esta sección describía el estado anterior a DT-148 A17). Hoy es
+`MatchPage.jsx:53-58` → `facetsEnabled ? PAGE_SIZE : 3000`, o sea **50 filas por
+categoría cuando las facetas responden**, y las facetas están ON en producción
+(`deploy/nas/swissjob.configured.yml:62` → `CORE_MATCH_FACETS_ENABLED: 'true'`).
+
+El recorrido de 3.000 **sobrevive como camino de RESPALDO** para cuando
+`/match/facets` falla (`legacyMode = facetsQuery.isError`), y ahí el invariante
+de abajo sigue valiendo entero: el lote completo alimenta las categorías y sus
+contadores, la pestaña Watchlist, el top score, los matches ≥ 70 **y** las
+tarjetas visibles, así que bajar el límite de esa rama sin mover los cinco
+agregados al servidor las rompe. (`useMatchResultsPage` **ya no existe**: se
+retiró, y esta sección lo seguía dando por código muerto presente.)
+
+**Y el camino de las facetas tiene su propia trampa, que costó 13 días de
+pantalla en blanco** (A-01): `facetsQuery.data` es `undefined` hasta que la
+petición resuelve, y leer una propiedad suya **dentro de un array de
+dependencias** de `useMemo` revienta en el primer render, porque un array de
+dependencias se evalúa en CADA render al margen del ternario que protege el
+cuerpo. Fijado por `frontend/src/pages/MatchPage.firstrender.test.jsx`, y desde
+el 2026-11-02 hay un `ErrorBoundary` por ruta
+(`frontend/src/components/ErrorBoundary.jsx`) para que un error de render no
+vuelva a borrar la aplicación entera.
 
 Tres cosas que NO deben deshacerse sin medir:
 
@@ -385,11 +464,34 @@ Tres cosas que NO deben deshacerse sin medir:
    porque **un `If-None-Match` no ahorra cómputo**: el ETag se deriva del
    payload, así que el core construye la página igual para contestar 304.
    Cuatro cotas que NO deben deshacerse: sólo se cachea el recorrido
-   **completo**; sólo se pregunta la versión si `needed > 100`; el overlay
+   **completo**; sólo se pregunta la versión si `needed > FEED_PAGE_LIMIT`
+   (**500**, no 100 — el umbral documentado se quedó en la época de las páginas
+   de 100; `core_client.py:36,908`); el overlay
    LOCAL (candidatura, urgencia, borrador) se relee siempre y el estado del
    core está cubierto por la versión; y sin versión fiable **se recorre**. Fijado por
    `backend/tests/test_feed_version_cache.py` y
    `jobhunt_core/tests/test_matches_version.py`.
+
+   **La cuarta cota está ROTA hoy por la puerta de atrás** (A-03, abierto):
+   `warm_feed` (`core_client.py:463-467`) refresca `_feed_verified_at[pid]` por el
+   mero hecho de que exista una entrada en `_feed_cache`, no por haberla
+   confirmado contra la versión. Y `_feed_verified_at` es el ÚNICO criterio de
+   frescura del atajo por categoría. Con el calentador cada 60 s el sello se
+   renueva indefinidamente y `/match/results?category=X` puede servir un
+   recorrido rancio.
+
+   **El overlay ESCOLAR es la excepción a la tercera cota** (A-19, abierto):
+   `schools/presentation.py` lo cachea 60 s EN PROCESO y `watchlist_state._write`
+   lo invalida **sólo en su propio proceso** — no publica en `cache_bus`, al
+   contrario que `CoreFeedback._write`. Con gunicorn `-w 2`, marcar «Applied» en
+   un worker puede servirse como «detected» desde el otro hasta 60 s.
+
+   **Y `CORE_HTTP_TIMEOUT_SECONDS` NO vale 5 s en producción, vale 120**
+   (`deploy/nas/swissjob.configured.yml:22,152`), que es el defecto del código
+   (`config.py:250`) multiplicado por 24. Tres clientes derivan su presupuesto
+   TOTAL de esa variable con `max(float(...), 1) * 2` → **240 s por operación**
+   (colegios, búsquedas guardadas, documentos), dos de ellos envolviendo bucles
+   de hasta 100 páginas, con sólo dos workers de gunicorn (A-09, abierto).
 
 Acta y mediciones: `docs/audits/ACTA_CIERRE_PUNTO5_2026-09-22.md`.
 La cola de latencia restante **no está atribuida**. Ni el loadavg del NAS ni el
@@ -424,6 +526,18 @@ docker compose up -d
 # `--timeout=N` NO funciona: pytest-timeout no está instalado y NUNCA lo estuvo
 # (`git log -S pytest-timeout` sobre requirements.txt no devuelve nada). El
 # comando que esta línea documentaba fallaba al arrancar, no al probar.
+#
+# OJO EL GRANDE (A-65, comprobado el 2026-11-02): el comando de abajo **FALLA**
+# con «No module named pytest» sobre una imagen reconstruida. `68f21c6 build:
+# slim and unify production images` sacó `pytest` y `ruff` de
+# backend/requirements.txt (hoy en requirements-dev.txt, que .dockerignore
+# excluye del contexto), y `check_source_ownership.py:89-96` PROHÍBE devolverlos
+# ahí — así que no es un descuido reversible. Hay que layerear una imagen de
+# test, igual que para el núcleo:
+#   printf 'FROM swissjob-backend:dev\nUSER root\nRUN pip install --no-cache-dir -r /app/requirements-dev.txt\n' > /tmp/Dockerfile.bfftest
+# o lanzar un contenedor auxiliar que monte el repo. Mismo problema con `ruff`
+# (ver más abajo). Esta línea se deja porque es el comando CANÓNICO en cuanto la
+# imagen lleve las dependencias de desarrollo, no porque funcione hoy tal cual.
 docker compose exec -T backend python -m pytest tests/ -q
 
 # Tests core (1.785 passed · 1 skipped, ~8 min — medido el 2026-10-20)
