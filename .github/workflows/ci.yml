@@ -241,7 +241,15 @@ jobs:
           done
           # T13 §7: la topologia REAL del NAS esta versionada en deploy/nas con los
           # secretos sustituidos por variables. Este paso impide que vuelvan.
-          python3 scripts/check_no_secrets.py deploy/nas
+          #
+          # `docs` entro el 2026-11-02 (auditoria A-02): una contrasena de
+          # produccion llevaba semanas commiteada y publicada en
+          # docs/DEPLOY_NAS.md, en sintaxis `.env`, que el guard no sabia leer
+          # (sus regex exigian `:`, o sea YAML). Apuntarlo aqui SIN arreglar
+          # antes esa ceguera habria dado un CI en verde con el secreto dentro:
+          # el orden importaba. La documentacion de este proyecto pega salidas
+          # de `grep` sobre `.env.prod`, asi que es donde mas falta vigilar.
+          python3 scripts/check_no_secrets.py deploy/nas docs
           # `qnap` y `rehearsal.qnap` NO se validan aqui: sus `env_file` son rutas
           # ABSOLUTAS del NAS (/share/Public/...) que no pueden existir en CI.
           # Verificado, no supuesto: fallan con "env file ... not found".

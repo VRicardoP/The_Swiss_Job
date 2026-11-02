@@ -1541,18 +1541,18 @@ error en el log que la incidencia #1.
 ```bash
 # Postgres OK con el password esperado
 $ docker exec swissjob-postgres sh -c 'echo PWD=$POSTGRES_PASSWORD'
-PWD=DkJMA6glrp1DL2tN8WnKp8iLyf7FFpPv
+PWD=${POSTGRES_PASSWORD}
 
 # .env.prod consistente (POSTGRES_PASSWORD y DATABASE_URL idénticos)
 $ grep -E "^POSTGRES_|^DATABASE_URL" .env.prod
 POSTGRES_USER=swissjob
-POSTGRES_PASSWORD=DkJMA6glrp1DL2tN8WnKp8iLyf7FFpPv
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 POSTGRES_DB=swissjobhunter
-DATABASE_URL=postgresql+asyncpg://swissjob:DkJMA6glrp1DL2tN8WnKp8iLyf7FFpPv@postgres:5432/swissjobhunter
+DATABASE_URL=postgresql+asyncpg://swissjob:${POSTGRES_PASSWORD}@postgres:5432/swissjobhunter
 
 # .env.prod limpio, sin CRLF ni BOM
 $ cat -A .env.prod | grep PASSWORD
-POSTGRES_PASSWORD=DkJMA6glrp1DL2tN8WnKp8iLyf7FFpPv$       ← termina en $ (LF puro)
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}$       ← termina en $ (LF puro)
 ```
 
 **Causa raíz**: el `entrypoint.sh` del backend ejecuta `alembic upgrade head`
