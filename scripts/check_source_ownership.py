@@ -315,14 +315,33 @@ def _errores_por_fuente(sources: list) -> list[str]:
     return errors
 
 
+RATCHETS_OBLIGATORIOS = (
+    "min_core_owned_sources",
+    "min_inventory_verified_sources",
+    "max_local_pending_sources",
+    "max_active_local_publishers",
+)
+
+
 def _errores_de_ratchet(manifest: dict, sources: list) -> list[str]:
     """Los contadores no pueden ir hacia atrás.
 
-    OJO (A-70, abierto): el default de tres de estos `.get()` es el VALOR
-    ACTUAL, así que borrar la clave desactiva la comprobación en silencio. Está
-    documentado con un test en `test_check_source_ownership.py`.
+    A-70 — las cuatro claves son OBLIGATORIAS desde el 2026-11-04. Antes, tres
+    de los `.get()` usaban como default el VALOR ACTUAL
+    (`ratchet.get("max_local_pending_sources", local_pending)`), así que **borrar
+    la clave desactivaba la comprobación en silencio** y el ratchet pasaba a no
+    poder fallar nunca. Un ratchet que se suelta solo es peor que no tenerlo,
+    porque figura en el inventario de protecciones.
+
+    Se exige la presencia ANTES de comparar: si falta una, se dice cuál y no se
+    sigue, para no mezclar «este contador bajó» con «esta comprobación no
+    existe», que son diagnósticos distintos.
     """
     errors: list[str] = []
+    ratchet_declarado = manifest.get("ratchet", {})
+    faltan = [c for c in RATCHETS_OBLIGATORIOS if c not in ratchet_declarado]
+    if faltan:
+        return [f"ratchet incompleto: faltan {faltan}"]
     ratchet = manifest.get("ratchet", {})
     core_owned = sum(
         source["state"] in {"core_primary", "local_removed"} for source in sources

@@ -125,36 +125,75 @@ class TestInvariantesPorFuente:
         assert any("must be a unique list" in e for e in errores)
 
 
+# Los cuatro ratchets, para no repetirlos en cada caso.
+_RATCHET_OK = {
+    "min_core_owned_sources": 0,
+    "min_inventory_verified_sources": 0,
+    "max_local_pending_sources": 99,
+    "max_active_local_publishers": 99,
+}
+
+
 class TestRatchets:
-    """A-70, de la misma auditoría, vive aquí al lado: el default de estos
-    `.get()` es el VALOR ACTUAL, así que borrar la clave hace pasar la
-    comprobación siempre. Se deja constancia con un test que lo DOCUMENTA, no
-    que lo bendiga: cuando se arregle A-70, este test cambia de sentido y es la
-    señal de que hay que mirarlo."""
+    """A-70, CERRADO el 2026-11-04.
+
+    Este bloque es la historia de un test que cambió de sentido, y la deja
+    escrita porque fue útil: el 2026-11-02 se escribió aquí un
+    `test_sin_la_clave_el_ratchet_NO_protege` que DOCUMENTABA el defecto sin
+    bendecirlo, con un mensaje que decía «si esto falla, A-70 se ha arreglado y
+    hay que actualizar este test». Es exactamente lo que pasó. Un test que
+    documenta un defecto conocido es mejor que un comentario, porque avisa solo
+    cuando deja de ser verdad.
+    """
 
     def test_el_ratchet_de_fuentes_del_nucleo_salta(self):
         errores = _errores(
-            _manifiesto([_fuente("x")], ratchet={"min_core_owned_sources": 99})
+            _manifiesto(
+                [_fuente("x")], ratchet={**_RATCHET_OK, "min_core_owned_sources": 99}
+            )
         )
         assert any("core-owned source count decreased" in e for e in errores)
 
     def test_el_ratchet_de_inventario_verificado_salta(self):
         errores = _errores(
-            _manifiesto([_fuente("x")], ratchet={"min_inventory_verified_sources": 99})
+            _manifiesto(
+                [_fuente("x")],
+                ratchet={**_RATCHET_OK, "min_inventory_verified_sources": 99},
+            )
         )
         assert any("verified inventory count decreased" in e for e in errores)
 
-    def test_sin_la_clave_el_ratchet_NO_protege(self):
-        """Documenta A-70, no lo aprueba: `max_local_pending_sources` ausente
-        toma como tope el valor actual, así que nunca puede fallar."""
-        manifiesto = _manifiesto(
-            [_fuente("x", state="local_pending", active_publishers=["swissjob"])],
-            ratchet={},
+    def test_el_de_local_pending_salta(self):
+        errores = _errores(
+            _manifiesto(
+                [_fuente("x", state="local_pending", active_publishers=["swissjob"])],
+                ratchet={**_RATCHET_OK, "max_local_pending_sources": 0},
+            )
         )
-        errores = _errores(manifiesto)
-        assert not any("local-pending source count increased" in e for e in errores), (
-            "si esto falla, A-70 se ha arreglado y hay que actualizar este test"
+        assert any("local-pending source count increased" in e for e in errores)
+
+    def test_el_de_publicadores_locales_salta(self):
+        errores = _errores(
+            _manifiesto(
+                [_fuente("x", state="local_pending", active_publishers=["swissjob"])],
+                ratchet={**_RATCHET_OK, "max_active_local_publishers": 0},
+            )
         )
+        assert any("active local publisher count increased" in e for e in errores)
+
+    @pytest.mark.parametrize("clave", list(_RATCHET_OK))
+    def test_borrar_UNA_clave_ya_no_desactiva_nada_en_silencio(self, clave):
+        """El arreglo de A-70. Antes, el default de tres de estos `.get()` era el
+        VALOR ACTUAL, así que quitar la clave hacía que el ratchet no pudiera
+        fallar nunca — y seguía figurando en el inventario de protecciones.
+        Ahora falta la clave y se DICE."""
+        incompleto = {k: v for k, v in _RATCHET_OK.items() if k != clave}
+        errores = _errores(_manifiesto([_fuente("x")], ratchet=incompleto))
+        assert any("ratchet incompleto" in e and clave in e for e in errores), errores
+
+    def test_sin_ratchet_ENTERO_tampoco_pasa(self):
+        errores = _errores(_manifiesto([_fuente("x")]))
+        assert any("ratchet incompleto" in e for e in errores)
 
 
 class TestElManifiestoREALpasa:
