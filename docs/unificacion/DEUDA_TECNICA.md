@@ -110,6 +110,7 @@
 > | **A-64 + A-33** tests huérfanos y el guard de CC 80 | `b171ad5` | **El grado F desaparece del repo.** Y los seis huérfanos eran cuatro cosas distintas: uno RANCIO, uno que no era pytest, tres opt-in y uno que pasaba |
 > | **A-70 + A-66** dos ratchets que no eran ratchets | `6866f45` | Los dos se medían contra sí mismos. A-66 congela por NOMBRE los dos defaults que ya existían: quitarlos exige dos líneas en tu `.env`, así que va a la ventana |
 > | **A-26** ninguna petición tenía techo | `890853d` | 120 s, elegido con las dos cotas medidas (47,5 s el recorrido más lento; 3600 s el techo de nginx). **Queda la otra mitad**: propagar el `signal` de react-query |
+> | **A-35, A-36, A-37, A-38, A-39** tanda acotada de frontend | `3be37c3` | El valor de contraste se CALCULÓ: la propuesta de la auditoría (#8A8A93) daba 3,42:1 y habría dejado el defecto dentro. Con test que recalcula los cuatro pares |
 >
 > Suites: **705 backend** (eran 669) y **78 frontend** (eran 63). Ruff limpio.
 >
@@ -119,6 +120,9 @@
 > |---|---|---|
 > | **1** | **A-32** · `native_json.py`, segundo fichero con MI C | Contradice la premisa de DT-148 D1. Extraer las ramas por fuente a un módulo hermano. **OJO al coste de verificación**: la suite del núcleo necesita la imagen de test layereada (tres condiciones, ver `CLAUDE.md`), no el venv del host — el ML pesado vive en el núcleo |
 > | **2** | **A-26 (2ª mitad)** · propagar el `signal` de react-query | Docenas de métodos en ocho objetos de API. El techo ya está puesto; esto es cancelar al desmontar, cuyo coste hoy es una petición desperdiciada y no un fallo. Hay un test que fija la composición |
+> | **3** | **A-21** · escritor latente de `match_results` | Decidir si la rama local sigue siendo camino de rollback. El defecto del código es `False`, así que un despliegue que olvide `CORE_FEEDBACK_ENABLED` **reactiva escrituras sobre el archivo** |
+> | **4** | **A-54, A-55, A-18 (2ª mitad), A-52, A-53** | i18n mezclado, `role="tablist"` sin patrón de tabs, parseo del CV en subproceso, refetch de 3.000 filas por un pulgar arriba, `"undefined"` persistible como token |
+> | **5** | **A-05, A-06, A-07, A-04** · el contrato de `fetch_new` del núcleo | La tabla de 32 × 4 que el auditor propone, más un test sobre el registro. **Mismo coste de verificación que A-32** |
 > | **7** | **A-35, A-36, A-37, A-38, A-39** · paginación de guardados, chips muertos, etiquetas sin asociar, foco del modal, contraste | Frontend, acotados, sin riesgo |
 > | **8** | **A-21** · escritor latente de `match_results` | Decidir si la rama local sigue siendo camino de rollback |
 >
