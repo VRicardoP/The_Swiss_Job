@@ -47,10 +47,21 @@ class TestRotacion:
         ).status_code == 200
 
     async def test_reutilizar_un_refresh_tumba_la_familia_entera(
-        self, client: AsyncClient
+        self, client: AsyncClient, monkeypatch
     ):
         """La detección de robo: si el canjeado reaparece, hay dos copias en
-        circulación y no se sabe cuál es la del ladrón. Caen las dos."""
+        circulación y no se sabe cuál es la del ladrón. Caen las dos.
+
+        Desde A-12 esto vale FUERA de la ventana de gracia; dentro de ella, un
+        re-canje es la carrera normal entre pestañas y se perdona (ver
+        `TestVentanaDeGracia`). El test fija el caso del robo desactivando la
+        gracia en vez de esperar, porque lo que aquí se prueba es la política de
+        revocación y no el reloj.
+        """
+        from config import settings
+
+        monkeypatch.setattr(settings, "REFRESH_GRACE_SECONDS", 0)
+
         sesion = await _alta(client)
         robado = sesion["refresh_token"]
 
@@ -204,11 +215,22 @@ class TestTokenVersion:
         ).status_code == 200
 
 
-@pytest.mark.parametrize("sin_jti", [True])
-async def test_un_refresh_anterior_a_t9_se_acepta_una_vez(client: AsyncClient, sin_jti):
-    """Ventana de migración: los refresh ya emitidos no traen `jti`. Echar a
-    todo el mundo al desplegar sería una caída de sesión masiva; se aceptan una
-    vez y salen con familia nueva. La ventana la cierra su propia caducidad."""
+async def test_un_refresh_SIN_JTI_se_rechaza(client: AsyncClient):
+    """A-43: la rama de la ventana de migración de T9 se retiró.
+
+    Esos tokens (emitidos antes de T9, sin `jti`) se aceptaban una vez para no
+    echar a nadie al desplegar. Dos motivos para retirarla:
+
+    - Su ventana CADUCÓ el 2026-10-02: `REFRESH_TOKEN_EXPIRE_DAYS` son 7 días
+      desde el despliegue de T9, así que no queda ninguno vivo.
+    - Y NO implementaba la garantía que su propio docstring describía. El test
+      que la cubría —éste, antes de reescribirse— comprobaba que se ACEPTA, no
+      que la segunda vez se rechace; y no se rechazaba: sin fila no había nada
+      que marcar como consumido, así que uno de esos tokens se podía presentar
+      cuantas veces se quisiera hasta su `exp`, acuñando familia nueva cada vez.
+      Ni `logout` ni `revocar_familia` lo alcanzaban, precisamente por no tener
+      fila. El nombre del test afirmaba lo que el test no probaba.
+    """
     from datetime import datetime, timedelta, timezone
 
     from jose import jwt
@@ -228,8 +250,14 @@ async def test_un_refresh_anterior_a_t9_se_acepta_una_vez(client: AsyncClient, s
     respuesta = await client.post(
         "/api/v1/auth/refresh", json={"refresh_token": legado}
     )
-    assert respuesta.status_code == 200
-    assert respuesta.json()["refresh_token"] != legado
+    assert respuesta.status_code == 401
+
+    # Y la sesión legítima del usuario NO se toca: un token sin identidad
+    # revocable no pertenece a ninguna familia, así que no hay nada que revocar.
+    sigue = await client.post(
+        "/api/v1/auth/refresh", json={"refresh_token": sesion["refresh_token"]}
+    )
+    assert sigue.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -300,3 +328,115 @@ async def _alta_directa(db) -> uuid.UUID:
     )
     await db.commit()
     return uid
+
+
+class TestVentanaDeGracia:
+    """A-12: la detección de robo se disparaba con una carrera NORMAL.
+
+    El canje único es correcto frente a carreras, pero ESA es justamente la
+    señal que revoca la familia, y el frontend no la acompaña: serializa los
+    refresh con una promesa compartida POR PESTAÑA mientras el token vive en
+    `localStorage`, que es compartido. Dos pestañas con el access caducado
+    refrescan en paralelo con el mismo token: una gana, la otra presenta uno ya
+    canjeado, y caían LAS DOS. Lo peor no era el deslogueo sino que envenenaba
+    la señal: el log de robo dejaba de significar robo.
+
+    Control negativo: con `REFRESH_GRACE_SECONDS = 0` los dos primeros casos
+    fallan (vuelve la revocación de familia), que es el comportamiento anterior.
+    """
+
+    async def test_dos_pestanas_con_el_mismo_refresh_sobreviven(
+        self, client: AsyncClient
+    ):
+        sesion = await _alta(client)
+        rt = sesion["refresh_token"]
+
+        # Pestaña A gana la carrera.
+        a = await client.post("/api/v1/auth/refresh", json={"refresh_token": rt})
+        assert a.status_code == 200
+
+        # Pestaña B presenta el MISMO token, un instante después.
+        b = await client.post("/api/v1/auth/refresh", json={"refresh_token": rt})
+        assert b.status_code == 200, "la carrera normal no puede cerrar la sesión"
+        assert b.json()["refresh_token"] not in (rt, a.json()["refresh_token"])
+
+    async def test_el_token_que_B_recibe_SIRVE(self, client: AsyncClient):
+        """Conceder un 200 con un token inservible sería peor que el 401."""
+        sesion = await _alta(client)
+        rt = sesion["refresh_token"]
+
+        await client.post("/api/v1/auth/refresh", json={"refresh_token": rt})
+        b = await client.post("/api/v1/auth/refresh", json={"refresh_token": rt})
+
+        siguiente = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": b.json()["refresh_token"]},
+        )
+        assert siguiente.status_code == 200
+
+    async def test_FUERA_de_la_ventana_sigue_cayendo_la_familia(
+        self, client: AsyncClient, monkeypatch
+    ):
+        """La gracia no desarma la detección: pasada la ventana, un token
+        reaparecido sigue siendo la única señal de robo que ve un servidor sin
+        estado."""
+        from config import settings
+
+        sesion = await _alta(client)
+        rt = sesion["refresh_token"]
+
+        a = await client.post("/api/v1/auth/refresh", json={"refresh_token": rt})
+        assert a.status_code == 200
+
+        monkeypatch.setattr(settings, "REFRESH_GRACE_SECONDS", 0)
+        b = await client.post("/api/v1/auth/refresh", json={"refresh_token": rt})
+        assert b.status_code == 401
+
+        # Y cae la familia ENTERA: el token que A obtuvo tampoco sirve ya.
+        tras = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": a.json()["refresh_token"]},
+        )
+        assert tras.status_code == 401
+
+    async def test_un_token_REVOCADO_por_logout_no_recibe_gracia(
+        self, client: AsyncClient
+    ):
+        """`replaced_by` es el discriminador: un logout deja `revoked_at` puesto
+        y `replaced_by` NULO. Revocar es una orden, no una carrera, y perdonarla
+        reabriría justo el agujero que T9 cerró."""
+        sesion = await _alta(client)
+        rt = sesion["refresh_token"]
+
+        cierre = await client.post("/api/v1/auth/logout", json={"refresh_token": rt})
+        assert cierre.status_code == 204
+
+        reintento = await client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": rt}
+        )
+        assert reintento.status_code == 401
+
+    async def test_la_cadena_sigue_teniendo_UN_solo_token_vivo(
+        self, client: AsyncClient, db_session
+    ):
+        """La gracia continúa la cadena en vez de emitir un hermano, para
+        conservar el invariante que hace útil la detección: a lo sumo un refresh
+        vivo por familia. Dos hermanos válidos serían el estado que el detector
+        persigue."""
+        import sqlalchemy as sa
+
+        from models.refresh_token import RefreshToken
+
+        sesion = await _alta(client)
+        rt = sesion["refresh_token"]
+        await client.post("/api/v1/auth/refresh", json={"refresh_token": rt})
+        await client.post("/api/v1/auth/refresh", json={"refresh_token": rt})
+
+        vivos = (
+            await db_session.execute(
+                sa.select(sa.func.count())
+                .select_from(RefreshToken)
+                .where(RefreshToken.revoked_at.is_(None))
+            )
+        ).scalar()
+        assert vivos == 1, f"debería quedar exactamente uno vivo, hay {vivos}"

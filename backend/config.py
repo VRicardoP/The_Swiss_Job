@@ -93,6 +93,13 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # A-12: ventana de gracia al canjear un refresh YA canjeado (BCP de
+    # OAuth 2.1). Sin ella, dos pestañas con el access caducado refrescan en
+    # paralelo con el mismo token, la segunda dispara el detector de robo y
+    # caen LAS DOS. Es un mando de seguridad real —acortarla endurece, alargarla
+    # perdona más carreras—, por eso está aquí y no como constante.
+    # 0 la desactiva y recupera el comportamiento estricto anterior.
+    REFRESH_GRACE_SECONDS: int = 20
 
     # Scheduler
     SCHEDULER_ENABLED: bool = True
