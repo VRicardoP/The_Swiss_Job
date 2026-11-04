@@ -158,6 +158,43 @@ No lo rodeé. Esa comparación es del propietario. Nótese que
 por una fuga anterior (tres credenciales en una transcripción, 2026-10-21): esto
 es un **segundo vector**, y peor, porque una transcripción no se clona.
 
+### Severidad residual, acotada con dos datos (2026-11-04)
+
+**El repositorio es PÚBLICO** — comprobado: un `git ls-remote` anónimo contra
+`github.com/VRicardoP/The_Swiss_Job.git` funciona. Así que la credencial ha sido
+legible por cualquiera desde `3443127`, y los escáneres automáticos de secretos
+recogen esas cadenas a los minutos de publicarse. Conviene mirar la pestaña
+*Security* del repo: si el escaneo de GitHub la detectó, el aviso está ahí con
+fecha.
+
+**Pero dos cosas la acotan, y las dos están verificadas:**
+
+1. **`swissjob-postgres` no publica NINGÚN puerto al host**
+   (`docker inspect` → `5432/tcp->` sin binding). Sólo es alcanzable desde la red
+   Docker del NAS: para usar la contraseña hay que tener ya acceso al host o a un
+   contenedor de esa red, y entonces la credencial añade poco.
+2. **La contraseña no se reutiliza en ningún otro sitio** (confirmado por el
+   propietario el 2026-11-04). No hay movimiento lateral: el alcance es un rol,
+   no una llave maestra.
+
+**Lo que NO cambia:** ese rol es el dueño de `swissjobhunter`, o sea usuarios,
+hashes de contraseña, `user_profiles.cv_text` y los documentos generados — datos
+personales, con lo que implica en GDPR. **Se rota; lo que cambia es el cuándo, no
+el si.**
+
+**Decisión acordada:** la rotación se agrupa con los demás cambios de
+configuración de producción (A-61, A-62, A-16, A-25) en **una sola ventana de
+despliegue**, no se hace aparte. Motivo, y es de ingeniería y no de comodidad:
+rotar la contraseña de postgres y añadir la del redis son **la misma operación**
+—editar `.env.prod` en el NAS y recrear los mismos contenedores—, y cada ciclo de
+`deploy_nas.sh` es en sí la parte arriesgada (ver A-63: promueve el compose antes
+de migrar y el rollback sólo se imprime en el camino de éxito). Tres despliegues
+son tres oportunidades de romper algo; uno es una.
+
+**Lo que esa agrupación NO autoriza:** aplazarla detrás de los bloques C y D de
+DT-148. Eso son quince puntos, incluido partir un fichero de 2.680 líneas: meses.
+Estos cuatro cambios suman ~50 líneas y una ventana de despliegue.
+
 **Fix, en este orden:** (1) rotar la contraseña del rol `swissjob`; (2) sustituir
 las ocurrencias por `${POSTGRES_PASSWORD}`; (3) **enseñar al guard la sintaxis
 `.env`** (un segundo regex con `=`) y apuntarlo a `docs/` — en ese orden, porque

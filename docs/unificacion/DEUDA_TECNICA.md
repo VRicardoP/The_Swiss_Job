@@ -48,9 +48,28 @@
 > | **A-02** credencial publicada | `check_no_secrets.py` entiende ahora sintaxis `.env` y URLs con credencial embebida, con criterio por FORMA; 4 ocurrencias saneadas en `docs/DEPLOY_NAS.md`; CI ampliado a `docs`. 3 → **11 tests** |
 >
 > **A-02 sigue ABIERTO en su parte del propietario:** la credencial **continúa en
-> el historial de git y en `github/main`**. Limpiar el árbol no deshace lo
-> publicado. Orden correcto: **rotar el rol `swissjob` primero**, y sólo después
-> decidir sobre `git filter-repo`.
+> el historial de git y en `github/main`, y el repositorio es PÚBLICO**
+> (comprobado: `git ls-remote` anónimo funciona). Limpiar el árbol no deshace lo
+> publicado.
+>
+> **Severidad residual acotada (2026-11-04), con tres datos verificados:**
+> `swissjob-postgres` **no publica ningún puerto al host** (sólo red Docker del
+> NAS), **la contraseña no se reutiliza en ningún otro sitio** (confirmado por el
+> propietario) y el alcance es **un rol**, no una llave maestra. Sigue siendo el
+> dueño de `swissjobhunter` —usuarios, hashes, `cv_text`, documentos—, así que se
+> rota: lo que cambia es el cuándo.
+>
+> **Decisión acordada:** la rotación **se agrupa** con A-61, A-62, A-16 y A-25 en
+> **una sola ventana de despliegue**. No es comodidad: rotar la contraseña de
+> postgres y añadir la del redis son **la misma operación** (editar `.env.prod` en
+> el NAS y recrear los mismos contenedores), y cada ciclo de `deploy_nas.sh` es en
+> sí la parte arriesgada (A-63). Tres despliegues son tres oportunidades de romper
+> algo. **Lo que la agrupación NO autoriza es aplazarla detrás de los bloques C y
+> D**: eso son meses, y estos cuatro cambios suman ~50 líneas.
+>
+> Orden dentro de la ventana: rotar → actualizar `.env.prod` → recrear BFF y los
+> dos workers → `check_core_release.py`. Y sólo después decidir sobre
+> `git filter-repo`, que es independiente y no urgente una vez rotada.
 >
 > ### Lo que la verificación contra producción REBAJÓ
 >
