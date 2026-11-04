@@ -62,7 +62,7 @@ intermitente de la biblioteca. La sonda nginx-health no detectaba ese defecto.
 `4dcfa0e` usa la plantilla nativa de Nginx: destino por defecto
 `swissjob-backend`; el manifiesto R5 declara `swissjob-backend-r5`. Se actualizó
 también el manifiesto operativo R5, sin recrear sus servicios legacy.
-La prueba `scripts/test_frontend_proxy_isolation.py` construye una red interna
+La prueba `scripts/check_frontend_proxy_isolation.py` construye una red interna
 sin datos/puertos publicados y ambos aliases en conflicto: la imagen anterior
 `21c07c6` FALLA con respuestas production/rehearsal mezcladas; la corregida PASA.
 La regresión de configuración también se verificó roja antes del fix.

@@ -4,6 +4,29 @@ Uses the same mounts/disposable-database plugin as test_document_adapter_contrac
 All identities/content are synthetic; no live environment files or background tasks.
 """
 
+# A-64: guarda de precondición a nivel de MÓDULO.
+#
+# Este test necesita el entorno cableado que describe el docstring: el árbol del
+# núcleo importable y los dos BFF montados en /bff y /portfolio. Sin eso no
+# fallaba: ni se RECOGÍA —`ModuleNotFoundError: No module named 'jobhunt_core'`
+# en tiempo de import—, que es el peor desenlace posible, porque un error de
+# recolección tumba la corrida entera y arrastra a los demás ficheros.
+#
+# Con la guarda, en un entorno sin preparar SALTA diciendo por qué, y entonces
+# se puede meter al CI sin mentir: donde no están las precondiciones se ve el
+# skip con su motivo, y donde están, corre.
+from pathlib import Path as _Path
+
+import pytest as _pytest
+
+if not (_Path("/bff").is_dir() and _Path("/portfolio").is_dir()):
+    _pytest.skip(
+        "wire test opt-in: requiere /bff y /portfolio montados y el árbol del "
+        "núcleo (ver el docstring de este fichero)",
+        allow_module_level=True,
+    )
+
+
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import copy
