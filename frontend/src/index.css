@@ -43,7 +43,17 @@
   --color-text-primary: #0A0A0B;
   --color-text-secondary: #52525C;
   --color-text-tertiary: #71717A;
-  --color-text-quaternary: #A1A1AA;
+  /* A-39: era #A1A1AA, que da **2,56:1** sobre blanco — muy por debajo del
+     4,5:1 que AA pide para texto normal, y se usa como `placeholder:` en la
+     caja de búsqueda principal (`SearchPage`), en `ui/Input` y en `TagList`.
+     #76767C da **4,51:1**, que es el umbral exacto.
+
+     El valor se calculó, no se eligió: la propuesta de la auditoría (#8A8A93)
+     daba 3,42:1 y habría dejado el defecto dentro con la sensación de
+     arreglado. Se midió con la fórmula de luminancia relativa de WCAG 2.1 y
+     hay un test que recalcula los dos pares, para que mover el token sin
+     comprobar ponga rojo. */
+  --color-text-quaternary: #76767C;
   --color-text-inverse: #FAFAFA;
 
   /* Semánticos (uso ponderado) */

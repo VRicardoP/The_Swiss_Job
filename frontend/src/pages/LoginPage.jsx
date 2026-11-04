@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { useLogin } from "../hooks/useAuth";
 import useAuthStore from "../stores/authStore";
@@ -6,6 +6,18 @@ import useAuthStore from "../stores/authStore";
 export default function LoginPage() {
   const token = useAuthStore((s) => s.token);
   const login = useLogin();
+  // A-37: `id` + `htmlFor` en los dos campos. Los `<label>` eran HERMANOS del
+  // `<input>`, sin asociación y sin `aria-label`, así que un lector de pantalla
+  // anunciaba «edición, en blanco» sin nombre accesible y el clic en la
+  // etiqueta no enfocaba el campo — en el flujo de ENTRADA de la aplicación.
+  //
+  // No se sustituye por `<Input>` (que ya genera `useId()` y `htmlFor`) a
+  // propósito: estas dos páginas tienen su propio diseño visual —etiquetas en
+  // versalitas, `rounded-xl`, `px-4 py-3`— y cambiarlo no es un arreglo de
+  // accesibilidad, es un rediseño.
+  const idEmail = useId();
+  const idPassword = useId();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -39,16 +51,23 @@ export default function LoginPage() {
           className="space-y-5 bg-surface shadow-card rounded-2xl p-8"
         >
           {login.isError && (
-            <div className="rounded-xl bg-error-light p-3 text-sm text-error">
+            <div
+              role="alert"
+              className="rounded-xl bg-error-light p-3 text-sm text-error"
+            >
               {login.error.message}
             </div>
           )}
 
           <div>
-            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-text-tertiary">
+            <label
+              htmlFor={idEmail}
+              className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-text-tertiary"
+            >
               Email
             </label>
             <input
+              id={idEmail}
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -59,10 +78,14 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-text-tertiary">
+            <label
+              htmlFor={idPassword}
+              className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-text-tertiary"
+            >
               Password
             </label>
             <input
+              id={idPassword}
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}

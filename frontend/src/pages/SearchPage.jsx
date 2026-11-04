@@ -27,44 +27,44 @@ function useDebounce(callback, delay) {
 }
 
 // Definición de chips de filtros activos (etiqueta legible + acción de borrado)
+/**
+ * Los chips de los filtros ACTIVOS.
+ *
+ * A-36 — leía SEIS campos que el store no modela: `canton`, `language`,
+ * `seniority`, `contractType`, `salaryMin` y `salaryMax`, con sus seis setters.
+ * `searchStore` modela exactamente `q`, `source`, `location` y `remoteOnly`
+ * desde que DT-148 A18-01 retiró los cuatro desplegables, y
+ * `hooks/useJobSearch.test.js` lo FIJA con un test que lista esos campos: o
+ * sea, el propio repo probaba que estos chips no podían activarse nunca. 40
+ * líneas muertas.
+ *
+ * Y el efecto visible no era sólo código muerto: **`location` no tenía chip**.
+ * Es el filtro que A18-01 puso como sustituto de los cuatro retirados y el
+ * único que el núcleo aplica sobre el 100 % de las canónicas (el `canton` sólo
+ * está en el 8,5 %, medido). Quien escribía «Zürich» no veía ningún chip, el
+ * badge del botón «Filters» no lo contaba, y la única forma de quitarlo era
+ * «Clear all» o reabrir el panel.
+ */
 function useActiveFilterChips() {
   const s = useSearchStore();
   const chips = [];
   if (s.source)
-    chips.push({ key: "source", label: `Source: ${s.source}`, clear: () => s.setSource("") });
-  if (s.canton)
-    chips.push({ key: "canton", label: `Canton: ${s.canton}`, clear: () => s.setCanton("") });
-  if (s.language)
     chips.push({
-      key: "language",
-      label: `Lang: ${s.language.toUpperCase()}`,
-      clear: () => s.setLanguage(""),
+      key: "source",
+      label: `Source: ${s.source}`,
+      clear: () => s.setSource(""),
     });
-  if (s.seniority)
+  if (s.location)
     chips.push({
-      key: "seniority",
-      label: `Level: ${s.seniority}`,
-      clear: () => s.setSeniority(""),
-    });
-  if (s.contractType)
-    chips.push({
-      key: "contract",
-      label: `Contract: ${s.contractType.replace("_", " ")}`,
-      clear: () => s.setContractType(""),
+      key: "location",
+      label: `Location: ${s.location}`,
+      clear: () => s.setLocation(""),
     });
   if (s.remoteOnly)
-    chips.push({ key: "remote", label: "Remote only", clear: () => s.setRemoteOnly(false) });
-  if (s.salaryMin)
     chips.push({
-      key: "salaryMin",
-      label: `Min ${s.salaryMin} CHF`,
-      clear: () => s.setSalaryMin(""),
-    });
-  if (s.salaryMax)
-    chips.push({
-      key: "salaryMax",
-      label: `Max ${s.salaryMax} CHF`,
-      clear: () => s.setSalaryMax(""),
+      key: "remote",
+      label: "Remote only",
+      clear: () => s.setRemoteOnly(false),
     });
   return chips;
 }

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { X, RotateCcw } from "lucide-react";
 import { useSearchStore } from "../stores/searchStore";
 import { Button, Input, IconButton, cn } from "./ui";
@@ -10,17 +10,53 @@ export default function FilterPanel() {
     filtersOpen, setFiltersOpen, resetFilters,
   } = useSearchStore();
 
-  // Cerrar con Escape
+  const panel = useRef(null);
+
+  // A-38 — este `aside` se declara `role="dialog" aria-modal="true"`, y eso es
+  // una PROMESA al teclado que no estaba cumplida: el foco no se movía al
+  // abrirse, Tab se escapaba al contenido de detrás —que `aria-modal` oculta a
+  // los lectores de pantalla pero NO al teclado— y al cerrarse no volvía al
+  // botón que lo abrió. Un usuario de teclado abría el panel y se quedaba
+  // tabulando por una página que, para él, ya no existía.
+  //
+  // Las tres piezas van en el mismo efecto que ya gestionaba Escape y el
+  // scroll, porque comparten exactamente el ciclo de vida.
   useEffect(() => {
     if (!filtersOpen) return;
+
+    const foco = (panel.current ?? document).querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    );
+    const primero = foco[0];
+    const ultimo = foco[foco.length - 1];
+    // Quién tenía el foco ANTES, para devolvérselo: sin esto el usuario
+    // reaparece al principio del documento.
+    const previo = document.activeElement;
+    primero?.focus();
+
     function onKey(e) {
-      if (e.key === "Escape") setFiltersOpen(false);
+      if (e.key === "Escape") {
+        setFiltersOpen(false);
+        return;
+      }
+      if (e.key !== "Tab" || foco.length === 0) return;
+      // El ciclo: desde el último hacia delante se vuelve al primero, y desde
+      // el primero hacia atrás al último. Es lo que mantiene el foco DENTRO.
+      if (e.shiftKey && document.activeElement === primero) {
+        e.preventDefault();
+        ultimo.focus();
+      } else if (!e.shiftKey && document.activeElement === ultimo) {
+        e.preventDefault();
+        primero.focus();
+      }
     }
+
     document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
+      if (previo instanceof HTMLElement) previo.focus();
     };
   }, [filtersOpen, setFiltersOpen]);
 
@@ -36,6 +72,7 @@ export default function FilterPanel() {
       />
 
       <aside
+        ref={panel}
         role="dialog"
         aria-modal="true"
         aria-label="Filters"

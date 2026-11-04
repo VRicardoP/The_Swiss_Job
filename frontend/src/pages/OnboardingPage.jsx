@@ -39,7 +39,7 @@ function StepDots({ current }) {
               "flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold transition-colors",
               i < current && "bg-ink text-text-inverse",
               i === current && "bg-ink text-text-inverse ring-4 ring-ink/10",
-              i > current && "bg-surface-tertiary text-text-tertiary",
+              i > current && "bg-surface-tertiary text-text-secondary",
             )}
           >
             {i < current ? <Check className="h-3.5 w-3.5" /> : i + 1}

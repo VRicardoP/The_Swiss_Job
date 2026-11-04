@@ -52,7 +52,7 @@ export default function CategoryTabs({
                 "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold tabular-nums",
                 isActive
                   ? "bg-text-inverse/15 text-text-inverse"
-                  : "bg-surface-tertiary text-text-tertiary",
+                  : "bg-surface-tertiary text-text-secondary",
               )}
             >
               {cat.count}

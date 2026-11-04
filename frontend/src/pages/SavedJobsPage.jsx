@@ -21,7 +21,21 @@ import {
 } from "../components/ui";
 
 export default function SavedJobsPage() {
-  const { data: results, isLoading, isError, error } = useSavedJobs();
+  // A-35 — el tope era 100 y la página lo llamaba SIN argumentos, así que con
+  // 140 guardados la cabecera leía «140 matches you marked as relevant» (el
+  // `total` del servidor) y la suma de las pestañas de categoría daba 100: las
+  // 40 restantes eran inalcanzables y nada lo decía.
+  //
+  // Se sube a 500, el mismo tope que `WatchlistPage` ya usa, en vez de montar
+  // un paginador. El motivo no es pereza: las categorías y sus contadores se
+  // calculan EN CLIENTE sobre lo cargado (`groupByCategory(allSaved)`), así que
+  // paginar en el servidor haría que las pestañas cambiaran de significado en
+  // cada página — cambiaría una inconsistencia por otra peor. 500 marcadores
+  // cubre el uso real con holgura.
+  //
+  // Y por si algún día no basta, debajo hay un aviso cuando `total` supera lo
+  // servido: el número de la cabecera no puede volver a mentir en silencio.
+  const { data: results, isLoading, isError, error } = useSavedJobs(500);
   const submitFeedback = useSubmitFeedback();
   const clearFeedback = useClearFeedback();
   const submitImplicit = useSubmitImplicit();
@@ -88,6 +102,18 @@ export default function SavedJobsPage() {
           </LinkButton>
         }
       />
+
+      {/* A-35: si el servidor dice que hay más de lo que se ha traído, se DICE.
+          Un contador que no cuadra con lo que se ve es peor que un contador
+          menor. */}
+      {total > allSaved.length && (
+        <p
+          role="status"
+          className="mt-3 rounded-lg border border-warning-border bg-warning-light px-3 py-2 text-sm text-text-secondary"
+        >
+          Showing the first {allSaved.length} of {total} saved jobs.
+        </p>
+      )}
 
       {/* Loading */}
       {isLoading && (
