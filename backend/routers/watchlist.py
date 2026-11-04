@@ -270,8 +270,25 @@ def _build_ics(
 
 
 def _ics_escape(text: str) -> str:
+    """Escapa un valor para una propiedad de iCalendar.
+
+    A-47: faltaba el `\r`, y eso era inyección. El `SUMMARY` y el
+    `DESCRIPTION` llevan `job.title` y el nombre del colegio, que vienen del
+    CORPUS COSECHADO, y la normalización del núcleo sólo hace `.strip()`
+    (`harvest/normalize.py`), que no toca los controles internos. Como las
+    líneas del fichero se unen con CRLF, un título con `\r\n` dentro cerraba
+    la propiedad e inyectaba propiedades o `VEVENT`s enteros en el calendario
+    que el usuario importa.
+
+    El `\r` se BORRA en vez de escaparse: `\\r` no es una secuencia válida en
+    iCalendar (RFC 5545 §3.3.11 sólo define `\\n`, `\\N`, `\\;`, `\\,` y
+    `\\\\`), así que escaparlo produciría un fichero inválido. Un CRLF del
+    corpus se queda en el `\\n` que ya pone la línea siguiente.
+    """
     return (
         text.replace("\\", "\\\\")
+        .replace("\r\n", "\n")
+        .replace("\r", "")
         .replace(";", "\\;")
         .replace(",", "\\,")
         .replace("\n", "\\n")

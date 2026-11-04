@@ -11,6 +11,7 @@ silencio. El correo sigue saliendo de aquí: el núcleo no tiene SMTP.
 
 import asyncio
 import logging
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -67,80 +68,84 @@ async def _detect_and_notify() -> dict[str, Any]:
         )
         return {"status": "no_smtp"}
 
-    r = redis.from_url(settings.REDIS_URL)
-    now = datetime.now(timezone.utc)
-    watermark = _load_watermark(r, now, settings.TEACHER_ALERT_INITIAL_LOOKBACK_DAYS)
-
-    # Prefiltro barato en el CATÁLOGO: docencia (categoría H) nueva desde la
-    # marca. El feed del core sirve SOLO vacantes activas y presentables, que
-    # es justo lo que pedían `is_active` y `duplicate_of IS NULL` (DT-148 A1).
-    # G1/P2-15: se conserva la cota SUPERIOR `<= now`, pero con una diferencia
-    # que hay que decir: el corte INFERIOR lo aplica el servidor sobre el alta
-    # de la vacante y este superior se aplica aquí sobre `first_seen_at` del
-    # listing primario, que es lo que el DTO trae. Son casi el mismo instante,
-    # no el mismo campo, así que la cota ya no cierra por sí sola la carrera de
-    # G1/P2-15: quien la cierra es la idempotencia POR OFERTA de G3/P1-1
-    # (`filter_unsent`), que es el mecanismo primario desde entonces.
-    candidates = [
-        job
-        for job in await CoreCatalog().recent(
-            category=TEACHING_CATEGORY, since=watermark
-        )
-        if job.first_seen_at <= now
-    ]
-    # El orden del correo era por antigüedad; el feed sirve lo más nuevo primero.
-    candidates.sort(key=lambda job: job.first_seen_at)
-
-    # Filtro fino de NIVEL primaria (marcadores multiidioma). La CATEGORÍA ya
-    # la garantiza el filtro del catálogo: la oferta servida no trae el campo
-    # (`JobResponse` no lo tiene), así que se afirma la que se pidió.
-    matches = [
-        j
-        for j in candidates
-        if is_primary_teacher_job(TEACHING_CATEGORY, j.title, j.tags)
-    ]
-
-    # G3/P1-1: la marca se guarda con LAG (ventana solapada, ver
-    # tasks/watermarks.py) y la idempotencia pasa a ser POR OFERTA, así que el
-    # solape recupera lo que la cosecha commiteó tarde sin reenviar nada.
-    fresh_hashes = set(filter_unsent(r, _SENT_PREFIX, [j.hash for j in matches]))
-    fresh = [j for j in matches if j.hash in fresh_hashes]
-
-    if fresh:
-        subject, text, html = build_alert_email(fresh)
-        try:
-            email.send(settings.TEACHER_ALERT_EMAIL, subject, text, html)
-        except Exception:
-            # El envío falló: retirar los marcadores para que el retry (o la
-            # corrida siguiente, que ya solapa) lo vuelva a intentar.
-            unmark_sent(r, _SENT_PREFIX, fresh_hashes)
-            r.close()
-            raise
-        logger.info(
-            "Alerta profesor primaria: %d ofertas enviadas a %s",
-            len(fresh),
-            settings.TEACHER_ALERT_EMAIL,
+    # A-46: el cliente se cerraba en el camino de éxito y en el del fallo de
+    # SMTP, pero NO si lanzaba `CoreCatalog().recent()` ni `filter_unsent` ni
+    # `save_watermark`. Una conexión por corrida fallida cada 6 h, tapada sólo
+    # por el `worker_max_tasks_per_child=200` del worker. Con `closing` los
+    # tres caminos quedan cubiertos y los `r.close()` explícitos sobran.
+    with closing(redis.from_url(settings.REDIS_URL)) as r:
+        now = datetime.now(timezone.utc)
+        watermark = _load_watermark(
+            r, now, settings.TEACHER_ALERT_INITIAL_LOOKBACK_DAYS
         )
 
-    # G4/P1-2 — la marca se guarda DESPUÉS del envío, dentro del camino de
-    # éxito (mismo criterio que watchlist_tasks). Guardarla
-    # antes perdía el lote ENTERO ante un fallo de SMTP: el `unmark_sent` de
-    # arriba retira los marcadores por-oferta, pero la marca de agua ya había
-    # avanzado y solo retrocede `NOTIFY_WATERMARK_LAG_MINUTES` (15 min) —
-    # con la cosecha diaria y la alerta cada 6 h, TODA oferta de la ventana
-    # tiene más de 15 minutos y quedaba por debajo de la marca nueva: no
-    # volvía a entrar en ninguna corrida. Con `fresh` vacío se guarda igual
-    # (no hubo nada que enviar, la ventana está limpia).
-    save_watermark(r, _WATERMARK_KEY, now)
+        # Prefiltro barato en el CATÁLOGO: docencia (categoría H) nueva desde la
+        # marca. El feed del core sirve SOLO vacantes activas y presentables, que
+        # es justo lo que pedían `is_active` y `duplicate_of IS NULL` (DT-148 A1).
+        # G1/P2-15: se conserva la cota SUPERIOR `<= now`, pero con una diferencia
+        # que hay que decir: el corte INFERIOR lo aplica el servidor sobre el alta
+        # de la vacante y este superior se aplica aquí sobre `first_seen_at` del
+        # listing primario, que es lo que el DTO trae. Son casi el mismo instante,
+        # no el mismo campo, así que la cota ya no cierra por sí sola la carrera de
+        # G1/P2-15: quien la cierra es la idempotencia POR OFERTA de G3/P1-1
+        # (`filter_unsent`), que es el mecanismo primario desde entonces.
+        candidates = [
+            job
+            for job in await CoreCatalog().recent(
+                category=TEACHING_CATEGORY, since=watermark
+            )
+            if job.first_seen_at <= now
+        ]
+        # El orden del correo era por antigüedad; el feed sirve lo más nuevo primero.
+        candidates.sort(key=lambda job: job.first_seen_at)
 
-    r.close()
+        # Filtro fino de NIVEL primaria (marcadores multiidioma). La CATEGORÍA ya
+        # la garantiza el filtro del catálogo: la oferta servida no trae el campo
+        # (`JobResponse` no lo tiene), así que se afirma la que se pidió.
+        matches = [
+            j
+            for j in candidates
+            if is_primary_teacher_job(TEACHING_CATEGORY, j.title, j.tags)
+        ]
 
-    return {
-        "status": "success",
-        "candidates": len(candidates),
-        "matched": len(fresh),
-        "already_sent": len(matches) - len(fresh),
-    }
+        # G3/P1-1: la marca se guarda con LAG (ventana solapada, ver
+        # tasks/watermarks.py) y la idempotencia pasa a ser POR OFERTA, así que el
+        # solape recupera lo que la cosecha commiteó tarde sin reenviar nada.
+        fresh_hashes = set(filter_unsent(r, _SENT_PREFIX, [j.hash for j in matches]))
+        fresh = [j for j in matches if j.hash in fresh_hashes]
+
+        if fresh:
+            subject, text, html = build_alert_email(fresh)
+            try:
+                email.send(settings.TEACHER_ALERT_EMAIL, subject, text, html)
+            except Exception:
+                # El envío falló: retirar los marcadores para que el retry (o la
+                # corrida siguiente, que ya solapa) lo vuelva a intentar.
+                unmark_sent(r, _SENT_PREFIX, fresh_hashes)
+                raise
+            logger.info(
+                "Alerta profesor primaria: %d ofertas enviadas a %s",
+                len(fresh),
+                settings.TEACHER_ALERT_EMAIL,
+            )
+
+        # G4/P1-2 — la marca se guarda DESPUÉS del envío, dentro del camino de
+        # éxito (mismo criterio que watchlist_tasks). Guardarla
+        # antes perdía el lote ENTERO ante un fallo de SMTP: el `unmark_sent` de
+        # arriba retira los marcadores por-oferta, pero la marca de agua ya había
+        # avanzado y solo retrocede `NOTIFY_WATERMARK_LAG_MINUTES` (15 min) —
+        # con la cosecha diaria y la alerta cada 6 h, TODA oferta de la ventana
+        # tiene más de 15 minutos y quedaba por debajo de la marca nueva: no
+        # volvía a entrar en ninguna corrida. Con `fresh` vacío se guarda igual
+        # (no hubo nada que enviar, la ventana está limpia).
+        save_watermark(r, _WATERMARK_KEY, now)
+
+        return {
+            "status": "success",
+            "candidates": len(candidates),
+            "matched": len(fresh),
+            "already_sent": len(matches) - len(fresh),
+        }
 
 
 def _load_watermark(r, now: datetime, lookback_days: int) -> datetime:

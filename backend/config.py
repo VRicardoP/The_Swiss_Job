@@ -175,8 +175,14 @@ class Settings(BaseSettings):
     DB_TASK_POOL_SIZE: int = 2
     DB_TASK_MAX_OVERFLOW: int = 3
 
-    # Groq concurrency (TD-22)
-    GROQ_CONCURRENCY: int = 2
+    # A-45: `GROQ_CONCURRENCY` (TD-22) se retiró el 2026-11-04. Barrido de las
+    # 69 claves de `Settings` contra todo el repo: era la única SIN UN SOLO
+    # LECTOR, ni en código ni en tests. Sobrevivió a la limpieza de DT-148 B3,
+    # que retiró ocho mandos por exactamente este motivo —«un mando que no manda
+    # nada invita a girarlo esperando un efecto»— y, como
+    # `.env.prod.example` se GENERA desde `Settings`, encima se le ofrecía al
+    # operador. Si algún día hace falta acotar la concurrencia de Groq, se añade
+    # con su lector en el mismo commit.
 
     # Document generation (CV/carta). Prioriza CALIDAD sobre latencia.
     GROQ_DOC_TEMPERATURE: float = 0.4
