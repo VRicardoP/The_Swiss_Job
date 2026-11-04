@@ -178,13 +178,25 @@ class TranslationService:
         try:
             await self._translate_pending(to_translate, result)
         except APIStatusError as e:
-            # 401/403: la API key es inválida/sin permisos. Reintentar no arregla nada;
-            # avisamos una vez de forma accionable y dejamos los títulos sin traducir
-            # (el router los muestra en su idioma original al faltar en el dict).
+            # Reintentar no arregla nada en ninguno de los dos casos; se avisa
+            # una vez de forma accionable y los títulos quedan sin traducir (el
+            # router los muestra en su idioma original al faltar en el dict).
+            #
+            # A-20: el mando a girar NO es el mismo, y el síntoma visible sí
+            # —«títulos sin traducir»—, así que el mensaje tiene que
+            # distinguirlos o manda a mirar el sitio equivocado.
+            if e.status_code == 404:
+                mando = (
+                    f"revisa GROQ_RERANK_MODEL (ahora {settings.GROQ_RERANK_MODEL!r}) "
+                    "contra el catálogo vivo: Groq decomisa modelos sin avisar"
+                )
+            else:
+                mando = "revisa GROQ_API_KEY"
             logger.error(
-                "Groq rechazó la petición (HTTP %s): revisa GROQ_API_KEY. "
+                "Groq rechazó la petición (HTTP %s): %s. "
                 "%d títulos quedan sin traducir (se muestran en su idioma original).",
                 e.status_code,
+                mando,
                 len(to_translate),
             )
 
@@ -255,6 +267,33 @@ class TranslationService:
             # 401/403 (key inválida/sin permisos): propagar — no tiene sentido
             # reintentar ni seguir con más lotes, fallarían igual.
             if e.status_code in (401, 403):
+                raise
+            # A-20 — el 404 es un error de CONFIGURACIÓN, no un transitorio.
+            #
+            # Groq decomisa modelos sin avisar (tres veces ya: llama-4-scout el
+            # 2026-07-17, llama-3.3-70b el 2026-08-16, qwen3.6-27b el
+            # 2026-09-15) y el SDK lo señala con `NotFoundError`, un 404. Caía
+            # en el `warning` de abajo como si fuera un 429, y la cadena que eso
+            # producía era perpetua: los 25 títulos iban a `failed_titles`, se
+            # REINTENTABAN con el prompt simplificado (dos llamadas 404 por
+            # lote), y como el resultado dejaba `result[title] = title` el
+            # `translated == title` impedía cachear nada, así que el calentador
+            # volvía a seleccionar los mismos ≤100 pendientes cada 60 s, por
+            # usuario, para siempre.
+            #
+            # El síntoma visible —«títulos sin traducir»— es EL MISMO que una
+            # GROQ_API_KEY caducada, que sí se trata bien. Se propaga para que
+            # aborte el lote y los siguientes, y se nombra el mando que hay que
+            # mirar: un fallo mudo que se arregla girando una perilla tiene que
+            # decir cuál.
+            if e.status_code == 404:
+                logger.error(
+                    "Groq devolvió 404 para el modelo %r: comprueba "
+                    "GROQ_RERANK_MODEL contra el catálogo vivo "
+                    "(GET /openai/v1/models). Groq decomisa modelos sin avisar; "
+                    "no se reintenta porque fallaría igual.",
+                    settings.GROQ_RERANK_MODEL,
+                )
                 raise
             # 429/5xx u otros: transitorio → dict vacío (retry/fallback lo cubren).
             logger.warning(
