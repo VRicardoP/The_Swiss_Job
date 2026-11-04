@@ -108,6 +108,8 @@
 > | **A-47 + A-46 + A-44 + A-45** inyección de ICS, fuga de Redis, garantía falsa y mando sin lector | `9b11996` | A-44 se cerró **corrigiendo el comentario**, no construyendo la re-derivación que nadie pidió |
 > | **A-31 + A-27** el fallo de red se pintaba como vacío | `6fc331a` | **Siete** sitios, no uno. Cierra la mitad abierta de DT-148 A18-03, y A-27 era un **PUT destructivo** sobre el perfil real |
 > | **A-64 + A-33** tests huérfanos y el guard de CC 80 | `b171ad5` | **El grado F desaparece del repo.** Y los seis huérfanos eran cuatro cosas distintas: uno RANCIO, uno que no era pytest, tres opt-in y uno que pasaba |
+> | **A-70 + A-66** dos ratchets que no eran ratchets | `6866f45` | Los dos se medían contra sí mismos. A-66 congela por NOMBRE los dos defaults que ya existían: quitarlos exige dos líneas en tu `.env`, así que va a la ventana |
+> | **A-26** ninguna petición tenía techo | `890853d` | 120 s, elegido con las dos cotas medidas (47,5 s el recorrido más lento; 3600 s el techo de nginx). **Queda la otra mitad**: propagar el `signal` de react-query |
 >
 > Suites: **705 backend** (eran 669) y **78 frontend** (eran 63). Ruff limpio.
 >
@@ -115,10 +117,8 @@
 >
 > | Orden | Ítem | Nota |
 > |---|---|---|
-> | **1** | **A-32** · `native_json.py`, segundo fichero con MI C | Contradice la premisa de DT-148 D1. Extraer las ramas por fuente a un módulo hermano |
-> | **2** | **A-70** · los ratchets del manifiesto se desactivan solos | El default de `.get()` es el valor ACTUAL. **Ya hay un test que lo DOCUMENTA** en `test_check_source_ownership.py`: al arreglarlo, ese test cambia de sentido y avisa |
-> | **3** | **A-26** · cero timeouts y cero cancelación en el frontend | Ningún `queryFn` recibe el `signal` que react-query le pasa, y `retry: 1` DUPLICA toda petición fallida |
-> | **4** | **A-66** · `check_compose_exposure.py` busca UN literal quemado | Se le cuelan dos credenciales por defecto en nueve sitios del compose base. Mismo error de diseño que A-02: valores en vez de formas |
+> | **1** | **A-32** · `native_json.py`, segundo fichero con MI C | Contradice la premisa de DT-148 D1. Extraer las ramas por fuente a un módulo hermano. **OJO al coste de verificación**: la suite del núcleo necesita la imagen de test layereada (tres condiciones, ver `CLAUDE.md`), no el venv del host — el ML pesado vive en el núcleo |
+> | **2** | **A-26 (2ª mitad)** · propagar el `signal` de react-query | Docenas de métodos en ocho objetos de API. El techo ya está puesto; esto es cancelar al desmontar, cuyo coste hoy es una petición desperdiciada y no un fallo. Hay un test que fija la composición |
 > | **7** | **A-35, A-36, A-37, A-38, A-39** · paginación de guardados, chips muertos, etiquetas sin asociar, foco del modal, contraste | Frontend, acotados, sin riesgo |
 > | **8** | **A-21** · escritor latente de `match_results` | Decidir si la rama local sigue siendo camino de rollback |
 >
