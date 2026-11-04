@@ -516,9 +516,11 @@ Estos principios tienen prioridad sobre velocidad, brevedad o DRY.
 # Arrancar entorno completo
 docker compose up -d
 
-# Tests backend (750 passed, ~10-12 min — medido el 2026-10-20 tras DT-148; la
-# cifra baja de 789 porque se retiraron los tests de las tareas y del vertical
-# retirados. Reconfirmar con pytest tras cada crecida, no copiar la cifra)
+# Tests backend. OJO A LA CIFRA: esta línea decía «750 passed, ~10-12 min
+# (medido el 2026-10-20)» y las dos cifras estaban mal. Medido el 2026-11-04:
+# son **669** (lo mismo que ya decía `DT148_RELEVO.md`, que era el dato bueno) y
+# tardan **2 min 40 s** ejecutándolas NATIVAS en el host. Los 10-12 min eran el
+# coste de hacerlo dentro del contenedor.
 # OJO: NO lances dos pytest a la vez CONTRA LA MISMA BASE — el teardown hace
 # TRUNCATE ... CASCADE de swissjobhunter_test y las dos corridas se vacían las
 # tablas entre sí (deadlocks + falsos rojos). La suite del core usa otra base
@@ -527,17 +529,44 @@ docker compose up -d
 # (`git log -S pytest-timeout` sobre requirements.txt no devuelve nada). El
 # comando que esta línea documentaba fallaba al arrancar, no al probar.
 #
-# OJO EL GRANDE (A-65, comprobado el 2026-11-02): el comando de abajo **FALLA**
-# con «No module named pytest» sobre una imagen reconstruida. `68f21c6 build:
-# slim and unify production images` sacó `pytest` y `ruff` de
-# backend/requirements.txt (hoy en requirements-dev.txt, que .dockerignore
-# excluye del contexto), y `check_source_ownership.py:89-96` PROHÍBE devolverlos
-# ahí — así que no es un descuido reversible. Hay que layerear una imagen de
-# test, igual que para el núcleo:
-#   printf 'FROM swissjob-backend:dev\nUSER root\nRUN pip install --no-cache-dir -r /app/requirements-dev.txt\n' > /tmp/Dockerfile.bfftest
-# o lanzar un contenedor auxiliar que monte el repo. Mismo problema con `ruff`
-# (ver más abajo). Esta línea se deja porque es el comando CANÓNICO en cuanto la
-# imagen lleve las dependencias de desarrollo, no porque funcione hoy tal cual.
+# A-65 — EL COMANDO DE ABAJO NO FUNCIONA. Devuelve «No module named pytest»
+# sobre cualquier imagen reconstruida: `68f21c6 build: slim and unify production
+# images` sacó `pytest` y `ruff` de backend/requirements.txt (hoy en
+# requirements-dev.txt, que .dockerignore excluye del contexto), y
+# `check_source_ownership.py:89-96` PROHÍBE devolverlos ahí, así que no es un
+# descuido reversible. Se deja como referencia histórica.
+#   docker compose exec -T backend python -m pytest tests/ -q     # ← NO
+#
+# LO QUE SÍ FUNCIONA, y además es lo que hace el CI (`ci.yml` job `backend-test`
+# instala requirements-dev.txt en el runner y lanza pytest nativo, sin tocar la
+# imagen). Replicarlo en local tiene tres ventajas: un verde local implica un
+# verde en CI porque es el mismo comando, trae `ruff` de paso, y tarda 2 min 40 s
+# en vez de 10-12. El BFF son 22 dependencias ligeras —el ML vive en el núcleo—,
+# así que el venv se monta en segundos:
+#
+#   python3 -m venv .venv && .venv/bin/pip install -r backend/requirements-dev.txt
+#
+# Y para lanzarla hacen falta CUATRO cosas, las cuatro imprescindibles:
+#
+#   # 1) El venv PRIMERO en el PATH. Dos tests lanzan `alembic` en un SUBPROCESO
+#   #    y sin esto toman el global de ~/.local/bin, que no trae psycopg2: dan 2
+#   #    fallos que parecen del código y son del entorno. Es la misma trampa que
+#   #    el ledger ya registró con la suite del núcleo en DT-147 (6 fallos).
+#   export PATH="$PWD/.venv/bin:$PATH"
+#   # 2) Las URLs a los puertos PUBLICADOS (5435 y 6380), no a los nombres de
+#   #    compose, que no resuelven desde el host. El redis va SIN credencial en
+#   #    la URL: el validador de config.py se la inyecta desde REDIS_PASSWORD.
+#   export DATABASE_URL="postgresql+asyncpg://swissjob:$PASS@127.0.0.1:5435/swissjobhunter"
+#   export REDIS_URL="redis://127.0.0.1:6380/0"   # idem CELERY_BROKER_URL (/1) y
+#                                                 # CELERY_RESULT_BACKEND (/2)
+#   # 3) ALLOW_DEV_CREDENTIALS=true, o el arranque aborta con una clave de dev.
+#   # 4) NO sourcear el .env entero (`set -a; . ./.env`): exporta
+#   #    BACKEND_CORS_ORIGINS en una forma que pydantic no puede parsear y la
+#   #    suite no llega ni a arrancar. Exporta sólo los escalares que necesitas.
+#   cd backend && ../.venv/bin/python -m pytest tests/ -q -p no:cacheprovider
+#
+# (`-p no:cacheprovider` evita un aviso: `.pytest_cache` es de root, creado por
+# las corridas en contenedor.)
 docker compose exec -T backend python -m pytest tests/ -q
 
 # Tests core (1.785 passed · 1 skipped, ~8 min — medido el 2026-10-20)
