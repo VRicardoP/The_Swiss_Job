@@ -194,6 +194,18 @@ export const authApi = {
     });
   },
 
+  // A-11: este método FALTABA, y por eso toda la maquinaria de sesiones
+  // revocables de T9 estaba muerta — el endpoint existe y está probado desde
+  // septiembre, pero ningún cliente lo llamaba. No exige access token a
+  // propósito (cerrar sesión tiene que funcionar justo cuando el access ya
+  // caducó) y devuelve 204 siempre, que `request` ya trata como sin cuerpo.
+  logout(refresh_token) {
+    return request("/auth/logout", {
+      method: "POST",
+      body: JSON.stringify({ refresh_token }),
+    });
+  },
+
   getMe() {
     return authRequest("/auth/me");
   },

@@ -12,9 +12,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { endsSession, profileApi, searchesApi } from "./api";
+import { authApi, endsSession, profileApi, searchesApi } from "./api";
 import useAuthStore from "../stores/authStore";
-import { resolverErrorDeSesion } from "../hooks/useAuth";
+import { cerrarSesion, resolverErrorDeSesion } from "../hooks/useAuth";
 
 function sesion(token = "viejo", refreshToken = "rt-1") {
   useAuthStore.getState().setAuth(token, refreshToken, { id: "u1" });
@@ -208,4 +208,83 @@ describe("hidratación: qué pasa cuando /auth/me falla", () => {
       expect(s.setHydrated).toHaveBeenCalledWith(true);
     },
   );
+});
+
+describe("cerrar sesión revoca la familia en el SERVIDOR (A-11)", () => {
+  // Hasta el 2026-11-04 `authApi` no tenía `logout` y nadie llamaba al
+  // endpoint, así que T9 entero —jti, fam, canje único, caída de familia—
+  // existía, estaba probado en el backend y NO SERVÍA PARA NADA: cerrar sesión
+  // sólo borraba el localStorage y el refresh seguía canjeable 7 días.
+  //
+  // Se prueba `cerrarSesion`, que es el camino que `useLogout` ejecuta, NO
+  // `authApi.logout` por su cuenta: un test de lo segundo seguiría verde si
+  // alguien borrase la llamada, que es exactamente la regresión a impedir.
+
+  function dobles() {
+    return { logout: vi.fn(), qc: { clear: vi.fn() }, navigate: vi.fn() };
+  }
+
+  it("manda el refresh token a /auth/logout y limpia en local", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const d = dobles();
+
+    cerrarSesion(d);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    const [url, opciones] = fetchMock.mock.calls[0];
+    expect(url).toContain("/auth/logout");
+    expect(opciones.method).toBe("POST");
+    expect(JSON.parse(opciones.body)).toEqual({ refresh_token: "rt-1" });
+    // y el cierre local ocurre igual, sin esperar al servidor
+    expect(d.logout).toHaveBeenCalled();
+    expect(d.qc.clear).toHaveBeenCalled();
+    expect(d.navigate).toHaveBeenCalledWith("/");
+  });
+
+  it("no manda el access token: debe funcionar con el access ya caducado", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    cerrarSesion(dobles());
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    // `request` y no `authRequest`: sin cabecera Authorization. Es el contrato
+    // del endpoint, que no exige access token a propósito.
+    expect(autorizacionDe(fetchMock.mock.calls[0])).toBeUndefined();
+  });
+
+  it("un fallo de red al revocar NO impide cerrar en local", async () => {
+    // Lo que no puede pasar es que un error de red deje al usuario con la
+    // sesión abierta en el navegador. Si la promesa quedase sin capturar, este
+    // caso saldría con un unhandled rejection.
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    const d = dobles();
+
+    expect(() => cerrarSesion(d)).not.toThrow();
+    expect(d.logout).toHaveBeenCalled();
+    expect(d.qc.clear).toHaveBeenCalled();
+  });
+
+  it("sin refresh token guardado no se llama al endpoint, pero se limpia igual", async () => {
+    useAuthStore.getState().logout();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const d = dobles();
+
+    cerrarSesion(d);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(d.qc.clear).toHaveBeenCalled();
+  });
+
+  it("el 204 sin cuerpo no revienta al parsear", async () => {
+    // `request` devuelve undefined en un 204; si intentase `res.json()` el
+    // cierre acabaría en una promesa rechazada.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(null, { status: 204 })),
+    );
+    await expect(authApi.logout("rt-1")).resolves.toBeUndefined();
+  });
 });
