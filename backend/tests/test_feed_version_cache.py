@@ -373,3 +373,85 @@ async def test_el_total_de_la_version_debe_cuadrar_con_la_primera_pagina(caplog)
         "el recorrido se sirve igual; sólo no se cachea"
     )
     assert core_client._feed_cache == {}
+
+
+# --- A-03: el sello de "verificado" se gana, no se regala ------------------
+
+
+def test_un_recorrido_que_NO_cuadra_no_queda_sellado(monkeypatch):
+    """`_feed_verified_at` es el ÚNICO criterio de frescura del atajo por
+    categoría, así que sellar sin haber confirmado sirve un recorrido rancio.
+
+    El caso que NO es hipotético: `len(items) != total`. El feed no excluye
+    vacantes sin canónica a propósito mientras recuento y versión sí, de modo
+    que la discrepancia es el régimen esperado y `_remember_feed` declina.
+    """
+    from services.matching import core_client
+
+    monkeypatch.setitem(core_client._feed_cache, "p1", ("v-vieja", [], 0))
+    monkeypatch.setitem(core_client._feed_verified_at, "p1", 0.0)
+
+    cliente = core_client.CoreMatching.__new__(core_client.CoreMatching)
+    cliente._remember_feed("p1", "v-nueva", [{"x": 1}], 99)
+
+    assert core_client._feed_verified_at["p1"] == 0.0, (
+        "un recorrido que no cuadra no puede quedar sellado como fresco"
+    )
+    assert core_client._feed_cache["p1"][0] == "v-vieja", "ni sobrescribir la entrada"
+
+
+@pytest.mark.asyncio
+async def test_warm_feed_NO_sella_por_su_cuenta(monkeypatch):
+    """Esto es lo que estaba roto: `warm_feed` refrescaba el sello por el mero
+    hecho de que existiera una entrada en `_feed_cache`, no por haberla
+    confirmado. Con el calentador cada 60 s el sello se renovaba
+    indefinidamente sobre una entrada VIEJA.
+
+    Control negativo: devolviendo las tres líneas a `warm_feed`, este caso
+    encuentra el sello puesto.
+    """
+    from services.matching import core_client
+
+    monkeypatch.setattr(core_client, "_feed_cache", {"p1": ("v-vieja", [], 0)})
+    monkeypatch.setattr(core_client, "_feed_verified_at", {"p1": 0.0})
+    monkeypatch.setattr(
+        core_client, "resolve_core_profile_id", _AsyncRetorna("p1"), raising=False
+    )
+
+    cliente = core_client.CoreMatching.__new__(core_client.CoreMatching)
+    cliente._db = object()
+    cliente._client_factory = object()
+    # El recorrido ocurre pero no confirma nada: `_remember_feed` no se llama.
+    cliente._fetch_full_feed = _AsyncRetorna(([], 0))
+
+    await cliente.warm_feed(uuid.uuid4())
+
+    assert core_client._feed_verified_at["p1"] == 0.0, (
+        "calentar no es confirmar: el sello no se toca aquí"
+    )
+
+
+class _AsyncRetorna:
+    """Corrutina de pega que devuelve siempre lo mismo."""
+
+    def __init__(self, valor):
+        self._valor = valor
+
+    async def __call__(self, *a, **k):
+        return self._valor
+
+
+def test_un_recorrido_CONFIRMADO_si_queda_sellado(monkeypatch):
+    """La contraparte, que impide pasarse de celoso: si el recorrido cuadra, el
+    atajo por categoría tiene que poder usarlo o la optimización se apaga."""
+    from services.matching import core_client
+
+    monkeypatch.setattr(core_client, "_feed_cache", {})
+    monkeypatch.setattr(core_client, "_feed_verified_at", {})
+
+    cliente = core_client.CoreMatching.__new__(core_client.CoreMatching)
+    items = [{"vacancy": {"job_category": "A"}}]
+    cliente._remember_feed("p1", "v1", items, len(items))
+
+    assert core_client._feed_cache["p1"][0] == "v1"
+    assert core_client._feed_verified_at["p1"] > 0, "debe quedar sellado"
