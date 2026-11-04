@@ -109,7 +109,7 @@
 > | Orden | Ítem | Tamaño medido | Estado |
 > |---|---|---|---|
 > | **0** | **A-65** · imagen o servicio de test del BFF | 4 líneas de `requirements-dev.txt` + un servicio de compose | **Prerequisito de 2, 4 y 5** |
-> | **1** | **A-11** · `authApi.logout()` + llamada en `useLogout` | 1 método + 1 llamada + test; la suite del frontend tarda **1,2 s** | ✅ **El único corto y desbloqueado.** Resucita todo T9 |
+> | ~~1~~ | ~~**A-11** · `authApi.logout()` + llamada en `useLogout`~~ | — | ✅ **CERRADO el 2026-11-04** (`6f69f62`). Verificado extremo a extremo contra el backend: refresh 200 → logout 204 → refresh **401**. El cuerpo de `useLogout` se extrajo a `cerrarSesion()` exportada, porque un test de `authApi.logout` por su cuenta seguiría verde si alguien borrase la llamada. 5 tests nuevos, control negativo ejecutado. **Queda A-28** (el logout INVOLUNTARIO no vacía la caché de react-query) |
 > | **2** | **A-17** · rate limiter que falle ABIERTO | **~6 líneas** en un fichero de 68 | Pequeño de verdad · tras el paso 0 |
 > | **3** | **A-12** · ventana de gracia en el canje del refresh | ~15 líneas en `token_store.py` + listener de `storage` en el frontend | Toca los dos lados |
 > | **4** | **A-68** · `assert` de host en `_ensure_test_db` | ~4-8 líneas, **pero en `conftest.py`**: un error ahí pone TODA la suite en rojo | Delicado · tras el paso 0 |
