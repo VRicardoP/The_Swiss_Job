@@ -110,16 +110,15 @@ class TestP321CooldownSalud:
     async def test_fuentes_no_dependen_del_registry_local_vacio(self):
         from tasks.watchlist_tasks import _get_watchlist_sources
 
-        assert set(_get_watchlist_sources()) == {
-            "swiss_schools_ecolint",
-            "swiss_schools_hautlac",
-            "swiss_schools_inspired",
-            "swiss_schools_isb",
-            "swiss_schools_iscs",
-            "swiss_schools_isp",
-            "swiss_schools_nae",
-            "swiss_schools_zis",
-        }
+        fuentes = set(_get_watchlist_sources())
+        # Lo que este test fija es que la lista NO depende del registro local
+        # (que está vacío desde el corte de la cosecha), no cuáles son: el
+        # inventario concreto lo compara con el del núcleo
+        # `test_las_fuentes_vigiladas_son_LAS_del_nucleo`, y repetirlo aquí a
+        # mano obliga a tocar dos sitios por cada colegio nuevo — es lo que pasó
+        # al añadir `swiss_schools_vis` (A-23).
+        assert fuentes, "sin fuentes no habría nada que vigilar"
+        assert all(f.startswith("swiss_schools_") for f in fuentes)
 
     async def test_mismo_problema_no_se_renotifica(self, monkeypatch, db_session):
         from contextlib import asynccontextmanager
@@ -144,7 +143,7 @@ class TestP321CooldownSalud:
                 "el MISMO problema no debe generar otra notificación a las 6h"
             )
         else:
-            pytest.fail("las ocho fuentes sin ciclo deben producir incidencias")
+            pytest.fail("las fuentes sin ciclo deben producir incidencias")
 
     async def test_ciclo_reciente_en_core_es_saludable(self, db_session):
         from contextlib import asynccontextmanager
@@ -161,7 +160,13 @@ class TestP321CooldownSalud:
         with patch("database.task_session", new=_session):
             result = await watchlist_tasks._check_health_async(factory)
 
-        assert result == {"status": "ok", "checked": 8, "issues": 0}
+        from tasks.watchlist_tasks import _get_watchlist_sources
+
+        assert result == {
+            "status": "ok",
+            "checked": len(_get_watchlist_sources()),
+            "issues": 0,
+        }
 
 
 @pytest.mark.asyncio

@@ -36,6 +36,7 @@ _WATCHLIST_SOURCES = (
     "swiss_schools_iscs",
     "swiss_schools_isp",
     "swiss_schools_nae",
+    "swiss_schools_vis",
     "swiss_schools_zis",
 )
 
@@ -81,14 +82,28 @@ async def _core_watchlist_health(client_factory=None) -> list[_CoreSourceHealth]
     if client_factory is None and not settings.CORE_CONSUMER_KEY:
         raise RuntimeError("CORE_CONSUMER_KEY no configurada")
     async with factory() as client:
-        return list(
-            await asyncio.gather(
-                *(
-                    _read_core_source_health(client, source)
-                    for source in _WATCHLIST_SOURCES
-                )
-            )
+        # A-22: `gather` sin `return_exceptions` abortaba la comprobación de
+        # TODAS las fuentes en cuanto UNA fallaba —un 404 de una fuente no
+        # registrada, un 5xx, un timeout—, así que el monitor podía llevar
+        # meses sin comprobar nada con una sola fuente rota. Se comprueba lo
+        # comprobable y se devuelve aparte lo que no se pudo comprobar, que es
+        # información distinta de «esta fuente está mal».
+        resultados = await asyncio.gather(
+            *(
+                _read_core_source_health(client, source)
+                for source in _WATCHLIST_SOURCES
+            ),
+            return_exceptions=True,
         )
+
+    salud: list[_CoreSourceHealth] = []
+    ilegibles: list[tuple[str, BaseException]] = []
+    for source, resultado in zip(_WATCHLIST_SOURCES, resultados, strict=True):
+        if isinstance(resultado, BaseException):
+            ilegibles.append((source, resultado))
+        else:
+            salud.append(resultado)
+    return salud, ilegibles
 
 
 # Umbral de fuente silenciosa: si lleva más de N horas sin ciclo completo.
@@ -108,14 +123,27 @@ _DIGEST_WATERMARK_KEY = "watchlist_digest:watermark"
 _DIGEST_SENT_PREFIX = "watchlist_digest:sent"
 
 
-@celery_app.task(name="tasks.watchlist.check_health")
-def check_watchlist_health() -> dict[str, Any]:
-    """Comprueba que las fuentes de la watchlist están operativas en Core."""
+@celery_app.task(bind=True, name="tasks.watchlist.check_health")
+def check_watchlist_health(self) -> dict[str, Any]:
+    """Comprueba que las fuentes de la watchlist están operativas en Core.
+
+    A-22: antes el `except` devolvía `{"status": "error", ...}` y Celery marcaba
+    la tarea SUCCEEDED. Nadie consume ese dict, así que el ÚNICO rastro de que
+    el monitor no pudo monitorizar era una línea de log: podía llevar meses
+    caído con el semáforo en verde, que es exactamente el falso verde que esta
+    tarea existe para evitar en las fuentes.
+
+    Ahora re-lanza. Que la tarea aparezca FAILED es la señal, y no hay que
+    consumir ningún valor de retorno para verla. Con `bind=True` quedaría además
+    la vía del `self.retry` si algún día se quiere reintentar; no se pone hoy
+    porque la cita es cada 6 h y un fallo transitorio se resuelve solo en la
+    siguiente — reintentar añadiría ruido sin añadir cobertura.
+    """
     try:
         return asyncio.run(_check_health_async())
     except Exception as exc:
         logger.error("check_watchlist_health failed: %s", exc)
-        return {"status": "error", "error": str(exc)}
+        raise
 
 
 async def _check_health_async(client_factory=None) -> dict[str, Any]:
@@ -124,7 +152,19 @@ async def _check_health_async(client_factory=None) -> dict[str, Any]:
     issues: list[dict] = []
     now = datetime.now(timezone.utc)
     threshold = now - timedelta(hours=_SILENT_HOURS)
-    sources = await _core_watchlist_health(client_factory)
+    sources, ilegibles = await _core_watchlist_health(client_factory)
+
+    # A-22: una fuente que no se pudo CONSULTAR es un problema distinto de una
+    # fuente que está mal, y antes se las comía el `gather`. Se reportan como
+    # incidencia propia para que «no lo sé» no se lea como «está bien».
+    for source, exc in ilegibles:
+        issues.append(
+            {
+                "source": source,
+                "kind": "unreadable",
+                "detail": f"no se pudo consultar su salud en Core: {exc}",
+            }
+        )
 
     async with task_session() as db:
         # Fuentes de la watchlist con problemas según su autoridad única.
