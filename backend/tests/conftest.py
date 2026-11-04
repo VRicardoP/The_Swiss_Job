@@ -1,3 +1,4 @@
+import os
 import uuid
 import runpy
 from pathlib import Path
@@ -34,6 +35,51 @@ settings.FEED_WARMUP_ENABLED = False
 # Use a separate test database to avoid wiping production data
 _base_url = settings.DATABASE_URL.rsplit("/", 1)[0]
 _test_db_url = _base_url + "/swissjobhunter_test"
+
+# A-68 — el NOMBRE de la base estaba garantizado; el SERVIDOR no.
+#
+# Las dos líneas de arriba derivan la base de test cambiando ÚNICAMENTE el
+# nombre, y `_ensure_test_db` abre además un motor admin contra
+# `…/swissjobhunter` del MISMO servidor. No había ninguna aserción sobre el
+# host, así que un `.env` apuntando al NAS bastaba para que el teardown hiciera
+# `TRUNCATE … CASCADE` sobre la base de PRODUCCIÓN. `CLAUDE.md` afirmaba «tests
+# siempre contra swissjobhunter_test — nunca contra producción» y sólo la mitad
+# era cierta.
+#
+# No es hipotético: la memoria del proyecto registra que la base de producción
+# YA fue truncada una vez por el teardown de los tests, y de ahí nació la base
+# separada. Esta guarda cierra el otro eje del mismo accidente.
+#
+# Se comprueba el HOST, no la URL completa, porque es el único dato que
+# distingue «mi portátil» de «el NAS». Los tres hosts permitidos son los que
+# usan los tres caminos legítimos: el venv del host (127.0.0.1), el CI
+# (localhost) y el contenedor (el nombre de servicio `postgres`).
+_HOSTS_DE_PRUEBA_PERMITIDOS = frozenset({"localhost", "127.0.0.1", "::1", "postgres"})
+
+
+def _host_de(url: str) -> str:
+    """El host de una URL de SQLAlchemy, sin credenciales ni puerto."""
+    from urllib.parse import urlsplit
+
+    # `urlsplit` no entiende `postgresql+asyncpg://`; el `+driver` no afecta al
+    # netloc, así que se recorta antes de parsear.
+    sin_driver = url.replace("+asyncpg", "", 1).replace("+psycopg2", "", 1)
+    return (urlsplit(sin_driver).hostname or "").lower()
+
+
+_host_objetivo = _host_de(settings.DATABASE_URL)
+if (
+    _host_objetivo not in _HOSTS_DE_PRUEBA_PERMITIDOS
+    and os.getenv("ALLOW_NONLOCAL_TEST_DB") != "1"
+):
+    raise RuntimeError(
+        f"La suite iba a crear y TRUNCAR bases en el servidor '{_host_objetivo}', "
+        f"que no es local. El teardown hace TRUNCATE ... CASCADE, así que esto "
+        f"destruiría datos si fuese producción.\n"
+        f"Hosts permitidos: {sorted(_HOSTS_DE_PRUEBA_PERMITIDOS)}.\n"
+        f"Si de verdad quieres correr contra '{_host_objetivo}', ponlo por "
+        f"escrito con ALLOW_NONLOCAL_TEST_DB=1."
+    )
 
 test_engine = create_async_engine(_test_db_url, poolclass=NullPool)
 TestSessionLocal = async_sessionmaker(
