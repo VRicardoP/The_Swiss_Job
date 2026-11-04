@@ -12,7 +12,14 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { authApi, endsSession, profileApi, searchesApi } from "./api";
+import {
+  TECHO_POR_DEFECTO_MS,
+  authApi,
+  conTecho,
+  endsSession,
+  profileApi,
+  searchesApi,
+} from "./api";
 import { registrarVaciadoDeSesion } from "./sessionTeardown";
 import useAuthStore, { manejarCambioDeAlmacen } from "../stores/authStore";
 import { cerrarSesion, resolverErrorDeSesion } from "../hooks/useAuth";
@@ -423,4 +430,75 @@ describe("el cierre INVOLUNTARIO también vacía la caché (A-28)", () => {
     expect(useAuthStore.getState().token).toBe("viejo");
     expect(vaciados).toEqual([]);
   });
+});
+
+describe("toda petición tiene techo (A-26)", () => {
+  // Antes NINGUNA lo tenía: `grep -rn "AbortController|signal|timeout"` no
+  // devolvía nada. Y los techos del servidor son altísimos —gunicorn mata al
+  // worker a los 420 s y nginx espera 3600 s—, así que un upstream que no
+  // contesta dejaba el spinner girando hasta una hora.
+  //
+  // Control negativo: quitando `conTecho` de `request`, el primer caso no ve
+  // ningún `signal` en la llamada a fetch.
+
+  function señalDe(llamada) {
+    return llamada[1]?.signal;
+  }
+
+  it("request manda un AbortSignal", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await authApi.login("a@b.c", "x");
+
+    const señal = señalDe(fetchMock.mock.calls[0]);
+    expect(señal).toBeInstanceOf(AbortSignal);
+    expect(señal.aborted).toBe(false);
+  });
+
+  it("la subida de CV también, que es la vía cruda", async () => {
+    // `authFetch` es el camino de multipart y blob, y es el más propenso a
+    // quedarse colgado: sube un fichero.
+    sesion();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await profileApi.uploadCV(new Blob(["x"]));
+
+    expect(señalDe(fetchMock.mock.calls[0])).toBeInstanceOf(AbortSignal);
+  });
+
+  it("el techo DISPARA de verdad pasado el plazo", async () => {
+    // Lo que importa: que el reloj corte. Se prueba sobre `conTecho` porque
+    // casi ningún método del API expone sus `options` —`searchesApi.list(params)`
+    // convierte lo que le pases en querystring—, así que desde fuera no hay
+    // forma de forzar un plazo corto. La primera versión de este test pasaba
+    // `timeoutMs` como parámetro de query y se quedaba esperando los 5 s del
+    // arnés sin probar nada.
+    const { signal } = conTecho({}, 5);
+    expect(signal.aborted).toBe(false);
+
+    await new Promise((r) => setTimeout(r, 30));
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("respeta el `signal` del llamador ADEMÁS del reloj", async () => {
+    // Si algún día se propaga el signal de react-query (la mitad de A-26 que
+    // queda), cancelar al desmontar no puede perder el techo ni al revés.
+    const propio = new AbortController();
+    const { signal } = conTecho({ signal: propio.signal }, 60_000);
+
+    propio.abort();
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("el techo por defecto es holgado respecto al recorrido más lento medido", () => {
+    // La cota que no se puede romper: el recorrido completo del feed mide
+    // 47,5 s en frío (CLAUDE.md). Un techo por debajo rompería la rama de
+    // respaldo del limit=3000, que es justo lo que no se puede romper.
+    expect(TECHO_POR_DEFECTO_MS).toBeGreaterThan(47_500 * 2);
+  });
+
 });

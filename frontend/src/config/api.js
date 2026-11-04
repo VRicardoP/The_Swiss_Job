@@ -3,6 +3,49 @@ import { vaciarEstadoDeSesion } from "./sessionTeardown";
 
 const BASE = "/api/v1";
 
+/**
+ * A-26 — toda petición tiene techo. Antes NINGUNA lo tenía.
+ *
+ * `grep -rn "AbortController|signal|timeout" frontend/src/` no devolvía nada, así
+ * que una petición colgada dejaba el spinner girando indefinidamente y no había
+ * forma de cortarla. Y no es teórico: los techos del servidor son muy altos —
+ * gunicorn mata al worker a los **420 s** y nginx espera hasta **3600 s**
+ * (`proxy_read_timeout`)—, de modo que un upstream que no contesta tiene al
+ * usuario mirando una rueda hasta una hora.
+ *
+ * El valor se eligió con las dos cotas medidas, no a ojo:
+ *
+ *   - el camino legítimo MÁS LENTO que el proyecto ha medido es el recorrido
+ *     completo del feed en frío: **47,5 s** (CLAUDE.md, «Rendimiento del feed
+ *     servido»). Un timeout por debajo de eso rompería la rama de respaldo del
+ *     `limit=3000`, que es justo lo que no se puede romper.
+ *   - el techo de nginx son 3600 s, que es lo que hay que dejar de esperar.
+ *
+ * 120 s es 2,5× el peor camino conocido y 1/30 del techo del proxy: convierte
+ * una hora de rueda en un error que la interfaz puede pintar, sin tocar ningún
+ * recorrido real. Se puede subir por llamada con `timeoutMs` donde haga falta.
+ */
+const TIMEOUT_POR_DEFECTO_MS = 120_000;
+
+export const TECHO_POR_DEFECTO_MS = TIMEOUT_POR_DEFECTO_MS;
+
+// Exportada para poder probarla: casi ningún método del API expone sus
+// `options`, así que desde fuera no hay forma de forzar un plazo corto. Es el
+// mismo motivo por el que `cerrarSesion` y `manejarCambioDeAlmacen` viven
+// fuera de su hook.
+export function conTecho(init = {}, timeoutMs = TIMEOUT_POR_DEFECTO_MS) {
+  // Si el llamador ya trae su propio `signal` se respetan los DOS: el suyo para
+  // cancelar y el del reloj para no esperar indefinidamente. `AbortSignal.any`
+  // no está en todos los navegadores que este bundle soporta, así que se
+  // comprueba antes en vez de darlo por hecho.
+  const reloj = AbortSignal.timeout(timeoutMs);
+  if (!init.signal) return { ...init, signal: reloj };
+  if (typeof AbortSignal.any === "function") {
+    return { ...init, signal: AbortSignal.any([init.signal, reloj]) };
+  }
+  return init;
+}
+
 // C6: los únicos estados que significan «esta credencial ya no vale». Un 500,
 // un 502 o un corte de red NO terminan la sesión: antes, cualquier error la
 // cerraba y un fallo transitorio echaba al usuario.
@@ -86,21 +129,31 @@ async function renovarSesion() {
 // entera (multipart, blob): sin esto, la sesión se caía a los 30 min justo en
 // una subida de CV o una descarga de .ics.
 async function authFetch(url, init = {}, _reintentado = false) {
-  const res = await fetch(url, {
-    ...init,
-    headers: { ...getAuthHeaders(), ...init.headers },
-  });
+  const { timeoutMs, ...resto } = init;
+  const res = await fetch(
+    url,
+    conTecho(
+      { ...resto, headers: { ...getAuthHeaders(), ...resto.headers } },
+      timeoutMs,
+    ),
+  );
   if (res.status !== 401 || _reintentado) return res;
   if (!(await renovarSesion())) return res;
   return authFetch(url, init, true);
 }
 
 async function request(path, options = {}) {
-  const { headers: optHeaders, raw, ...rest } = options;
-  const res = await fetch(`${BASE}${path}`, {
-    ...rest,
-    headers: { "Content-Type": "application/json", ...optHeaders },
-  });
+  const { headers: optHeaders, raw, timeoutMs, ...rest } = options;
+  const res = await fetch(
+    `${BASE}${path}`,
+    conTecho(
+      {
+        ...rest,
+        headers: { "Content-Type": "application/json", ...optHeaders },
+      },
+      timeoutMs,
+    ),
+  );
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     const detail = body.detail;
