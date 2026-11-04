@@ -39,7 +39,8 @@ const STRONG_SCORE = 70;
 const PAGE_SIZE = 50;
 
 export default function MatchPage() {
-  const { data: profile, isLoading: profileLoading } = useProfile();
+  const { data: profile, isLoading: profileLoading, isError: profileError } =
+    useProfile();
   const [activeCategory, setActiveCategory] = useState(null);
   const [categoryOffset, setCategoryOffset] = useState(0);
   const facetsQuery = useMatchFacets();
@@ -242,7 +243,12 @@ export default function MatchPage() {
       />
 
       {/* CV warning */}
-      {!profileLoading && !hasCvEmbedding && (
+      {/* A-31: `profileError` en la condición. Sin él, un fallo al cargar el
+          perfil dejaba `hasCvEmbedding` en undefined y se pintaba «Upload your
+          CV to unlock AI matching» a quien YA tiene CV subido — un error
+          disfrazado de instrucción, que manda al usuario a repetir algo que ya
+          hizo. */}
+      {!profileLoading && !profileError && !hasCvEmbedding && (
         <div
           className={cn(
             "mt-6 flex items-start gap-3 rounded-xl border border-warning-border bg-warning-light p-4",

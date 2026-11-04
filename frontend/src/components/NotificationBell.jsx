@@ -11,7 +11,12 @@ export default function NotificationBell() {
   const { unreadCount, resetCount } = useNotificationSSE();
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef(null);
-  const { data: notifications } = useNotificationHistory({ limit: 10 });
+  // A-31: sin `isError`, un fallo de red se pintaba como «No notifications
+  // yet». Aquí el hueco es una lista pequeña dentro de un desplegable, así que
+  // se distingue con una línea propia en vez de con `QueryState`, que traería
+  // su propia tarjeta.
+  const { data: notifications, isError: errorNotificaciones } =
+    useNotificationHistory({ limit: 10 });
   const markRead = useMarkRead();
 
   useEffect(() => {
@@ -121,6 +126,15 @@ export default function NotificationBell() {
                   </span>
                 </button>
               ))
+            ) : errorNotificaciones ? (
+              <div
+                role="alert"
+                className="flex flex-col items-center gap-2 px-3.5 py-8 text-center"
+              >
+                <p className="text-sm text-error">
+                  No se pudieron cargar las notificaciones
+                </p>
+              </div>
             ) : (
               <div className="flex flex-col items-center gap-2 px-3.5 py-8 text-center">
                 <Inbox className="h-6 w-6 text-text-quaternary" aria-hidden="true" />
