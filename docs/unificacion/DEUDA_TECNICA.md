@@ -107,6 +107,7 @@
 > | **A-19** overlay escolar sin invalidar entre workers | `1d0af3f` | Faltaban las DOS mitades del camino |
 > | **A-47 + A-46 + A-44 + A-45** inyección de ICS, fuga de Redis, garantía falsa y mando sin lector | `9b11996` | A-44 se cerró **corrigiendo el comentario**, no construyendo la re-derivación que nadie pidió |
 > | **A-31 + A-27** el fallo de red se pintaba como vacío | `6fc331a` | **Siete** sitios, no uno. Cierra la mitad abierta de DT-148 A18-03, y A-27 era un **PUT destructivo** sobre el perfil real |
+> | **A-64 + A-33** tests huérfanos y el guard de CC 80 | `b171ad5` | **El grado F desaparece del repo.** Y los seis huérfanos eran cuatro cosas distintas: uno RANCIO, uno que no era pytest, tres opt-in y uno que pasaba |
 >
 > Suites: **705 backend** (eran 669) y **78 frontend** (eran 63). Ruff limpio.
 >
@@ -114,12 +115,10 @@
 >
 > | Orden | Ítem | Nota |
 > |---|---|---|
-> | **1** | **A-64** · los seis tests huérfanos de `scripts/` al CI | Dos son de CONTRATO. Y `split_core_workers.py`, que `deploy_nas.sh` invoca, perdió su test en `1f415d3` |
-> | **2** | **A-33** · `check_source_ownership.py:242` con **CC 80** | El peor número del repo, paso 1 del CI y primera línea de `deploy_nas.sh`, **sin un solo test** |
-> | **3** | **A-32** · `native_json.py`, segundo fichero con MI C | Contradice la premisa de DT-148 D1 |
-> | **4** | **A-26** · cero timeouts y cero cancelación en el frontend | Ningún `queryFn` recibe el `signal` que react-query le pasa, y `retry: 1` DUPLICA toda petición fallida |
-> | **5** | **A-70** · los ratchets del manifiesto se desactivan solos | El default de `.get()` es el valor ACTUAL: borrar la clave hace pasar siempre |
-> | **6** | **A-66** · `check_compose_exposure.py` busca UN literal quemado | Se le cuelan dos credenciales por defecto en nueve sitios del compose base |
+> | **1** | **A-32** · `native_json.py`, segundo fichero con MI C | Contradice la premisa de DT-148 D1. Extraer las ramas por fuente a un módulo hermano |
+> | **2** | **A-70** · los ratchets del manifiesto se desactivan solos | El default de `.get()` es el valor ACTUAL. **Ya hay un test que lo DOCUMENTA** en `test_check_source_ownership.py`: al arreglarlo, ese test cambia de sentido y avisa |
+> | **3** | **A-26** · cero timeouts y cero cancelación en el frontend | Ningún `queryFn` recibe el `signal` que react-query le pasa, y `retry: 1` DUPLICA toda petición fallida |
+> | **4** | **A-66** · `check_compose_exposure.py` busca UN literal quemado | Se le cuelan dos credenciales por defecto en nueve sitios del compose base. Mismo error de diseño que A-02: valores en vez de formas |
 > | **7** | **A-35, A-36, A-37, A-38, A-39** · paginación de guardados, chips muertos, etiquetas sin asociar, foco del modal, contraste | Frontend, acotados, sin riesgo |
 > | **8** | **A-21** · escritor latente de `match_results` | Decidir si la rama local sigue siendo camino de rollback |
 >

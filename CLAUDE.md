@@ -308,19 +308,21 @@ solape que lleva más de 7 d sin cerrar.
   cada uno, 23 en grado D», del 2026-10-20) **llevaba fecha y aun así mentía en
   las dos direcciones**:
 
-  | | Decía | Es (2026-11-02) |
-  |---|---|---|
-  | Grado **F** | no lo mencionaba | **1** — `scripts/check_source_ownership.py:242 validate` = **CC 80** |
-  | Grado E | 2 (myscience + schuljobs) | **1** — sólo `native_schuljobs.fetch_new` (32) |
-  | Grado D | 23 | **20** en código vivo (`native_myscience.fetch_new` es D(30), no E) |
+  | | Decía (2026-10-20) | Era (2026-11-02) | Es (2026-11-04) |
+  |---|---|---|---|
+  | Grado **F** | no lo mencionaba | **1** — `check_source_ownership.py validate` = **CC 80** | **0** ✅ |
+  | Grado E | 2 (myscience + schuljobs) | **1** — sólo `native_schuljobs.fetch_new` (32) | **1** |
+  | Grado D | 23 | **20** | **25** (el reparto de `validate`) |
 
-  Reparto total del repo: 3.729 A · 584 B · 209 C · 24 D · 1 E · 1 F.
-  **Lo que importa es el F omitido**: `validate` es la función más compleja del
-  repositorio con diferencia (la siguiente es 32), corre como **paso 1 del CI** y
-  es la primera línea de `deploy_nas.sh`, **no tiene ni un test**, y **ninguna
-  cota la ampara** (la A19-13 se quedó sin objeto al retirarse las herramientas
-  de la Fase E en P3 de DT-145). Quien leyera el párrafo anterior concluía que no
-  había nada peor que un E.
+  Reparto actual: **3.822 A · 590 B · 212 C · 25 D · 1 E · 0 F**.
+
+  **El grado F se cerró el 2026-11-04** (A-33): `validate` se partió en seis
+  familias de invariante y pasó de CC 80 a D(28) como peor caso, con salida
+  byte-idéntica y **24 tests de caracterización** donde no había ninguno. Era la
+  función más compleja del repositorio con diferencia, corría como **paso 1 del
+  CI** y como primera línea de `deploy_nas.sh`, y **ninguna cota la amparaba**
+  (la A19-13 se quedó sin objeto al retirarse las herramientas de la Fase E en
+  P3 de DT-145). El único E que queda es `SchulJobsProvider.fetch_new`.
 
   **Y `matching.py` NO es el único fichero con mantenibilidad C**, como afirmaban
   este fichero y `DT148_RELEVO.md` §4: `harvest/providers/native_json.py` es
