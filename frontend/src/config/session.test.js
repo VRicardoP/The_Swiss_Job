@@ -13,7 +13,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { authApi, endsSession, profileApi, searchesApi } from "./api";
-import useAuthStore from "../stores/authStore";
+import { registrarVaciadoDeSesion } from "./sessionTeardown";
+import useAuthStore, { manejarCambioDeAlmacen } from "../stores/authStore";
 import { cerrarSesion, resolverErrorDeSesion } from "../hooks/useAuth";
 
 function sesion(token = "viejo", refreshToken = "rt-1") {
@@ -286,5 +287,140 @@ describe("cerrar sesión revoca la familia en el SERVIDOR (A-11)", () => {
       vi.fn().mockResolvedValue(new Response(null, { status: 204 })),
     );
     await expect(authApi.logout("rt-1")).resolves.toBeUndefined();
+  });
+});
+
+describe("tokens rotados por OTRA pestaña (A-12)", () => {
+  // El store leía localStorage UNA sola vez, al cargarse el módulo, y nunca
+  // volvía a mirar. Pero el almacén es compartido y el refresh ROTA: cuando la
+  // pestaña A refresca, B se queda con el viejo EN MEMORIA y al caducar su
+  // access lo presenta. El servidor lo ve reaparecer, no puede saber si es un
+  // ladrón, y caía la familia: las dos pestañas fuera.
+  //
+  // El arnés corre sin DOM (A-69), así que se simula `localStorage` y se llama
+  // al manejador exportado en vez de despachar un evento real.
+  //
+  // Control negativo: quitando `sincronizarDesdeAlmacen()` de `refreshSession`,
+  // el primer caso presenta el token rancio y falla.
+
+  function almacenSimulado(inicial = {}) {
+    const datos = { ...inicial };
+    vi.stubGlobal("localStorage", {
+      getItem: (k) => (k in datos ? datos[k] : null),
+      setItem: (k, v) => {
+        datos[k] = String(v);
+      },
+      removeItem: (k) => {
+        delete datos[k];
+      },
+    });
+    return datos;
+  }
+
+  it("el refresh usa el token que dejó la otra pestaña, no el de memoria", async () => {
+    sesion("viejo", "rt-rancio");
+    // La otra pestaña ya rotó: el almacén lleva el nuevo y la memoria el viejo.
+    almacenSimulado({ swissjob_refresh_token: "rt-de-la-otra-pestana" });
+    expect(useAuthStore.getState().refreshToken).toBe("rt-rancio");
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ detail: "expired" }, { status: 401 }))
+      .mockResolvedValueOnce(
+        Response.json({
+          access_token: "nuevo",
+          refresh_token: "rt-3",
+          user: { id: "u1" },
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({ data: [], total: 0 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await searchesApi.list();
+
+    const cuerpoDelRefresh = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(cuerpoDelRefresh.refresh_token).toBe("rt-de-la-otra-pestana");
+  });
+
+  it("el cambio de almacén rehidrata el store", () => {
+    sesion("viejo", "rt-1");
+    almacenSimulado({
+      swissjob_token: "token-de-la-otra",
+      swissjob_refresh_token: "rt-de-la-otra",
+    });
+
+    manejarCambioDeAlmacen({ key: "swissjob_token" });
+
+    expect(useAuthStore.getState().token).toBe("token-de-la-otra");
+    expect(useAuthStore.getState().refreshToken).toBe("rt-de-la-otra");
+  });
+
+  it("una clave ajena NO rehidrata nada", () => {
+    sesion("viejo", "rt-1");
+    almacenSimulado({ swissjob_token: "no-deberia-leerse" });
+
+    manejarCambioDeAlmacen({ key: "otra_cosa" });
+
+    expect(useAuthStore.getState().token).toBe("viejo");
+  });
+
+  it("sin localStorage no revienta ni pisa la memoria", () => {
+    // El entorno sin DOM es el del propio arnés, y antes del refactor dejaba
+    // esta función inerte para siempre por capturar el almacén al importar.
+    sesion("viejo", "rt-1");
+    useAuthStore.getState().sincronizarDesdeAlmacen();
+    expect(useAuthStore.getState().token).toBe("viejo");
+  });
+});
+
+describe("el cierre INVOLUNTARIO también vacía la caché (A-28)", () => {
+  // `useLogout` hacía `qc.clear()` y promete que «nada de la sesión que acaba
+  // sobrevive a su cierre». El cierre involuntario —cuando el propio refresh
+  // devuelve 401/403— iba por otro camino y dejaba la caché dentro: matches,
+  // perfil, guardados, notificaciones y borradores de la cuenta que salía,
+  // visibles para la siguiente cuenta en el mismo navegador durante su
+  // staleTime de 2 min.
+  //
+  // Control negativo: quitando `queryClient.clear()` de `renovarSesion`, este
+  // caso encuentra el dato de la cuenta anterior todavía en la caché.
+
+  it("un refresh rechazado con 401 deja la caché VACÍA", async () => {
+    sesion("viejo", "rt-1");
+    const vaciados = [];
+    registrarVaciadoDeSesion(() => vaciados.push("vaciado"));
+
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(Response.json({ detail: "expired" }, { status: 401 }))
+        .mockResolvedValueOnce(Response.json({ detail: "invalid" }, { status: 401 })),
+    );
+
+    await expect(searchesApi.list()).rejects.toThrow();
+
+    expect(useAuthStore.getState().token).toBeNull();
+    expect(vaciados).toEqual(["vaciado"]);
+  });
+
+  it("un fallo TRANSITORIO no vacía la caché", async () => {
+    // La contraparte que impide pasarse de celoso: un 500 o un corte de red no
+    // terminan la sesión, así que tampoco pueden tirar los datos.
+    sesion("viejo", "rt-1");
+    const vaciados = [];
+    registrarVaciadoDeSesion(() => vaciados.push("vaciado"));
+
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(Response.json({ detail: "expired" }, { status: 401 }))
+        .mockResolvedValueOnce(Response.json({ detail: "boom" }, { status: 500 })),
+    );
+
+    await expect(searchesApi.list()).rejects.toThrow();
+
+    expect(useAuthStore.getState().token).toBe("viejo");
+    expect(vaciados).toEqual([]);
   });
 });

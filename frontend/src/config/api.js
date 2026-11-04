@@ -1,4 +1,5 @@
 import useAuthStore from "../stores/authStore";
+import { vaciarEstadoDeSesion } from "./sessionTeardown";
 
 const BASE = "/api/v1";
 
@@ -26,6 +27,11 @@ let refreshing = null;
 function refreshSession() {
   if (!refreshing) {
     refreshing = (async () => {
+      // A-12: releer el almacén ANTES de canjear. El listener de `storage`
+      // rehidrata lo que rotó otra pestaña, pero el evento es asíncrono y hay
+      // una ventana en la que la memoria sigue rancia; aquí se cierra. Presentar
+      // un token ya canjeado es lo que el servidor lee como robo.
+      useAuthStore.getState().sincronizarDesdeAlmacen();
       const rt = useAuthStore.getState().refreshToken;
       if (!rt) {
         const err = new Error("sin refresh token");
@@ -61,7 +67,17 @@ async function renovarSesion() {
     await refreshSession();
     return true;
   } catch (err) {
-    if (err.sessionEnded) useAuthStore.getState().logout();
+    if (err.sessionEnded) {
+      // A-28: este camino borraba los tokens y dejaba la caché DENTRO. Los
+      // matches, el perfil, los guardados, las notificaciones y los borradores
+      // de la cuenta que acababa de salir seguían ahí con su staleTime de 2
+      // min, y en una webapp multiusuario la siguiente cuenta en el mismo
+      // navegador los veía. `useLogout` sí la vaciaba, y su comentario promete
+      // que «nada de la sesión que acaba sobrevive a su cierre»: ahora la
+      // promesa vale para los DOS caminos.
+      useAuthStore.getState().logout();
+      vaciarEstadoDeSesion();
+    }
     return false;
   }
 }
