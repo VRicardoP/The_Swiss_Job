@@ -85,41 +85,52 @@
 >   razonamiento suponía. Su mitad real y accionable es el **1,15 M de filas** de
 >   `saved_search_observations`, sin purga ni TTL.
 >
-> ### Lo siguiente, por orden — RE-MEDIDO el 2026-11-03
+> ### Estado de ejecución — actualizado el 2026-11-04
 >
-> **Aviso sobre la versión anterior de esta lista.** Estaba ordenada por
-> severidad y daba a entender que los puntos 2-8 eran todos cortos y
-> encadenables. Al medirlos, **no**: uno está bloqueado como el 1, otro no es
-> tarea de código, y **faltaba un prerequisito que esta misma auditoría había
-> encontrado**. Una estimación equivocada en un plan es deuda igual que el
-> código, así que queda corregida y dicha.
+> **Cerrados en esta sesión, con su commit.** Diez hallazgos, todos con control
+> negativo ejecutado:
 >
-> **PASO 0 · A-65 es PREREQUISITO de todo lo de `backend/`.**
-> `docker compose exec -T backend python -m pytest` →
-> **`ModuleNotFoundError: No module named 'pytest'`**, y
-> `check_source_ownership.py:89-96` **prohíbe** devolver `pytest`/`ruff` a
-> `backend/requirements.txt`, así que no es un descuido reversible. Hasta
-> resolverlo **ningún cliente puede verificar un cambio del BFF**. Hacerlo bien
-> una vez (servicio `backend-dev` con `requirements-dev.txt`, 4 líneas) es más
-> barato que layerear una imagen a mano en cada tanda.
+> | Hallazgo | Commit | Nota |
+> |---|---|---|
+> | **A-01** `/match` en blanco | `1530fdc` | Verificado en el bundle SERVIDO |
+> | **A-02** credencial publicada (árbol + guard + CI) | `dd2a125` | La **rotación sigue siendo del propietario** — ver arriba |
+> | **A-65** entorno de test del BFF | `6aa8998` | **Ni imagen ni compose**: venv que replica el CI. 2m40s frente a 10-12 min |
+> | **A-11** `logout` que no revocaba | `6f69f62` | Verificado extremo a extremo: refresh 200 → logout 204 → refresh 401 |
+> | **A-17** Redis caído = 500 en toda la API | `24620bb` | `swallow_errors` solo NO bastaba; hizo falta `in_memory_fallback_enabled` |
+> | **A-68** la suite no garantizaba el SERVIDOR | `1d38403` | Cuatro escenarios verificados ejecutando |
+> | **A-13 + A-18** bomba de descompresión y firma del CV | `84f1e42` | Tres guardas en el cuello único |
+> | **A-12 + A-43** carrera de refresh y rama caducada | `32c839c`, `2bf688d` | La mitad del cliente es la que EVITA la carrera |
+> | **A-28** el logout involuntario no vaciaba la caché | `2bf688d` | Vía registro, para que `api.js` no dependa de react-query |
+> | **A-22 + A-23** monitor en falso verde y fuente que faltaba | `496acc8` | Con guard de deriva contra la lista del núcleo |
+> | **A-20** modelo de Groq decomisado | `74dbf94` | Lo que cierra el hallazgo es el DIAGNÓSTICO, no el `raise` |
+> | **A-03** sello de «verificado» regalado | `d44f07a` | Restaura la cuarta cota de la caché del feed |
+> | **A-19** overlay escolar sin invalidar entre workers | `1d0af3f` | Faltaban las DOS mitades del camino |
 >
-> **Y cada corrida de la suite son 10-12 min**, lo que manda el agrupamiento: los
-> ítems de `backend/` van **en una tanda con una sola corrida al final**.
+> Suites: **705 backend** (eran 669) y **78 frontend** (eran 63). Ruff limpio.
 >
-> | Orden | Ítem | Tamaño medido | Estado |
-> |---|---|---|---|
-> | ~~0~~ | ~~**A-65** · entorno de test del BFF~~ | — | ✅ **CERRADO** (`6aa8998`). **Ni imagen ni compose**: se replica lo que hace el CI —venv en el host, `pip install -r backend/requirements-dev.txt`, pytest nativo—. Un verde local implica un verde en CI porque es el mismo comando, trae `ruff` 0.15.14 de paso, y tarda **2m40s en vez de 10-12 min**. Las 4 condiciones están en `CLAUDE.md` |
-> | ~~1~~ | ~~**A-11** · `authApi.logout()` + llamada en `useLogout`~~ | — | ✅ **CERRADO el 2026-11-04** (`6f69f62`). Verificado extremo a extremo contra el backend: refresh 200 → logout 204 → refresh **401**. El cuerpo de `useLogout` se extrajo a `cerrarSesion()` exportada, porque un test de `authApi.logout` por su cuenta seguiría verde si alguien borrase la llamada. 5 tests nuevos, control negativo ejecutado. **Queda A-28** (el logout INVOLUNTARIO no vacía la caché de react-query) |
-> | ~~2~~ | ~~**A-17** · rate limiter que falle ABIERTO~~ | — | ✅ **CERRADO** (`24620bb`). El middleware falla abierto con ERROR en el log; las rutas DECORADAS conservan su límite contando EN MEMORIA (`in_memory_fallback_enabled`). **`swallow_errors` solo NO bastaba** y hubo que medirlo: slowapi traga el error pero el decorador lee `request.state.view_rate_limit` sin guarda → 500 igual |
-> | ~~1~~ | ~~**A-12** · ventana de gracia en el canje del refresh~~ | — | ✅ **CERRADO** (`32c839c` servidor, `2bf688d` cliente). Gracia de 20 s (`REFRESH_GRACE_SECONDS`, 0 desactiva) con tres condiciones; **continúa la cadena** en vez de emitir un hermano, para conservar el invariante de un solo refresh vivo por familia. En el cliente, listener de `storage` + relectura del almacén antes de canjear, que es lo que de verdad evita la carrera |
-> | ~~—~~ | ~~**A-43** · retirar la rama de refresh sin `jti`~~ | — | ✅ **CERRADO** (`32c839c`). Su ventana caducó el 2026-10-02 y **no implementaba su garantía**: el test comprobaba que se acepta, no que la segunda vez se rechace |
-> | ~~—~~ | ~~**A-28** · el logout involuntario no vaciaba la caché~~ | — | ✅ **CERRADO** (`2bf688d`) vía registro en `config/sessionTeardown.js`, para que `api.js` NO dependa de react-query (el primer intento, un módulo con el QueryClient, lo descartó la ejecución). **Queda abierto** el `userId` en las claves de react-query: con los dos cierres vaciando, es defensa en profundidad y no un bug vivo |
-> | ~~4~~ | ~~**A-68** · `assert` de host~~ | — | ✅ **CERRADO** (`1d38403`). Comprueba el HOST (4 permitidos: los 3 caminos legítimos) con válvula explícita `ALLOW_NONLOCAL_TEST_DB=1`. Verificados los 4 escenarios ejecutando |
-> | ~~5~~ | ~~**A-13 + A-18** · descompresión y firma del CV~~ | — | ✅ **CERRADO** (`84f1e42`). Tres guardas en el cuello único: firma del fichero, cota de 100 MB descomprimidos y cota de 100 páginas de PDF. 12 tests, control negativo sobre las tres por separado. **Y corrigió mi propio razonamiento**: `zipfile` sí acota por el tamaño declarado y detecta la mentira por CRC — el conteo por lectura se queda por no depender de un detalle de CPython |
-> | — | **A-61 + A-62** · redis de producción **sin contraseña** y con `allkeys-lru` sobre un broker | ~20 líneas + despliegue | 🔒 **BLOQUEADO: toca compose** |
-> | — | **A-16** · `RATE_LIMIT_TRUST_PROXY=true` (hoy **5 logins/minuto para todo el despliegue**) | 1 variable | 🔒 **BLOQUEADO.** Existe **sólo** en `config.py:144` y `.env.prod.example:44`, **en ningún compose**: activarlo exige tocar el del NAS o su `.env` |
-> | — | **A-25** · cuatro `add_header` en `nginx.conf` | 4 líneas | 🔒 La CSP hay que verificarla contra el bundle de Vite antes de desplegar |
-> | — | **A-10** · `send_watchlist_digest`, no-op que devuelve `ok` | ~60 líneas de lógica real + `tests/test_scheduler.py`; reescribirlo contra el núcleo tiene el tamaño que tuvo DT-148 A1 | 🔒 **DECISIÓN DEL PROPIETARIO**, no tarea de código: retirar la capacidad o reescribirla |
+> ### Lo siguiente libre, sin tocar producción
+>
+> | Orden | Ítem | Nota |
+> |---|---|---|
+> | **1** | **A-31** · componente `<QueryState>` en los **ocho** sitios | Cierra la mitad abierta de DT-148 A18-03. ~80 líneas, frontend (suite de 1,2 s) |
+> | **2** | **A-47** · `_ics_escape` no escapa `\r` | Inyección de ICS desde un título cosechado. Dos líneas |
+> | **3** | **A-46** · fuga del cliente Redis en la alerta de profesor | `try/finally`. Dos líneas |
+> | **4** | **A-44** · `detector_version` es columna de sólo escritura | O `pending_titles` la mira, o el docstring miente |
+> | **5** | **A-45** · `GROQ_CONCURRENCY` sin un solo lector | Retirarlo; DT-148 B3 ya hizo esto con ocho mandos |
+> | **6** | **A-64** · los seis tests huérfanos de `scripts/` al CI | Dos son de CONTRATO |
+> | **7** | **A-33** · `check_source_ownership.py:242` con **CC 80** | El peor número del repo, paso 1 del CI, sin un test |
+> | **8** | **A-32** · `native_json.py`, segundo fichero con MI C | Contradice la premisa de DT-148 D1 |
+>
+> ### Bloqueados a tu confirmación (ventana de despliegue)
+>
+> **A-61 + A-62** (redis de producción sin contraseña y con `allkeys-lru` sobre
+> un broker), **A-16** (`RATE_LIMIT_TRUST_PROXY`, que **no está en ningún
+> compose**), **A-25** (cabeceras de nginx) y **la rotación de A-02**. Las cuatro
+> son la misma operación de mantenimiento: editar `.env.prod` en el NAS y
+> recrear los mismos contenedores. Ver el bloque de A-02 más arriba.
+>
+> **A-10** (`send_watchlist_digest`, no-op que devuelve `ok`) es **decisión del
+> propietario**, no tarea de código.
 >
 > ---
 
