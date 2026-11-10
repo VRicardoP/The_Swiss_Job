@@ -128,22 +128,39 @@
 > | **7** | **A-35, A-36, A-37, A-38, A-39** · paginación de guardados, chips muertos, etiquetas sin asociar, foco del modal, contraste | Frontend, acotados, sin riesgo |
 > | **8** | **A-21** · escritor latente de `match_results` | Decidir si la rama local sigue siendo camino de rollback |
 >
+> ### ⚠ DESPLEGADO EL 2026-11-10 — producción ya corre este trabajo
+>
+> Los PR #32 y #33 se fusionaron y se desplegó. **Producción corre
+> `point5-b508e53` (frontend) y `point5-0832eb5` (BFF)**; el núcleo sigue en
+> `point5-6efebe5` porque no se tocó `jobhunt_core/`.
+>
+> Verificado EN el contenedor que corre, no leyendo el commit:
+>
+> - **A-01** el bundle servido trae `u?.top_score` (antes `m.top_score` desnudo)
+>   y el `ErrorBoundary` viaja en el bundle principal. **La pantalla principal
+>   ya no se queda en blanco.**
+> - **A-25** las cabeceras salen en `/` Y en los assets — el bloque que tiene su
+>   propio `add_header`, que era el riesgo real de la implementación.
+> - **A-11/A-12** logout 204 → refresh 401; dos pestañas con el mismo refresh
+>   dan 200 y 200.
+> - **A-13/A-16/A-17/A-23/A-45/A-47** comprobados por sus valores efectivos
+>   dentro del contenedor.
+>
+> Estado: 16 contenedores, ninguno en mal estado; núcleo `ready`, BFF 200,
+> frontend sirviendo, worker `1 node online`.
+>
+> **Lo único sin verificar extremo a extremo es la descarga de PDF** (A-25):
+> necesita un navegador, y si la CSP la rompiera el síntoma sería un bloqueo
+> silencioso en la consola. Merece una prueba manual.
+>
 > ### Bloqueados — y el motivo ya NO es la autorización
 >
 > La ventana se ejecutó el 2026-11-10. Lo que queda bloqueado lo está por una
 > razón distinta y concreta:
 >
-> - **A-25** (cabeceras de seguridad en `nginx.conf`) **necesita reconstruir la
->   imagen del frontend**, y `deploy_nas.sh` exige el SHA exacto de
->   `github/main` — una guarda que existe para que `RELEASE_SHA` no mienta y que
->   **no se puentea**. Con la rama 33 commits por delante y sin fusionar, no hay
->   forma legítima de desplegarla.
-> - **Fusionar el PR**: `gh` no está instalado y no hay token; `main` está
->   protegida con PR obligatorio y 9 checks. **Sólo lo puedes hacer tú.**
->
-> Es decir: **todo el trabajo de estas sesiones —33 commits— está en la rama y
-> no en producción.** Producción sigue en `point5-14438b7` (BFF y frontend) y
-> `point5-6efebe5` (núcleo), que son de octubre.
+> ~~A-25 y el merge~~ — resueltos el 2026-11-10. **`gh` sigue sin instalar y sin
+> token**, así que fusionar un PR continúa siendo cosa del propietario; lo demás
+> (construir, enviar, promover, recrear y verificar) lo hace `deploy_nas.sh`.
 >
 > **A-66 (2ª mitad)**: los dos defaults de `CORE_DB_PASSWORD` y
 > `CORE_REDIS_PASSWORD` del compose de DESARROLLO siguen congelados en el
