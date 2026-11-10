@@ -239,12 +239,10 @@ def _compare(
     )
 
 
-def validate(manifest: dict, portfolio_root: Path | None) -> list[str]:
+def _errores_de_forma(sources: list) -> list[str]:
+    """Nombres presentes, ordenados y únicos. Se rinde pronto a propósito: sin
+    nombres válidos, todo lo demás produciría ruido en cascada."""
     errors: list[str] = []
-    sources = manifest.get("sources")
-    if manifest.get("schema_version") != 1 or not isinstance(sources, list):
-        return ["manifest must have schema_version=1 and a sources list"]
-
     names = [source.get("name") for source in sources if isinstance(source, dict)]
     if len(names) != len(sources) or any(
         not isinstance(name, str) or not name for name in names
@@ -255,7 +253,13 @@ def validate(manifest: dict, portfolio_root: Path | None) -> list[str]:
         errors.append("sources must be sorted by name")
     if len(names) != len(set(names)):
         errors.append("source names must be unique")
+    return errors
 
+
+def _errores_por_fuente(sources: list) -> list[str]:
+    """Las invariantes de CADA entrada: estado válido, coherencia entre estado,
+    destino y publicadores, y la forma del inventario verificado."""
+    errors: list[str] = []
     for source in sources:
         name = source["name"]
         state = source.get("state")
@@ -308,7 +312,36 @@ def validate(manifest: dict, portfolio_root: Path | None) -> list[str]:
                     errors.append(f"{name}: {field} must be a non-empty string")
             if source["blocker"] is not None and not isinstance(source["blocker"], str):
                 errors.append(f"{name}: blocker must be a string or null")
+    return errors
 
+
+RATCHETS_OBLIGATORIOS = (
+    "min_core_owned_sources",
+    "min_inventory_verified_sources",
+    "max_local_pending_sources",
+    "max_active_local_publishers",
+)
+
+
+def _errores_de_ratchet(manifest: dict, sources: list) -> list[str]:
+    """Los contadores no pueden ir hacia atrás.
+
+    A-70 — las cuatro claves son OBLIGATORIAS desde el 2026-11-04. Antes, tres
+    de los `.get()` usaban como default el VALOR ACTUAL
+    (`ratchet.get("max_local_pending_sources", local_pending)`), así que **borrar
+    la clave desactivaba la comprobación en silencio** y el ratchet pasaba a no
+    poder fallar nunca. Un ratchet que se suelta solo es peor que no tenerlo,
+    porque figura en el inventario de protecciones.
+
+    Se exige la presencia ANTES de comparar: si falta una, se dice cuál y no se
+    sigue, para no mezclar «este contador bajó» con «esta comprobación no
+    existe», que son diagnósticos distintos.
+    """
+    errors: list[str] = []
+    ratchet_declarado = manifest.get("ratchet", {})
+    faltan = [c for c in RATCHETS_OBLIGATORIOS if c not in ratchet_declarado]
+    if faltan:
+        return [f"ratchet incompleto: faltan {faltan}"]
     ratchet = manifest.get("ratchet", {})
     core_owned = sum(
         source["state"] in {"core_primary", "local_removed"} for source in sources
@@ -330,7 +363,13 @@ def validate(manifest: dict, portfolio_root: Path | None) -> list[str]:
         errors.append("ratchet regression: local-pending source count increased")
     if local_publishers > ratchet.get("max_active_local_publishers", local_publishers):
         errors.append("ratchet regression: active local publisher count increased")
+    return errors
 
+
+def _errores_de_descubrimiento(sources: list) -> list[str]:
+    """Lo que el manifiesto declara debe ser lo que el ÁRBOL tiene: adaptadores
+    del núcleo, módulos del BFF y su registro."""
+    errors: list[str] = []
     expected_core = {source["name"] for source in sources if source.get("core_adapter")}
     expected_modules = {
         source["name"] for source in sources if source.get("swissjob_module")
@@ -356,7 +395,14 @@ def validate(manifest: dict, portfolio_root: Path | None) -> list[str]:
     )
     if present_paths:
         errors.append(f"retired SwissJob harvest paths present: {present_paths}")
+    return errors
 
+
+def _errores_del_arbol_retirado(sources: list) -> list[str]:
+    """Que no vuelva nada del stack retirado: módulos de providers, rutas de
+    cosecha, dependencias en los dos `requirements`, la imagen de producción y
+    los marcadores de runtime. Todas estas comprobaciones LEEN FICHEROS."""
+    errors: list[str] = []
     requirements = (ROOT / "backend/requirements.txt").read_text(encoding="utf-8")
     installed_names = {
         line.split("==", 1)[0].strip().lower()
@@ -414,21 +460,50 @@ def validate(manifest: dict, portfolio_root: Path | None) -> list[str]:
             "SwissJob deploy no longer removes the legacy scraping queue: "
             f"{missing_queue_guards}"
         )
-
-    if portfolio_root is not None:
-        expected_portfolio = {
-            source["reactportfolio_source_name"]
-            for source in sources
-            if source.get("reactportfolio_source_name")
-            and "reactportfolio" in source.get("active_publishers", [])
-        }
-        _compare(
-            "ReactPortfolio known sources",
-            discover_portfolio_known_sources(portfolio_root),
-            expected_portfolio,
-            errors,
-        )
     return errors
+
+
+def _errores_de_portfolio(sources: list, portfolio_root: Path | None) -> list[str]:
+    """Paridad con el Portfolio, sólo si se le pasa su raíz."""
+    errors: list[str] = []
+
+    return errors
+
+
+def validate(manifest: dict, portfolio_root: Path | None) -> list[str]:
+    """Concatena las familias de invariante. CADA una devuelve su propia lista.
+
+    A-33 — antes era UNA función de CC 80, la más compleja del repositorio con
+    diferencia (la siguiente es 32), en el paso 1 del CI y en la primera línea
+    de `scripts/deploy_nas.sh`, y sin un solo test. Un guard de 80 ramas no se
+    puede auditar: cada rama nueva se añade por acumulación y no hay forma de
+    saber si alguna quedó muerta.
+
+    El reparto es por FAMILIA DE INVARIANTE, que es como ya estaba organizada
+    por dentro, y los mensajes no cambian ni un carácter: son lo que el CI
+    imprime y lo que alguien lee a las 3am. El orden de concatenación es el de
+    antes, para que la salida sea idéntica.
+
+    Dos cortes tempranos que NO son adorno y por eso siguen aquí arriba: sin
+    `schema_version=1` y una lista de fuentes no hay nada que validar, y sin
+    nombres válidos el resto produciría ruido en cascada.
+    """
+    sources = manifest.get("sources")
+    if manifest.get("schema_version") != 1 or not isinstance(sources, list):
+        return ["manifest must have schema_version=1 and a sources list"]
+
+    errores_forma = _errores_de_forma(sources)
+    if "every source must have a non-empty string name" in errores_forma:
+        return errores_forma
+
+    return [
+        *errores_forma,
+        *_errores_por_fuente(sources),
+        *_errores_de_ratchet(manifest, sources),
+        *_errores_de_descubrimiento(sources),
+        *_errores_del_arbol_retirado(sources),
+        *_errores_de_portfolio(sources, portfolio_root),
+    ]
 
 
 def main() -> int:

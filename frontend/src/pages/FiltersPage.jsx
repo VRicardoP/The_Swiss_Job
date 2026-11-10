@@ -23,6 +23,7 @@ import {
   Button,
   Card,
   EmptyState,
+  QueryState,
   IconButton,
   Input,
   PageHeader,
@@ -252,10 +253,15 @@ export default function FiltersPage() {
   const [tab, setTab] = useState("suggestions");
 
   const { mutate: analyze, isPending: analyzing } = useAnalyzeSuggestions();
-  const { data: suggestionsData, isLoading: loadingSuggestions } =
-    useSuggestions("pending");
+  // A-31: las queries se exponen ENTERAS. Sin `isError`, un fallo de carga se
+  // pintaba con el mensaje del vacío, y en el panel de filtros eso era peor que
+  // cosmético: «No active filters» ante un fallo llevaba al usuario a recrear
+  // filtros que YA existían.
+  const suggestionsQuery = useSuggestions("pending");
+  const { data: suggestionsData } = suggestionsQuery;
   const { mutate: review, isPending: reviewing } = useReviewSuggestion();
-  const { data: filtersData, isLoading: loadingFilters } = useFilters();
+  const filtersQuery = useFilters();
+  const { data: filtersData } = filtersQuery;
   const { mutate: deleteFilter } = useDeleteFilter();
   const { mutate: createFilter } = useCreateFilter();
 
@@ -338,13 +344,17 @@ export default function FiltersPage() {
       {/* Panel sugerencias */}
       {tab === "suggestions" && (
         <section className="mt-5 space-y-4">
-          {loadingSuggestions ? (
-            <div className="space-y-3">
-              <SkeletonCard />
-              <SkeletonCard />
-            </div>
-          ) : suggestions.length === 0 ? (
-            <EmptyState
+          <QueryState
+            query={suggestionsQuery}
+            tieneDatos={suggestions.length > 0}
+            cargando={
+              <div className="space-y-3">
+                <SkeletonCard />
+                <SkeletonCard />
+              </div>
+            }
+            vacio={
+              <EmptyState
               icon={Sparkles}
               title="No suggestions yet"
               description="Reject a few jobs from Matches, then click Analyse to find recurring patterns."
@@ -357,9 +367,10 @@ export default function FiltersPage() {
                 >
                   Analyse rejected
                 </Button>
-              }
-            />
-          ) : (
+                }
+              />
+            }
+          >
             <div className="space-y-3">
               {suggestions.map((s) => (
                 <SuggestionCard
@@ -371,25 +382,30 @@ export default function FiltersPage() {
                 />
               ))}
             </div>
-          )}
+          </QueryState>
         </section>
       )}
 
       {/* Panel filtros activos */}
       {tab === "filters" && (
         <section className="mt-5 space-y-3">
-          {loadingFilters ? (
-            <>
-              <SkeletonCard />
-              <SkeletonCard />
-            </>
-          ) : filters.length === 0 ? (
-            <EmptyState
-              icon={FilterIcon}
-              title="No active filters"
-              description="Approve suggestions or add a manual filter to exclude categories from your matching."
-            />
-          ) : (
+          <QueryState
+            query={filtersQuery}
+            tieneDatos={filters.length > 0}
+            cargando={
+              <>
+                <SkeletonCard />
+                <SkeletonCard />
+              </>
+            }
+            vacio={
+              <EmptyState
+                icon={FilterIcon}
+                title="No active filters"
+                description="Approve suggestions or add a manual filter to exclude categories from your matching."
+              />
+            }
+          >
             <div className="space-y-2">
               {filters.map((f) => (
                 <FilterRow
@@ -399,7 +415,7 @@ export default function FiltersPage() {
                 />
               ))}
             </div>
-          )}
+          </QueryState>
 
           <AddFilterForm onAdd={(data) => createFilter(data)} />
 

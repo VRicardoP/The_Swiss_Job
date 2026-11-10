@@ -146,3 +146,80 @@ class TestTranslateTitles:
         )
         assert result["Senior Software Engineer"] == "Senior Software Engineer"
         groq.get_chat_response.assert_not_called()
+
+
+class TestModeloDecomisado:
+    """A-20: un 404 de Groq es CONFIGURACIÓN, no un transitorio.
+
+    Groq decomisa modelos sin avisar —tres veces ya: llama-4-scout el
+    2026-07-17, llama-3.3-70b el 2026-08-16, qwen3.6-27b el 2026-09-15— y el
+    SDK lo señala con un 404. Caía en la rama de los transitorios y producía un
+    bucle perpetuo: los 25 títulos del lote iban a `failed_titles`, se
+    REINTENTABAN con el prompt simplificado (dos llamadas 404 por lote), y como
+    el resultado dejaba `result[title] = title` el `translated == title` impedía
+    cachear nada, así que el calentador volvía a elegir los mismos ≤100
+    pendientes cada 60 s, por usuario, para siempre.
+
+    Control negativo: devolviendo el 404 a la rama transitoria, el primer caso
+    deja de lanzar y el segundo no encuentra el mando en el log.
+    """
+
+    @pytest.mark.asyncio
+    async def test_un_404_se_propaga_en_vez_de_reintentarse(self):
+        svc = TranslationService(_groq(raises=FakeAPIStatusError(404)))
+        with pytest.raises(APIStatusError):
+            await svc._translate_batch(["Softwareentwickler"])
+
+    @pytest.mark.asyncio
+    async def test_el_404_no_dispara_el_reintento_del_prompt_simplificado(self):
+        """Lo que hacía el bucle caro: dos llamadas por lote en vez de una."""
+        groq = _groq(raises=FakeAPIStatusError(404))
+        svc = TranslationService(groq)
+
+        await svc.translate_titles(
+            [
+                {"title": "Softwareentwickler", "language": "de"},
+                {"title": "Projektleiter", "language": "de"},
+            ]
+        )
+
+        llamadas = groq.get_chat_response.await_count
+        assert llamadas == 1, (
+            f"un modelo decomisado no se reintenta; hubo {llamadas} llamadas"
+        )
+
+    @pytest.mark.asyncio
+    async def test_el_log_nombra_el_MODELO_y_no_la_api_key(self, caplog):
+        """El síntoma visible —«títulos sin traducir»— es el mismo que una key
+        caducada. Si el mensaje manda a mirar GROQ_API_KEY, manda al sitio
+        equivocado y el fallo sigue ahí."""
+        svc = TranslationService(_groq(raises=FakeAPIStatusError(404)))
+
+        with caplog.at_level("ERROR"):
+            await svc.translate_titles(
+                [{"title": "Softwareentwickler", "language": "de"}]
+            )
+
+        mensajes = " ".join(r.getMessage() for r in caplog.records)
+        assert "GROQ_RERANK_MODEL" in mensajes, mensajes
+        assert "GROQ_API_KEY" not in mensajes, "un 404 no se arregla mirando la API key"
+
+    @pytest.mark.asyncio
+    async def test_un_401_sigue_nombrando_la_API_KEY(self, caplog):
+        """La contraparte: no haber roto el diagnóstico que ya era correcto."""
+        svc = TranslationService(_groq(raises=FakeAPIStatusError(401)))
+
+        with caplog.at_level("ERROR"):
+            await svc.translate_titles(
+                [{"title": "Softwareentwickler", "language": "de"}]
+            )
+
+        mensajes = " ".join(r.getMessage() for r in caplog.records)
+        assert "GROQ_API_KEY" in mensajes, mensajes
+
+    @pytest.mark.asyncio
+    async def test_un_429_SIGUE_siendo_transitorio(self):
+        """Y el control que impide pasarse: un 429 no puede empezar a propagar,
+        o un pico de cuota se convertiría en un error de configuración."""
+        svc = TranslationService(_groq(raises=FakeAPIStatusError(429)))
+        assert await svc._translate_batch(["Softwareentwickler"]) == {}

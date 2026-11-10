@@ -1,5 +1,165 @@
 # Deuda técnica — proyecto jobhunting (SwissJob + jobhunt-core)
 
+> ## ⚠ DT-149 · Auditoría del 2026-11-02 — LEER ANTES DE RETOMAR DT-148
+>
+> **Acta: [`../audits/AUDITORIA_2026-11-02.md`](../audits/AUDITORIA_2026-11-02.md)
+> · Plan priorizado: [`PLAN_ATAQUE_2026-11-02.md`](PLAN_ATAQUE_2026-11-02.md)**
+>
+> Pasada fresca con cinco auditores en paralelo: **79 hallazgos nuevos**
+> (`A-01`…`A-79`), ninguno de ellos en DT-148 ni en COTAS. Dos conclusiones que
+> cambian el orden de trabajo:
+>
+> **1. La deuda estructural de DT-148 NO era lo urgente.** Había **dos fallos
+> CRITICAL vivos en producción**: la pantalla principal del producto llevaba
+> **13 días en blanco** (A-01, verificado en el bundle servido) y una
+> **credencial de producción llevaba semanas commiteada y publicada en el
+> remoto** (A-02). Los dos están **CERRADOS** (ver abajo). Quedan once arreglos
+> de corrección y seguridad, la mayoría de menos de veinte líneas, que valen más
+> que cualquiera de los quince puntos de los bloques C y D.
+>
+> **2. El inventario de DT-148 se verificó punto por punto y NUEVE de sus quince
+> tenían algo mal** — y **dos habrían dejado tests en VERDE que ya no prueban
+> nada**:
+> - **D3 paso 4** afirma «Ningún otro test llama a privados (grep: 0)». Hay
+>   **dos**: `test_integration_archive.py:329-338` **hereda y sobreescribe
+>   `_lock_vacancies`** para reproducir una carrera —si deja de ser método, el
+>   test pasa sin reproducir nada— y `test_integration_identity.py:697` llama a
+>   `_write_dedup_candidates` directo.
+> - **D1** omite `MAX_SCAN_TUPLES`, que `dedup.py:45` importa de `matching` y que
+>   `test_integration_matching.py:782` parchea para forzar la inanición.
+> - **Toda ubicación del plan hay que recalcularla**: `api/v1.py` se desplazó
+>   **+98 líneas** desde que se escribió. Cortar por las líneas del plan, como
+>   el §8 del relevo manda, cortaría 98 líneas equivocadas.
+> - Detalle completo en la sección «Correcciones al propio inventario DT-148»
+>   del acta, con tabla punto por punto.
+>
+> **Dos puntos nuevos que deben entrar antes de dar DT-148 por cerrada:**
+> **A-32** (`harvest/providers/native_json.py` es un **segundo** fichero con
+> mantenibilidad C — contradice la premisa de D1, que dice que `matching.py` es
+> el único) y **A-33** (`scripts/check_source_ownership.py:242` tiene **CC 80**,
+> la peor cifra del repositorio, sin cota que la ampare, en el paso 1 del CI y
+> sin un solo test).
+>
+> ### Lo CERRADO el 2026-11-02
+>
+> | Hallazgo | Qué se hizo |
+> |---|---|
+> | **A-01** `/match` en blanco | Acceso sacado del array de dependencias (`MatchPage.jsx:84-85`) + `ErrorBoundary` por ruta (`components/ErrorBoundary.jsx`, una envoltura con `key` de ruta en vez de doce) + `MatchPage.firstrender.test.jsx` (4 casos, sin dependencias nuevas). Verificado en el artefacto COMPILADO y con control negativo |
+> | **A-02** credencial publicada | `check_no_secrets.py` entiende ahora sintaxis `.env` y URLs con credencial embebida, con criterio por FORMA; 4 ocurrencias saneadas en `docs/DEPLOY_NAS.md`; CI ampliado a `docs`. 3 → **11 tests** |
+>
+> **A-02 sigue ABIERTO en su parte del propietario:** la credencial **continúa en
+> el historial de git y en `github/main`, y el repositorio es PÚBLICO**
+> (comprobado: `git ls-remote` anónimo funciona). Limpiar el árbol no deshace lo
+> publicado.
+>
+> **Severidad residual acotada (2026-11-04), con tres datos verificados:**
+> `swissjob-postgres` **no publica ningún puerto al host** (sólo red Docker del
+> NAS), **la contraseña no se reutiliza en ningún otro sitio** (confirmado por el
+> propietario) y el alcance es **un rol**, no una llave maestra. Sigue siendo el
+> dueño de `swissjobhunter` —usuarios, hashes, `cv_text`, documentos—, así que se
+> rota: lo que cambia es el cuándo.
+>
+> **Decisión acordada:** la rotación **se agrupa** con A-61, A-62, A-16 y A-25 en
+> **una sola ventana de despliegue**. No es comodidad: rotar la contraseña de
+> postgres y añadir la del redis son **la misma operación** (editar `.env.prod` en
+> el NAS y recrear los mismos contenedores), y cada ciclo de `deploy_nas.sh` es en
+> sí la parte arriesgada (A-63). Tres despliegues son tres oportunidades de romper
+> algo. **Lo que la agrupación NO autoriza es aplazarla detrás de los bloques C y
+> D**: eso son meses, y estos cuatro cambios suman ~50 líneas.
+>
+> Orden dentro de la ventana: rotar → actualizar `.env.prod` → recrear BFF y los
+> dos workers → `check_core_release.py`. Y sólo después decidir sobre
+> `git filter-repo`, que es independiente y no urgente una vez rotada.
+>
+> ### Lo que la verificación contra producción REBAJÓ
+>
+> Dos hallazgos de los auditores bajaron de severidad al consultar la base, y se
+> dejan escritos para que nadie los persiga como urgencias:
+> - **A-04** (presupuesto de cosecha reportado como fallo): el defecto está en el
+>   código, pero **el detonante está desarmado** — `jobgether` SÍ declara
+>   `max_pages: 3`, y las siete fuentes implicadas están con `fallos=0`,
+>   `bloqueos=0` y cosecha completa reciente. Trampa latente, no urgencia.
+> - **A-08** (recorrido completo de búsquedas guardadas): **no hay bucle
+>   absorbente** — los `last_attempt_at` de las 10 búsquedas están repartidos, no
+>   refrescándose cada 5 min, y la tabla no tiene las columnas que el
+>   razonamiento suponía. Su mitad real y accionable es el **1,15 M de filas** de
+>   `saved_search_observations`, sin purga ni TTL.
+>
+> ### Estado de ejecución — actualizado el 2026-11-04
+>
+> **Cerrados en esta sesión, con su commit.** Diez hallazgos, todos con control
+> negativo ejecutado:
+>
+> | Hallazgo | Commit | Nota |
+> |---|---|---|
+> | **A-01** `/match` en blanco | `1530fdc` | Verificado en el bundle SERVIDO |
+> | **A-02** credencial publicada (árbol + guard + CI) | `dd2a125` | La **rotación sigue siendo del propietario** — ver arriba |
+> | **A-65** entorno de test del BFF | `6aa8998` | **Ni imagen ni compose**: venv que replica el CI. 2m40s frente a 10-12 min |
+> | **A-11** `logout` que no revocaba | `6f69f62` | Verificado extremo a extremo: refresh 200 → logout 204 → refresh 401 |
+> | **A-17** Redis caído = 500 en toda la API | `24620bb` | `swallow_errors` solo NO bastaba; hizo falta `in_memory_fallback_enabled` |
+> | **A-68** la suite no garantizaba el SERVIDOR | `1d38403` | Cuatro escenarios verificados ejecutando |
+> | **A-13 + A-18** bomba de descompresión y firma del CV | `84f1e42` | Tres guardas en el cuello único |
+> | **A-12 + A-43** carrera de refresh y rama caducada | `32c839c`, `2bf688d` | La mitad del cliente es la que EVITA la carrera |
+> | **A-28** el logout involuntario no vaciaba la caché | `2bf688d` | Vía registro, para que `api.js` no dependa de react-query |
+> | **A-22 + A-23** monitor en falso verde y fuente que faltaba | `496acc8` | Con guard de deriva contra la lista del núcleo |
+> | **A-20** modelo de Groq decomisado | `74dbf94` | Lo que cierra el hallazgo es el DIAGNÓSTICO, no el `raise` |
+> | **A-03** sello de «verificado» regalado | `d44f07a` | Restaura la cuarta cota de la caché del feed |
+> | **A-19** overlay escolar sin invalidar entre workers | `1d0af3f` | Faltaban las DOS mitades del camino |
+> | **A-47 + A-46 + A-44 + A-45** inyección de ICS, fuga de Redis, garantía falsa y mando sin lector | `9b11996` | A-44 se cerró **corrigiendo el comentario**, no construyendo la re-derivación que nadie pidió |
+> | **A-31 + A-27** el fallo de red se pintaba como vacío | `6fc331a` | **Siete** sitios, no uno. Cierra la mitad abierta de DT-148 A18-03, y A-27 era un **PUT destructivo** sobre el perfil real |
+> | **A-64 + A-33** tests huérfanos y el guard de CC 80 | `b171ad5` | **El grado F desaparece del repo.** Y los seis huérfanos eran cuatro cosas distintas: uno RANCIO, uno que no era pytest, tres opt-in y uno que pasaba |
+> | **A-70 + A-66** dos ratchets que no eran ratchets | `6866f45` | Los dos se medían contra sí mismos. A-66 congela por NOMBRE los dos defaults que ya existían: quitarlos exige dos líneas en tu `.env`, así que va a la ventana |
+> | **A-26** ninguna petición tenía techo | `890853d` | 120 s, elegido con las dos cotas medidas (47,5 s el recorrido más lento; 3600 s el techo de nginx). **Queda la otra mitad**: propagar el `signal` de react-query |
+> | **A-35, A-36, A-37, A-38, A-39** tanda acotada de frontend | `3be37c3` | El valor de contraste se CALCULÓ: la propuesta de la auditoría (#8A8A93) daba 3,42:1 y habría dejado el defecto dentro. Con test que recalcula los cuatro pares |
+> | **A-14 + A-29** erasure-cdc sin definición y con código de 7 semanas | `9c0f51a` | **Era PREREQUISITO de la rotación**: es uno de los tres consumidores del rol `swissjob`, y rotarla sin poder recrearlo lo habría roto para siempre |
+> | **A-61 + A-62 + A-16 + A-02** ventana de despliegue | `69a47f1` | Ejecutada el 2026-11-10 en UN ciclo de recreación. Redis exige credencial, broker con `noeviction`, trust proxy activo y credencial rotada — la vieja da `InvalidPasswordError` por la vía real |
+>
+> Suites: **705 backend** (eran 669) y **78 frontend** (eran 63). Ruff limpio.
+>
+> ### Lo siguiente libre, sin tocar producción
+>
+> | Orden | Ítem | Nota |
+> |---|---|---|
+> | **1** | **A-32** · `native_json.py`, segundo fichero con MI C | Contradice la premisa de DT-148 D1. Extraer las ramas por fuente a un módulo hermano. **OJO al coste de verificación**: la suite del núcleo necesita la imagen de test layereada (tres condiciones, ver `CLAUDE.md`), no el venv del host — el ML pesado vive en el núcleo |
+> | **2** | **A-26 (2ª mitad)** · propagar el `signal` de react-query | Docenas de métodos en ocho objetos de API. El techo ya está puesto; esto es cancelar al desmontar, cuyo coste hoy es una petición desperdiciada y no un fallo. Hay un test que fija la composición |
+> | **3** | **A-21** · escritor latente de `match_results` | Decidir si la rama local sigue siendo camino de rollback. El defecto del código es `False`, así que un despliegue que olvide `CORE_FEEDBACK_ENABLED` **reactiva escrituras sobre el archivo** |
+> | **4** | **A-54, A-55, A-18 (2ª mitad), A-52, A-53** | i18n mezclado, `role="tablist"` sin patrón de tabs, parseo del CV en subproceso, refetch de 3.000 filas por un pulgar arriba, `"undefined"` persistible como token |
+> | **5** | **A-05, A-06, A-07, A-04** · el contrato de `fetch_new` del núcleo | La tabla de 32 × 4 que el auditor propone, más un test sobre el registro. **Mismo coste de verificación que A-32** |
+> | **7** | **A-35, A-36, A-37, A-38, A-39** · paginación de guardados, chips muertos, etiquetas sin asociar, foco del modal, contraste | Frontend, acotados, sin riesgo |
+> | **8** | **A-21** · escritor latente de `match_results` | Decidir si la rama local sigue siendo camino de rollback |
+>
+> ### Bloqueados — y el motivo ya NO es la autorización
+>
+> La ventana se ejecutó el 2026-11-10. Lo que queda bloqueado lo está por una
+> razón distinta y concreta:
+>
+> - **A-25** (cabeceras de seguridad en `nginx.conf`) **necesita reconstruir la
+>   imagen del frontend**, y `deploy_nas.sh` exige el SHA exacto de
+>   `github/main` — una guarda que existe para que `RELEASE_SHA` no mienta y que
+>   **no se puentea**. Con la rama 33 commits por delante y sin fusionar, no hay
+>   forma legítima de desplegarla.
+> - **Fusionar el PR**: `gh` no está instalado y no hay token; `main` está
+>   protegida con PR obligatorio y 9 checks. **Sólo lo puedes hacer tú.**
+>
+> Es decir: **todo el trabajo de estas sesiones —33 commits— está en la rama y
+> no en producción.** Producción sigue en `point5-14438b7` (BFF y frontend) y
+> `point5-6efebe5` (núcleo), que son de octubre.
+>
+> **A-66 (2ª mitad)**: los dos defaults de `CORE_DB_PASSWORD` y
+> `CORE_REDIS_PASSWORD` del compose de DESARROLLO siguen congelados en el
+> ratchet. Quitarlos exige dos líneas en tu `.env` local, así que no se tocó.
+>
+> **A-10** (`send_watchlist_digest`, no-op que devuelve `ok`) es **decisión del
+> propietario**, no tarea de código.
+>
+> ---
+
+> **Si retomas DT-148, empieza por [DT148_RELEVO.md](DT148_RELEVO.md)**: estado
+> exacto, orden recomendado, comandos que funcionan de verdad y las trampas ya
+> pisadas. Este fichero es el plan por ítem; aquél, el contexto para ejecutarlo.
+> **Pero lee primero el aviso DT-149 de arriba**: nueve de sus quince puntos
+> necesitan corrección antes de ejecutarse.
+>
 > **Lectura vigente — 2026-10-21.** DT-148 (abajo) es la auditoría de
 > refactorización con plan de ejecución por ítem. **CERRADAS y DESPLEGADAS:
 > sección A completa, sección B completa (B5 salvo sus pasos 3-4), E1, F1 y
@@ -1264,6 +1424,26 @@ hacían falta los DOS cambios:
 
 Ensayada de ida y vuelta en base desechable (`core0056` sin índice → `core0057`
 con él → `downgrade` sin él → otra vez con él).
+
+**MEDIDO DESPUÉS, en producción** (índice de 10 MB, `Bitmap Index Scan` donde
+había `Seq Scan`):
+
+| Caso | Antes | Después |
+|---|---|---|
+| `location=Remote` (2.534) | 86,4 s | **2,0 s** |
+| `location=zzz-no-existe` (0) | 44,9 s | **0,1 s** |
+| `location=Zürich` (2.571) | — | **2,1 s** |
+| `location=Genève` (118) | — | **0,2 s** |
+
+**Y una cota que salió de medir, no de leer**: un patrón de menos de 3
+caracteres NO puede usar el índice —un trigrama son tres caracteres— y vuelve
+al escaneo: `location=a` 34,9 s. Comprobado que `q` hace exactamente lo mismo
+(`q=a` 30,2 s, `q=py` 20,5 s, `q=python` 0,6 s), así que NO es deuda nueva:
+`location` quedó con el mismo perfil que `q`, no peor. Registrada con sus
+números en `COTAS_Y_DECISIONES.md` §6bis, con la mitigación propuesta —exigir 3
+caracteres antes de disparar— **sin aplicar**: cambiaría el comportamiento de
+`q`, que lleva semanas en producción, y es decisión de producto que debe verse
+en la interfaz.
 
 **Lo que el escapado evita, y es nuevo con `LIKE`:** un `%` del usuario casaría
 CUALQUIER ubicación, así que el filtro parecería aplicarse sin filtrar nada.

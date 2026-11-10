@@ -183,6 +183,13 @@ class CoreWatchlist:
         from .presentation import clear_school_presentation_cache
 
         clear_school_presentation_cache(pid)
+        # A-19: y se avisa al OTRO worker de gunicorn, cuya caché es suya. Sin
+        # esto la invalidación se quedaba en este proceso y el otro servía el
+        # estado anterior hasta 60 s. Es lo que `CoreFeedback._write` ya hacía
+        # para la caché del feed; faltaba aquí.
+        from services.matching.cache_bus import publicar
+
+        await publicar(pid)
         return True
 
     async def set_match_status(self, user_id, job_hash, application_status):

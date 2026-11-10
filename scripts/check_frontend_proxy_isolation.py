@@ -1,7 +1,14 @@
-"""Real nginx/Docker test, without data or published ports.
+"""Comprobación real de nginx/Docker, sin datos ni puertos publicados.
 
-Run: python3 scripts/test_frontend_proxy_isolation.py IMAGE
-The old image must fail because both backends advertise the alias `backend`.
+Uso: python3 scripts/check_frontend_proxy_isolation.py IMAGE
+La imagen vieja debe FALLAR, porque los dos backends anuncian el alias
+`backend`.
+
+NO es un test de pytest, y por eso dejó de llamarse `test_*` el 2026-11-04
+(A-64): levanta contenedores Docker de verdad y se invoca a mano con una imagen
+como argumento. Con el prefijo antiguo, pytest lo recogía y encontraba CERO
+tests —«no tests ran»—, así que figuraba en el inventario de cobertura sin
+aportar ninguna: la peor combinación, porque se cuenta y no protege.
 """
 
 from pathlib import Path

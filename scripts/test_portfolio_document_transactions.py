@@ -5,6 +5,23 @@ only four synthetic tables in a private schema of the plugin's disposable DB.
 No real LLM, credentials, users, NAS or production database are involved.
 """
 
+# A-64: guarda de precondición a nivel de MÓDULO. No hace falta inventar un
+# mando: la línea 33 ya exigía `DOCUMENT_TRANSACTION_TEST_DSN` con un
+# `os.environ[...]`, que sin la variable lanza KeyError EN TIEMPO DE IMPORT y
+# tumba la recolección de toda la corrida. Se convierte en un skip que dice por
+# qué, y así el fichero puede entrar al CI sin mentir.
+import os as _os
+
+import pytest as _pytest
+
+if not _os.environ.get("DOCUMENT_TRANSACTION_TEST_DSN"):
+    _pytest.skip(
+        "opt-in: requiere DOCUMENT_TRANSACTION_TEST_DSN y /portfolio montado "
+        "(ver el docstring de este fichero)",
+        allow_module_level=True,
+    )
+
+
 import os
 import subprocess
 import sys

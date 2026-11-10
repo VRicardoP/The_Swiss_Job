@@ -145,3 +145,104 @@ class TestCableado:
         clear_erased_caches(None)
 
         assert publicados == []
+
+
+# --- A-19: el overlay ESCOLAR también viaja por el bus --------------------
+#
+# `schools/presentation.py` cachea 60 s EN PROCESO el `application_status` y el
+# `draft_content`, y `watchlist_state._write` los invalidaba SÓLO en su propio
+# proceso: no publicaba en el bus, al contrario que `CoreFeedback._write`. Con
+# gunicorn `-w 2`, marcar «Applied» o guardar un borrador en el worker A podía
+# servirse como «detected» o sin borrador desde el B hasta 60 s. Es la misma
+# regresión M3/T12 que motivó este bus, repartida entre procesos, en la otra
+# caché — y rompía la cota «el overlay LOCAL se relee siempre».
+
+
+@pytest.mark.asyncio
+async def test_mecanismo_el_oyente_invalida_tambien_la_presentacion_escolar():
+    """Lo que un proceso publica, el oyente del otro lo aplica sobre LAS DOS
+    cachés. Contra el Redis real: simularlo aquí sería probar el simulador.
+
+    Control negativo: quitando `clear_school_presentation_cache` del oyente,
+    este caso se queda esperando y falla por plazo.
+    """
+    from services.schools import presentation
+
+    pid = str(uuid.uuid4())
+    presentation._overlay_cache[pid] = (0.0, [], {})
+
+    oyente = asyncio.create_task(cache_bus.escuchar())
+    try:
+        await asyncio.sleep(0.3)  # que el subscribe esté hecho
+        await cache_bus.publicar(pid)
+        assert await _esperar(lambda: pid not in presentation._overlay_cache), (
+            "el otro proceso debía haber invalidado su overlay escolar"
+        )
+    finally:
+        oyente.cancel()
+        await asyncio.gather(oyente, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_cableado_watchlist_state_PUBLICA_al_invalidar(monkeypatch):
+    """La línea que se puede borrar sin que nada más se entere, y por eso tiene
+    prueba propia — el mismo razonamiento que la cabecera de este fichero.
+
+    Se ejercita `_write` DE VERDAD, con sus colaboradores simulados. La primera
+    versión de este test llamaba a `publicar` a mano y luego afirmaba que se
+    había llamado: tautológico, y habría seguido verde con la línea borrada.
+
+    Control negativo: quitando el `await publicar(pid)` de
+    `watchlist_state._write`, este caso falla.
+    """
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from services.schools import watchlist_state
+    from services.schools.watchlist_state import CoreWatchlist
+
+    publicados: list = []
+
+    async def _publicar(pid=None):
+        publicados.append(pid)
+
+    monkeypatch.setattr("services.matching.cache_bus.publicar", _publicar, raising=True)
+
+    pid = uuid.uuid4()
+    job = SimpleNamespace(
+        tags=["monitor-1"],
+        title="Profesor de primaria",
+        company="ISB",
+        url="https://ejemplo.test/1",
+        school_job_id=None,
+    )
+    match = SimpleNamespace(created_at=datetime.now(timezone.utc))
+
+    escrituras: list = []
+
+    class _Cliente:
+        async def monitors(self):
+            return [SimpleNamespace(external_ref="monitor-1", id="m1")]
+
+        async def write_state(self, *a, **k):
+            escrituras.append((a, k))
+            return True
+
+    cliente = CoreWatchlist.__new__(CoreWatchlist)
+    cliente._client = _Cliente()
+
+    async def _get_match(_user_id, _job_hash):
+        return (match, job)
+
+    async def _profile(_user_id):
+        return pid
+
+    monkeypatch.setattr(cliente, "get_match", _get_match, raising=False)
+    monkeypatch.setattr(cliente, "_profile", _profile, raising=False)
+
+    assert await cliente._write(uuid.uuid4(), "hash-1", {"status": "applied"}) is True
+    assert escrituras, "la escritura al core debía ocurrir"
+    assert publicados == [pid], (
+        "invalidar en local sin publicar deja al otro worker con el estado viejo"
+    )
+    assert watchlist_state is not None  # el módulo es el que se está probando

@@ -39,7 +39,7 @@ function StepDots({ current }) {
               "flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold transition-colors",
               i < current && "bg-ink text-text-inverse",
               i === current && "bg-ink text-text-inverse ring-4 ring-ink/10",
-              i > current && "bg-surface-tertiary text-text-tertiary",
+              i > current && "bg-surface-tertiary text-text-secondary",
             )}
           >
             {i < current ? <Check className="h-3.5 w-3.5" /> : i + 1}
@@ -81,7 +81,7 @@ function StepShell({ title, description, children, footer }) {
 
 export default function OnboardingPage() {
   const navigate = useNavigate();
-  const { data: profile, isLoading } = useProfile();
+  const { data: profile, isLoading, isError, error } = useProfile();
   const uploadCV = useUploadCV();
   const cvAnalysis = useCvAnalysis();
   const updateProfile = useUpdateProfile();
@@ -110,6 +110,40 @@ export default function OnboardingPage() {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-border border-t-ink" />
+      </div>
+    );
+  }
+
+  // A-27/A-31 — el ORDEN importa, y aquí el error NO es cosmético.
+  //
+  // `useProfile` lleva `retry: false`. Si la carga fallaba, `isLoading` pasaba
+  // a `false`, `profile` quedaba `undefined`, la precarga de arriba no entraba
+  // y la página se pintaba NORMAL con `skills: []`, `locations: []` y
+  // `remote_pref: "any"`. El botón «Find matches» hace entonces un PUT con esos
+  // valores: un **PUT destructivo sobre el perfil real** del usuario.
+  //
+  // Por eso la rama de error va antes de pintar los pasos y no dentro de ellos,
+  // que es la misma disciplina que `ProfilePage` ya documenta.
+  if (isError) {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-16">
+        <div
+          role="alert"
+          className="rounded-lg border border-error-border bg-error-light p-6"
+        >
+          <h1 className="text-lg font-semibold text-error">
+            No se pudo cargar tu perfil
+          </h1>
+          <p className="mt-2 text-sm text-text-secondary">
+            No se continúa a propósito: guardar ahora sobrescribiría tu perfil
+            con valores vacíos. Recarga la página para volver a intentarlo.
+          </p>
+          {error?.message && (
+            <p className="mt-3 break-words font-mono text-xs text-text-tertiary">
+              {error.message}
+            </p>
+          )}
+        </div>
       </div>
     );
   }

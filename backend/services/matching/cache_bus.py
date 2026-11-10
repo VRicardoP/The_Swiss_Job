@@ -54,7 +54,17 @@ async def publicar(profile_id=None) -> None:
 
 
 async def escuchar() -> None:
-    """Bucle de fondo: aplica en ESTE proceso lo que invalidaron los demás."""
+    """Bucle de fondo: aplica en ESTE proceso lo que invalidaron los demás.
+
+    A-19: invalida DOS cachés, no una. La del feed estaba desde M3/T12; la de
+    presentación escolar —`application_status` y `draft_content`, con TTL de
+    60 s en proceso— se invalidaba sólo en el worker que escribía, porque
+    `watchlist_state._write` no publicaba en el bus. Con gunicorn `-w 2`, marcar
+    «Applied» o guardar un borrador en el worker A podía servirse como
+    «detected» o sin borrador desde el B hasta 60 s: la misma regresión M3/T12
+    que motivó este bus, repartida entre procesos, en la otra caché. Y rompía la
+    cota «el overlay LOCAL se relee siempre» para los items de colegio.
+    """
     from .core_client import clear_feed_cache
 
     while True:
@@ -67,7 +77,15 @@ async def escuchar() -> None:
                     continue
                 dato = mensaje["data"]
                 pid = dato.decode() if isinstance(dato, bytes) else str(dato)
-                clear_feed_cache(None if pid == _TODOS else pid)
+                objetivo = None if pid == _TODOS else pid
+                clear_feed_cache(objetivo)
+                # Import local: `schools.presentation` importa de `matching`, y
+                # al revés en tiempo de módulo sería un ciclo.
+                from services.schools.presentation import (
+                    clear_school_presentation_cache,
+                )
+
+                clear_school_presentation_cache(objetivo)
         except asyncio.CancelledError:
             raise
         except Exception:

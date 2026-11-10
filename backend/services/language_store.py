@@ -19,8 +19,26 @@ from models.title_language import TITLE_MAX_LEN, JobTitleLanguage
 
 logger = logging.getLogger(__name__)
 
-# Quién resolvió. Subirla marca todo lo anterior como re-derivable sin borrar
-# nada: `pending_titles` puede pedir también lo resuelto por una versión vieja.
+# Quién resolvió cada fila. Dato FORENSE: se escribe en `store_resolved` y no lo
+# lee nadie.
+#
+# A-44 — el comentario anterior decía que «subirla marca todo lo anterior como
+# re-derivable» y que «`pending_titles` puede pedir también lo resuelto por una
+# versión vieja». Las dos cosas son falsas: `pending_titles` filtra únicamente
+# `language IS NULL` y no mira esta columna, así que subir la versión NO
+# re-deriva nada. Era una garantía escrita que el código no da, que es la clase
+# de afirmación que este proyecto tiene como regla de oro no creerse.
+#
+# No se implementa la re-derivación porque nadie la ha pedido y su coste no es
+# neutro: haría pasar el corpus entero de títulos ya resueltos por el detector
+# otra vez. Si algún día hace falta, es una sentencia y no código —encolar es
+# poner `language` a NULL—:
+#
+#   UPDATE job_title_languages SET language = NULL
+#    WHERE detector_version = '<la vieja>';
+#
+# y la tarea de idioma los recoge en sus lotes acotados. Para eso sirve tener la
+# columna.
 DETECTOR_VERSION = "langdetect-1"
 
 

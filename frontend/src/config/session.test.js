@@ -12,9 +12,17 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { endsSession, profileApi, searchesApi } from "./api";
-import useAuthStore from "../stores/authStore";
-import { resolverErrorDeSesion } from "../hooks/useAuth";
+import {
+  TECHO_POR_DEFECTO_MS,
+  authApi,
+  conTecho,
+  endsSession,
+  profileApi,
+  searchesApi,
+} from "./api";
+import { registrarVaciadoDeSesion } from "./sessionTeardown";
+import useAuthStore, { manejarCambioDeAlmacen } from "../stores/authStore";
+import { cerrarSesion, resolverErrorDeSesion } from "../hooks/useAuth";
 
 function sesion(token = "viejo", refreshToken = "rt-1") {
   useAuthStore.getState().setAuth(token, refreshToken, { id: "u1" });
@@ -208,4 +216,289 @@ describe("hidratación: qué pasa cuando /auth/me falla", () => {
       expect(s.setHydrated).toHaveBeenCalledWith(true);
     },
   );
+});
+
+describe("cerrar sesión revoca la familia en el SERVIDOR (A-11)", () => {
+  // Hasta el 2026-11-04 `authApi` no tenía `logout` y nadie llamaba al
+  // endpoint, así que T9 entero —jti, fam, canje único, caída de familia—
+  // existía, estaba probado en el backend y NO SERVÍA PARA NADA: cerrar sesión
+  // sólo borraba el localStorage y el refresh seguía canjeable 7 días.
+  //
+  // Se prueba `cerrarSesion`, que es el camino que `useLogout` ejecuta, NO
+  // `authApi.logout` por su cuenta: un test de lo segundo seguiría verde si
+  // alguien borrase la llamada, que es exactamente la regresión a impedir.
+
+  function dobles() {
+    return { logout: vi.fn(), qc: { clear: vi.fn() }, navigate: vi.fn() };
+  }
+
+  it("manda el refresh token a /auth/logout y limpia en local", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const d = dobles();
+
+    cerrarSesion(d);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    const [url, opciones] = fetchMock.mock.calls[0];
+    expect(url).toContain("/auth/logout");
+    expect(opciones.method).toBe("POST");
+    expect(JSON.parse(opciones.body)).toEqual({ refresh_token: "rt-1" });
+    // y el cierre local ocurre igual, sin esperar al servidor
+    expect(d.logout).toHaveBeenCalled();
+    expect(d.qc.clear).toHaveBeenCalled();
+    expect(d.navigate).toHaveBeenCalledWith("/");
+  });
+
+  it("no manda el access token: debe funcionar con el access ya caducado", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    cerrarSesion(dobles());
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    // `request` y no `authRequest`: sin cabecera Authorization. Es el contrato
+    // del endpoint, que no exige access token a propósito.
+    expect(autorizacionDe(fetchMock.mock.calls[0])).toBeUndefined();
+  });
+
+  it("un fallo de red al revocar NO impide cerrar en local", async () => {
+    // Lo que no puede pasar es que un error de red deje al usuario con la
+    // sesión abierta en el navegador. Si la promesa quedase sin capturar, este
+    // caso saldría con un unhandled rejection.
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    const d = dobles();
+
+    expect(() => cerrarSesion(d)).not.toThrow();
+    expect(d.logout).toHaveBeenCalled();
+    expect(d.qc.clear).toHaveBeenCalled();
+  });
+
+  it("sin refresh token guardado no se llama al endpoint, pero se limpia igual", async () => {
+    useAuthStore.getState().logout();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const d = dobles();
+
+    cerrarSesion(d);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(d.qc.clear).toHaveBeenCalled();
+  });
+
+  it("el 204 sin cuerpo no revienta al parsear", async () => {
+    // `request` devuelve undefined en un 204; si intentase `res.json()` el
+    // cierre acabaría en una promesa rechazada.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(null, { status: 204 })),
+    );
+    await expect(authApi.logout("rt-1")).resolves.toBeUndefined();
+  });
+});
+
+describe("tokens rotados por OTRA pestaña (A-12)", () => {
+  // El store leía localStorage UNA sola vez, al cargarse el módulo, y nunca
+  // volvía a mirar. Pero el almacén es compartido y el refresh ROTA: cuando la
+  // pestaña A refresca, B se queda con el viejo EN MEMORIA y al caducar su
+  // access lo presenta. El servidor lo ve reaparecer, no puede saber si es un
+  // ladrón, y caía la familia: las dos pestañas fuera.
+  //
+  // El arnés corre sin DOM (A-69), así que se simula `localStorage` y se llama
+  // al manejador exportado en vez de despachar un evento real.
+  //
+  // Control negativo: quitando `sincronizarDesdeAlmacen()` de `refreshSession`,
+  // el primer caso presenta el token rancio y falla.
+
+  function almacenSimulado(inicial = {}) {
+    const datos = { ...inicial };
+    vi.stubGlobal("localStorage", {
+      getItem: (k) => (k in datos ? datos[k] : null),
+      setItem: (k, v) => {
+        datos[k] = String(v);
+      },
+      removeItem: (k) => {
+        delete datos[k];
+      },
+    });
+    return datos;
+  }
+
+  it("el refresh usa el token que dejó la otra pestaña, no el de memoria", async () => {
+    sesion("viejo", "rt-rancio");
+    // La otra pestaña ya rotó: el almacén lleva el nuevo y la memoria el viejo.
+    almacenSimulado({ swissjob_refresh_token: "rt-de-la-otra-pestana" });
+    expect(useAuthStore.getState().refreshToken).toBe("rt-rancio");
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ detail: "expired" }, { status: 401 }))
+      .mockResolvedValueOnce(
+        Response.json({
+          access_token: "nuevo",
+          refresh_token: "rt-3",
+          user: { id: "u1" },
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({ data: [], total: 0 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await searchesApi.list();
+
+    const cuerpoDelRefresh = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(cuerpoDelRefresh.refresh_token).toBe("rt-de-la-otra-pestana");
+  });
+
+  it("el cambio de almacén rehidrata el store", () => {
+    sesion("viejo", "rt-1");
+    almacenSimulado({
+      swissjob_token: "token-de-la-otra",
+      swissjob_refresh_token: "rt-de-la-otra",
+    });
+
+    manejarCambioDeAlmacen({ key: "swissjob_token" });
+
+    expect(useAuthStore.getState().token).toBe("token-de-la-otra");
+    expect(useAuthStore.getState().refreshToken).toBe("rt-de-la-otra");
+  });
+
+  it("una clave ajena NO rehidrata nada", () => {
+    sesion("viejo", "rt-1");
+    almacenSimulado({ swissjob_token: "no-deberia-leerse" });
+
+    manejarCambioDeAlmacen({ key: "otra_cosa" });
+
+    expect(useAuthStore.getState().token).toBe("viejo");
+  });
+
+  it("sin localStorage no revienta ni pisa la memoria", () => {
+    // El entorno sin DOM es el del propio arnés, y antes del refactor dejaba
+    // esta función inerte para siempre por capturar el almacén al importar.
+    sesion("viejo", "rt-1");
+    useAuthStore.getState().sincronizarDesdeAlmacen();
+    expect(useAuthStore.getState().token).toBe("viejo");
+  });
+});
+
+describe("el cierre INVOLUNTARIO también vacía la caché (A-28)", () => {
+  // `useLogout` hacía `qc.clear()` y promete que «nada de la sesión que acaba
+  // sobrevive a su cierre». El cierre involuntario —cuando el propio refresh
+  // devuelve 401/403— iba por otro camino y dejaba la caché dentro: matches,
+  // perfil, guardados, notificaciones y borradores de la cuenta que salía,
+  // visibles para la siguiente cuenta en el mismo navegador durante su
+  // staleTime de 2 min.
+  //
+  // Control negativo: quitando `queryClient.clear()` de `renovarSesion`, este
+  // caso encuentra el dato de la cuenta anterior todavía en la caché.
+
+  it("un refresh rechazado con 401 deja la caché VACÍA", async () => {
+    sesion("viejo", "rt-1");
+    const vaciados = [];
+    registrarVaciadoDeSesion(() => vaciados.push("vaciado"));
+
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(Response.json({ detail: "expired" }, { status: 401 }))
+        .mockResolvedValueOnce(Response.json({ detail: "invalid" }, { status: 401 })),
+    );
+
+    await expect(searchesApi.list()).rejects.toThrow();
+
+    expect(useAuthStore.getState().token).toBeNull();
+    expect(vaciados).toEqual(["vaciado"]);
+  });
+
+  it("un fallo TRANSITORIO no vacía la caché", async () => {
+    // La contraparte que impide pasarse de celoso: un 500 o un corte de red no
+    // terminan la sesión, así que tampoco pueden tirar los datos.
+    sesion("viejo", "rt-1");
+    const vaciados = [];
+    registrarVaciadoDeSesion(() => vaciados.push("vaciado"));
+
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(Response.json({ detail: "expired" }, { status: 401 }))
+        .mockResolvedValueOnce(Response.json({ detail: "boom" }, { status: 500 })),
+    );
+
+    await expect(searchesApi.list()).rejects.toThrow();
+
+    expect(useAuthStore.getState().token).toBe("viejo");
+    expect(vaciados).toEqual([]);
+  });
+});
+
+describe("toda petición tiene techo (A-26)", () => {
+  // Antes NINGUNA lo tenía: `grep -rn "AbortController|signal|timeout"` no
+  // devolvía nada. Y los techos del servidor son altísimos —gunicorn mata al
+  // worker a los 420 s y nginx espera 3600 s—, así que un upstream que no
+  // contesta dejaba el spinner girando hasta una hora.
+  //
+  // Control negativo: quitando `conTecho` de `request`, el primer caso no ve
+  // ningún `signal` en la llamada a fetch.
+
+  function señalDe(llamada) {
+    return llamada[1]?.signal;
+  }
+
+  it("request manda un AbortSignal", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await authApi.login("a@b.c", "x");
+
+    const señal = señalDe(fetchMock.mock.calls[0]);
+    expect(señal).toBeInstanceOf(AbortSignal);
+    expect(señal.aborted).toBe(false);
+  });
+
+  it("la subida de CV también, que es la vía cruda", async () => {
+    // `authFetch` es el camino de multipart y blob, y es el más propenso a
+    // quedarse colgado: sube un fichero.
+    sesion();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await profileApi.uploadCV(new Blob(["x"]));
+
+    expect(señalDe(fetchMock.mock.calls[0])).toBeInstanceOf(AbortSignal);
+  });
+
+  it("el techo DISPARA de verdad pasado el plazo", async () => {
+    // Lo que importa: que el reloj corte. Se prueba sobre `conTecho` porque
+    // casi ningún método del API expone sus `options` —`searchesApi.list(params)`
+    // convierte lo que le pases en querystring—, así que desde fuera no hay
+    // forma de forzar un plazo corto. La primera versión de este test pasaba
+    // `timeoutMs` como parámetro de query y se quedaba esperando los 5 s del
+    // arnés sin probar nada.
+    const { signal } = conTecho({}, 5);
+    expect(signal.aborted).toBe(false);
+
+    await new Promise((r) => setTimeout(r, 30));
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("respeta el `signal` del llamador ADEMÁS del reloj", async () => {
+    // Si algún día se propaga el signal de react-query (la mitad de A-26 que
+    // queda), cancelar al desmontar no puede perder el techo ni al revés.
+    const propio = new AbortController();
+    const { signal } = conTecho({ signal: propio.signal }, 60_000);
+
+    propio.abort();
+    expect(signal.aborted).toBe(true);
+  });
+
+  it("el techo por defecto es holgado respecto al recorrido más lento medido", () => {
+    // La cota que no se puede romper: el recorrido completo del feed mide
+    // 47,5 s en frío (CLAUDE.md). Un techo por debajo rompería la rama de
+    // respaldo del limit=3000, que es justo lo que no se puede romper.
+    expect(TECHO_POR_DEFECTO_MS).toBeGreaterThan(47_500 * 2);
+  });
+
 });

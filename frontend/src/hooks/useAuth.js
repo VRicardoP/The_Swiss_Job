@@ -17,6 +17,40 @@ export function resolverErrorDeSesion(status, { logout, setHydrated }) {
   else setHydrated(true);
 }
 
+/**
+ * A-11: el cierre de sesión completo — revocar en el SERVIDOR y limpiar local.
+ *
+ * Vive fuera del hook por el mismo motivo que `resolverErrorDeSesion`: para
+ * poder probarlo. Un test que llame a `authApi.logout` por su cuenta no
+ * demuestra nada, porque seguiría pasando si alguien borrase la llamada de
+ * aquí — que es justo la regresión que hay que impedir.
+ *
+ * Hasta el 2026-11-04 este primer paso NO EXISTÍA, y por eso T9 entero —jti,
+ * fam, canje único, caída de familia— era mecanismo muerto: el endpoint y su
+ * maquinaria estaban construidos y probados desde septiembre, pero ningún
+ * cliente los invocaba. Cerrar sesión sólo borraba el `localStorage`, así que
+ * el refresh seguía canjeable `REFRESH_TOKEN_EXPIRE_DAYS` (7 días) desde el
+ * navegador de un ordenador compartido.
+ *
+ * El token se lee ANTES de `logout()`, que lo borra. Y la revocación NO se
+ * espera a propósito: el endpoint es idempotente y contesta 204 incluso con un
+ * token ilegible o ya revocado, así que no hay nada que decidir con su
+ * respuesta; y ante un fallo de red lo correcto es cerrar en local igualmente.
+ */
+export function cerrarSesion({ logout, qc, navigate }) {
+  const refreshToken = useAuthStore.getState().refreshToken;
+  if (refreshToken) authApi.logout(refreshToken).catch(() => {});
+
+  logout();
+  // DT-148 A6: se borraban SOLO "auth" y "profile". Matches, candidaturas,
+  // documentos, notificaciones y borradores seguían en caché con su staleTime,
+  // así que la siguiente cuenta que entrase en el mismo navegador veía datos de
+  // la anterior. Se vacía todo: nada de la sesión que acaba sobrevive a su
+  // cierre.
+  qc.clear();
+  navigate("/");
+}
+
 export function useAuthHydration() {
   const token = useAuthStore((s) => s.token);
   const setUser = useAuthStore((s) => s.setUser);
@@ -94,14 +128,5 @@ export function useLogout() {
   const logout = useAuthStore((s) => s.logout);
   const navigate = useNavigate();
 
-  return () => {
-    logout();
-    // DT-148 A6: se borraban SOLO "auth" y "profile". Matches, candidaturas,
-    // documentos, notificaciones y borradores seguían en caché con su
-    // staleTime, así que la siguiente cuenta que entrase en el mismo navegador
-    // veía datos de la anterior. Se vacía todo: nada de la sesión que acaba
-    // sobrevive a su cierre.
-    qc.clear();
-    navigate("/");
-  };
+  return () => cerrarSesion({ logout, qc, navigate });
 }

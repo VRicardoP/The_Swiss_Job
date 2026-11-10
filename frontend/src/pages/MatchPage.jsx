@@ -39,7 +39,8 @@ const STRONG_SCORE = 70;
 const PAGE_SIZE = 50;
 
 export default function MatchPage() {
-  const { data: profile, isLoading: profileLoading } = useProfile();
+  const { data: profile, isLoading: profileLoading, isError: profileError } =
+    useProfile();
   const [activeCategory, setActiveCategory] = useState(null);
   const [categoryOffset, setCategoryOffset] = useState(0);
   const facetsQuery = useMatchFacets();
@@ -75,6 +76,14 @@ export default function MatchPage() {
 
   const hasCvEmbedding = profile?.has_cv_embedding;
   const facets = facetsQuery.data;
+  // Un array de dependencias se evalúa en CADA render, al margen del ternario
+  // que protege el CUERPO del useMemo. Leer `facets.top_score` ahí dentro
+  // revienta mientras la petición de facetas está en vuelo, porque `facets` es
+  // undefined hasta que resuelve: dejaba `/match` en blanco en el primer render
+  // (no hay ErrorBoundary que lo recoja). Se extraen aquí, con guarda, y los
+  // useMemo dependen de estos escalares.
+  const facetsTopScore = facets?.top_score;
+  const facetsStrongCount = facets?.strong_count;
   const allMatches = useMemo(() => results?.data ?? [], [results?.data]);
   const total = facetsEnabled ? facets.total : (results?.total ?? 0);
   const hasMatches = total > 0;
@@ -171,18 +180,18 @@ export default function MatchPage() {
   const topScore = useMemo(
     () =>
       facetsEnabled
-        ? Math.round(facets.top_score)
+        ? Math.round(facetsTopScore)
         : allMatches.length > 0
           ? Math.round(Math.max(...allMatches.map((match) => match.score_final)))
           : 0,
-    [facetsEnabled, facets.top_score, allMatches],
+    [facetsEnabled, facetsTopScore, allMatches],
   );
   const strongMatches = useMemo(
     () =>
       facetsEnabled
-        ? facets.strong_count
+        ? facetsStrongCount
         : allMatches.filter((match) => match.score_final >= STRONG_SCORE).length,
-    [facetsEnabled, facets.strong_count, allMatches],
+    [facetsEnabled, facetsStrongCount, allMatches],
   );
 
   // L4/T7: estos tres se recreaban en CADA render, así que cambiaban de
@@ -234,7 +243,12 @@ export default function MatchPage() {
       />
 
       {/* CV warning */}
-      {!profileLoading && !hasCvEmbedding && (
+      {/* A-31: `profileError` en la condición. Sin él, un fallo al cargar el
+          perfil dejaba `hasCvEmbedding` en undefined y se pintaba «Upload your
+          CV to unlock AI matching» a quien YA tiene CV subido — un error
+          disfrazado de instrucción, que manda al usuario a repetir algo que ya
+          hizo. */}
+      {!profileLoading && !profileError && !hasCvEmbedding && (
         <div
           className={cn(
             "mt-6 flex items-start gap-3 rounded-xl border border-warning-border bg-warning-light p-4",

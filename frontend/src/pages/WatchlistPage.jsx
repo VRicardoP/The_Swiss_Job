@@ -17,6 +17,7 @@ import {
   Button,
   Card,
   EmptyState,
+  QueryState,
   PageHeader,
   Skeleton,
   cn,
@@ -67,10 +68,15 @@ export default function WatchlistPage() {
         : { limit: 500, offset: 0, translate: false },
     [conFacetas],
   );
-  const { data: results, isLoading } = useQuery({
+  // A-31 / DT-148 A18-03: la query se expone ENTERA, no sólo `data` e
+  // `isLoading`. Sin `isError`, un fallo de red se pintaba con el mensaje del
+  // vacío —«Aún no hay vacantes en la watchlist»— y el usuario no reintentaba,
+  // porque creía que no había nada.
+  const resultsQuery = useQuery({
     queryKey: ["match-results", watchlistQueryArgs],
     queryFn: () => matchApi.getResults(watchlistQueryArgs),
   });
+  const { data: results } = resultsQuery;
 
   const watchlist = useMemo(() => {
     const servidas = results?.data ?? [];
@@ -162,19 +168,24 @@ export default function WatchlistPage() {
         })}
       </div>
 
-      {isLoading ? (
-        <div className="space-y-3">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-32 w-full" />
-          ))}
-        </div>
-      ) : visible.length === 0 ? (
-        <EmptyState
-          icon={GraduationCap}
-          title="Aún no hay vacantes en la watchlist"
-          description="Cuando los scrapers de los colegios suizos detecten nuevas vacantes aparecerán aquí."
-        />
-      ) : (
+      <QueryState
+        query={resultsQuery}
+        tieneDatos={visible.length > 0}
+        cargando={
+          <div className="space-y-3">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-32 w-full" />
+            ))}
+          </div>
+        }
+        vacio={
+          <EmptyState
+            icon={GraduationCap}
+            title="Aún no hay vacantes en la watchlist"
+            description="Cuando los colegios suizos vigilados publiquen nuevas vacantes aparecerán aquí."
+          />
+        }
+      >
         <div className="space-y-3">
           {visible.map((m) => (
             <WatchlistRow
@@ -194,7 +205,7 @@ export default function WatchlistPage() {
             />
           ))}
         </div>
-      )}
+      </QueryState>
     </div>
   );
 }
@@ -311,7 +322,7 @@ function WatchlistRow({ match, onAdvance, onDraft, onIcs, draftLoading, draftOpe
 }
 
 function DraftDrawer({ jobHash, onClose }) {
-  const { data: draft, isLoading } = useQuery({
+  const { data: draft, isLoading, isError, error } = useQuery({
     queryKey: ["draft", jobHash],
     queryFn: () => watchlistApi.getDraft(jobHash),
   });
@@ -331,9 +342,21 @@ function DraftDrawer({ jobHash, onClose }) {
           cerrar
         </button>
       </div>
-      <pre className="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-words rounded bg-surface p-3 text-[12px] leading-relaxed text-text-primary">
-        {isLoading ? "Cargando..." : (draft || "")}
-      </pre>
+      {/* A-31: un fallo de carga dejaba el `<pre>` VACÍO (`draft || ""`), que
+          es peor que un hueco: parece que el borrador se generó en blanco. No
+          se usa `QueryState` aquí porque el contenedor ya tiene su propio marco
+          y una tarjeta dentro de otra quedaría mal; lo que importa es el
+          `role="alert"`, que es lo que lo hace audible. */}
+      {isError ? (
+        <p role="alert" className="mt-2 text-[12px] text-error">
+          No se pudo cargar el borrador
+          {error?.message ? `: ${error.message}` : "."}
+        </p>
+      ) : (
+        <pre className="mt-2 max-h-80 overflow-y-auto whitespace-pre-wrap break-words rounded bg-surface p-3 text-[12px] leading-relaxed text-text-primary">
+          {isLoading ? "Cargando..." : (draft || "")}
+        </pre>
+      )}
     </div>
   );
 }

@@ -47,18 +47,32 @@ jobs:
         run: |
           ruff check scripts docs tools
           ruff format --check scripts docs tools
-      # DT-148 B5: estos tres tests protegen scripts de CI y de DESPLIEGUE
+      # DT-148 B5: estos tests protegen scripts de CI y de DESPLIEGUE
       # —check_no_secrets impide que vuelva un literal a deploy/nas, y
       # check_core_release es el ritual de verificación tras desplegar— y no
       # los ejecutaba nada. Un test que nadie lanza no protege nada.
+      #
+      # A-64 (2026-11-04): la lista pasa de cuatro ficheros a TODO `scripts/`.
+      # Quedaban seis huérfanos y, al ejecutarlos por primera vez, ninguno era
+      # lo que el inventario suponía:
+      #   - `test_search_handover_contract.py` estaba RANCIO: referenciaba
+      #     `backend/services/data_normalizer.py`, borrado en octubre con el
+      #     stack legacy. Retirado — describía un árbol que ya no existe, que es
+      #     en lo que se podre un test que nadie ejecuta.
+      #   - `test_frontend_proxy_isolation.py` NO era pytest: un script con
+      #     `main(image)` que levanta Docker. Recogía CERO tests y aun así
+      #     figuraba en el inventario de cobertura. Renombrado a `check_*`.
+      #   - tres son wire tests OPT-IN de verdad y ahora llevan guarda de
+      #     módulo, así que SALTAN diciendo por qué en vez de tumbar la
+      #     recolección entera con un ModuleNotFoundError en tiempo de import.
+      #   - `test_measure_nas_resources.py` pasaba sin más: 4 tests.
+      # Se pasa el DIRECTORIO para que un fichero nuevo entre solo; era la lista
+      # a mano la que dejó seis fuera.
       - name: Tests de los scripts de CI y despliegue
         working-directory: ${{ github.workspace }}
         run: |
           pip install pytest==8.4.2
-          python -m pytest scripts/test_check_no_secrets.py \
-            scripts/test_check_core_release.py \
-            scripts/test_ensure_swissjob_frontend.py \
-            scripts/test_set_match_facets_flag.py -q
+          python -m pytest scripts/ -q
 
   backend-test:
     runs-on: ubuntu-latest
@@ -241,7 +255,15 @@ jobs:
           done
           # T13 §7: la topologia REAL del NAS esta versionada en deploy/nas con los
           # secretos sustituidos por variables. Este paso impide que vuelvan.
-          python3 scripts/check_no_secrets.py deploy/nas
+          #
+          # `docs` entro el 2026-11-02 (auditoria A-02): una contrasena de
+          # produccion llevaba semanas commiteada y publicada en
+          # docs/DEPLOY_NAS.md, en sintaxis `.env`, que el guard no sabia leer
+          # (sus regex exigian `:`, o sea YAML). Apuntarlo aqui SIN arreglar
+          # antes esa ceguera habria dado un CI en verde con el secreto dentro:
+          # el orden importaba. La documentacion de este proyecto pega salidas
+          # de `grep` sobre `.env.prod`, asi que es donde mas falta vigilar.
+          python3 scripts/check_no_secrets.py deploy/nas docs
           # `qnap` y `rehearsal.qnap` NO se validan aqui: sus `env_file` son rutas
           # ABSOLUTAS del NAS (/share/Public/...) que no pueden existir en CI.
           # Verificado, no supuesto: fallan con "env file ... not found".

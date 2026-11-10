@@ -4,6 +4,7 @@ import { useAuthHydration } from './hooks/useAuth'
 import useAuthStore from './stores/authStore'
 import Navbar from './components/Navbar'
 import ProtectedRoute from './components/ProtectedRoute'
+import ErrorBoundary from './components/ErrorBoundary'
 import { cn } from './components/ui'
 
 const DocumentsPage = lazy(() => import('./pages/DocumentsPage'))
@@ -53,6 +54,11 @@ function App() {
           hasBottomNav && 'pb-bottom-nav lg:pb-0',
         )}
       >
+        {/* La `key` por ruta hace que navegar monte un boundary NUEVO: un
+            error en /match no sobrevive al salir de /match, y no hace falta
+            envolver las doce rutas una por una. El Navbar queda fuera, así que
+            un fallo de página deja la navegación en pie. */}
+        <ErrorBoundary key={location.pathname}>
         <Suspense fallback={<PageLoader />}>
           <Routes>
             <Route path="/" element={<SearchPage />} />
@@ -118,6 +124,7 @@ function App() {
             />
           </Routes>
         </Suspense>
+        </ErrorBoundary>
       </main>
     </div>
   )

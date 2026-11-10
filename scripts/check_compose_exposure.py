@@ -18,6 +18,7 @@ escribió. Uso:  python3 scripts/check_compose_exposure.py [fichero-compose]
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 
@@ -26,8 +27,52 @@ import sys
 # eso vive aquí escrita y no en un `if` dentro del bucle.
 PUBLICABLES_A_LA_LAN = {"frontend"}
 INTERFAZ_ESPERADA = "127.0.0.1"
-# Contraseñas que estuvieron publicadas en este repositorio.
+# Contraseñas que estuvieron publicadas en este repositorio. Se conservan como
+# red adicional: una clave quemada hay que cazarla aunque su nombre de variable
+# no parezca sensible.
 CLAVES_QUEMADAS = ("swissjob_dev_2024",)
+
+# A-66 — un default de contraseña se caza por su FORMA, no por su valor.
+#
+# El docstring de este script prometía «un `${VAR:-contraseña}` devuelve una
+# clave conocida», y la implementación era una lista de UN literal quemado más
+# un `in texto`. Así que se le colaban dos credenciales por defecto en nueve
+# sitios del compose base —`CORE_REDIS_PASSWORD:-core_redis_dev` y
+# `CORE_DB_PASSWORD:-jobhunt_core_dev`, y la segunda es la contraseña con la que
+# `core-migrate` CREA el rol `jobhunt_core`—, mientras `CLAUDE.md` afirmaba que
+# la guarda garantizaba «ninguna contraseña publicada como defecto».
+#
+# Es el mismo error de diseño que dejó pasar la credencial de A-02: **un guard
+# que busca valores concretos en vez de formas no es un guard.** Buscar la forma
+# caza también la contraseña que nadie ha quemado todavía, que es justo la que
+# importa.
+DEFAULTS_SENSIBLES = re.compile(
+    r"\$\{(?P<clave>[A-Za-z_]*(?:PASSWORD|SECRET|TOKEN|KEY|DSN)[A-Za-z_]*)"
+    r":-(?P<valor>[^}]+)\}"
+)
+
+# Los dos defaults que YA existían cuando se escribió la comprobación por forma,
+# congelados por NOMBRE. Es un ratchet, no una amnistía: cualquier clave
+# sensible con default que NO esté en esta lista falla, así que no puede
+# colarse una nueva.
+#
+# Por qué no se quitan ya: son las contraseñas del postgres y del redis DEL
+# NÚCLEO en el compose de DESARROLLO, y no están en el `.env` de la máquina de
+# desarrollo —sólo en `.env.example`—, de modo que exigirlas con `${VAR:?}`
+# rompería `docker compose up` hasta que alguien añada dos líneas a su `.env`.
+# Eso es una decisión del propietario y va en la misma ventana que A-61, A-16 y
+# A-25 (ver el ledger).
+#
+# OJO, y es la lección de A-70, que está en esta misma auditoría: esta lista es
+# EXPLÍCITA, con los nombres escritos. Si fuera derivada del estado actual
+# —`ratchet.get(clave, valor_de_hoy)`— se desactivaría sola, que es justo el
+# defecto que A-70 describe.
+DEFAULTS_SENSIBLES_TOLERADOS = frozenset(
+    {
+        ("docker-compose.yml", "CORE_DB_PASSWORD"),
+        ("docker-compose.yml", "CORE_REDIS_PASSWORD"),
+    }
+)
 
 
 def _modelo_resuelto(fichero: str) -> dict:
@@ -81,12 +126,29 @@ def _revisa_claves_por_defecto(fichero: str) -> list[str]:
     """
     with open(fichero, encoding="utf-8") as f:
         texto = f.read()
-    return [
+
+    fallos = [
         f"{fichero}: contiene la contraseña publicada «{quemada}» como valor o "
         "default; exígela con ${VAR:?} y sin default"
         for quemada in CLAVES_QUEMADAS
         if quemada in texto
     ]
+
+    # Y por FORMA: cualquier `${CLAVE_SENSIBLE:-algo}`, con el valor que sea.
+    # Se reporta la CLAVE y no el valor, para no volcar la credencial en el log
+    # del CI — que es exactamente cómo se filtró la de A-02.
+    for linea_n, linea in enumerate(texto.splitlines(), 1):
+        if linea.lstrip().startswith("#"):
+            continue
+        for m in DEFAULTS_SENSIBLES.finditer(linea):
+            clave = m.group("clave")
+            if (fichero, clave) in DEFAULTS_SENSIBLES_TOLERADOS:
+                continue
+            fallos.append(
+                f"{fichero}:{linea_n}: {clave} trae un default; "
+                "exígela con ${VAR:?} y sin default"
+            )
+    return fallos
 
 
 def _revisa_auth_de_redis(servicios: dict) -> list[str]:

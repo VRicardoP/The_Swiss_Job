@@ -43,13 +43,17 @@ services:
     - --maxmemory
     - 512mb
     - --maxmemory-policy
-    - allkeys-lru
+    - noeviction
+    - --requirepass
+    - ${REDIS_PASSWORD}
     volumes:
     - redisdata:/data
     healthcheck:
       test:
       - CMD
       - redis-cli
+      - -a
+      - ${REDIS_PASSWORD}
       - ping
       interval: 60s
       timeout: 5s

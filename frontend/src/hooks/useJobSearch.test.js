@@ -45,3 +45,54 @@ describe("los filtros de búsqueda que el store modela", () => {
     expect(useSearchStore.getState().location).toBe("");
   });
 });
+
+describe("los chips reflejan los filtros que el store REALMENTE modela (A-36)", () => {
+  // `useActiveFilterChips` leía SEIS campos que el store no modela —`canton`,
+  // `language`, `seniority`, `contractType`, `salaryMin`, `salaryMax`— con sus
+  // seis setters. El test de arriba de este fichero YA fijaba que el store
+  // modela otros cuatro, así que el propio repo probaba que esos chips no
+  // podían activarse nunca: 40 líneas muertas de DT-148 A18-01.
+  //
+  // Y lo visible no era sólo código muerto: `location` NO tenía chip, y es el
+  // filtro que A18-01 puso como sustituto de los cuatro retirados — el único
+  // que el núcleo aplica sobre el 100 % de las canónicas (el `canton` está en
+  // el 8,5 %, medido).
+
+  it("cada campo del store tiene su chip, y ninguno sobra", async () => {
+    const { useSearchStore } = await import("../stores/searchStore");
+    const modelados = Object.keys(useSearchStore.getState()).filter(
+      (k) => typeof useSearchStore.getState()[k] !== "function",
+    );
+
+    const fuente = await import("../pages/SearchPage.jsx?raw").catch(() => null);
+    // Si el import `?raw` no está disponible se lee del disco.
+    const texto =
+      fuente?.default ??
+      (await import("node:fs")).readFileSync(
+        new URL("../pages/SearchPage.jsx", import.meta.url),
+        "utf8",
+      );
+
+    const cuerpo = texto.slice(
+      texto.indexOf("function useActiveFilterChips"),
+      texto.indexOf("return chips;"),
+    );
+
+    // Los campos que el store NO modela no pueden aparecer en los chips.
+    for (const muerto of [
+      "canton",
+      "language",
+      "seniority",
+      "contractType",
+      "salaryMin",
+      "salaryMax",
+    ]) {
+      expect(modelados).not.toContain(muerto);
+      expect(cuerpo).not.toContain(`s.${muerto}`);
+    }
+
+    // Y `location`, que es el que faltaba, sí.
+    expect(modelados).toContain("location");
+    expect(cuerpo).toContain("s.location");
+  });
+});

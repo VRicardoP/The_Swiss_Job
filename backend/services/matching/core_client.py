@@ -461,9 +461,10 @@ class CoreMatching:
         ):
             return 0
         items, _total = await self._fetch_full_feed(core_profile_id, None)
-        pid = str(core_profile_id)
-        if pid in _feed_cache:
-            _feed_verified_at[pid] = time.monotonic()
+        # A-03: NO se sella aqui. El sello lo pone `_remember_feed`, que es el
+        # unico que sabe si el recorrido quedo confirmado contra la version; si
+        # este calentamiento no pudo confirmarlo, la entrada vieja no debe
+        # pasar por fresca.
         return len(items)
 
     async def facets(self, user_id: uuid.UUID) -> dict:
@@ -1086,6 +1087,22 @@ class CoreMatching:
         if len(_feed_cache) >= _FEED_CACHE_MAX and pid not in _feed_cache:
             _feed_cache.clear()
         _feed_cache[pid] = (version, _recortado(items), total)
+        # A-03: el sello de "verificado" se pone AQUI y solo aqui, porque este
+        # es el unico punto del que consta que el recorrido se confirmo contra
+        # la version (lo garantizan las tres comprobaciones de
+        # `_maybe_remember` mas las dos de arriba). Antes lo escribia
+        # `warm_feed` por el mero hecho de que existiera una entrada en
+        # `_feed_cache`, no por haberla confirmado, y como `_feed_verified_at`
+        # es el UNICO criterio de frescura del atajo por categoria, el
+        # calentador lo renovaba cada 60 s sobre una entrada VIEJA. Tres caminos
+        # llegaban asi: `_feed_version` devolviendo None, `_remember_feed`
+        # declinando por `len(items) != total` —que NO es hipotetico: el feed
+        # no excluye vacantes sin canonica a proposito y recuento y version si,
+        # de modo que la discrepancia es el regimen esperado— y la version
+        # cambiada a mitad. El efecto era servir un recorrido rancio por
+        # `/match/results?category=X`, rompiendo por la puerta de atras la cota
+        # "sin version fiable se recorre".
+        _feed_verified_at[pid] = time.monotonic()
 
     async def _fetch_page(
         self,
