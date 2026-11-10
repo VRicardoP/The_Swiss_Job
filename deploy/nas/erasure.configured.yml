@@ -1,0 +1,67 @@
+# swissjob-erasure — reconciliador del borrado GDPR.
+#
+# Copia versionada del compose que corre en el NAS
+# (`/share/CACHEDEV1_DATA/Public/unification-e15-20260914/erasure.configured.yml`),
+# con cada valor sensible sustituido por `${VARIABLE}` — mismo criterio que
+# `core.configured.yml` y `swissjob.configured.yml` (T13 §7 / A19-04).
+#
+# POR QUÉ EXISTE (A-14, cerrado el 2026-11-10). Este contenedor llevaba desde
+# el 2026-09-13 corriendo en producción SIN ninguna definición recuperable: su
+# compose vivía en
+# `/share/CACHEDEV1_DATA/Public/unification-e10.XXkEjw88/e13-erasure/replica.yml`,
+# un directorio con nombre de `mktemp -d` que se limpió. Estaba en la lista del
+# supervisor —así que su muerte se habría NOTADO— pero no se podía ARREGLAR: un
+# `docker rm`, una acción de Container Station o un prune de imágenes lo dejaban
+# irrecuperable. Y es parte del camino de borrado GDPR, que es una obligación
+# legal, no una comodidad.
+#
+# Se reconstruyó desde el `docker inspect` del contenedor vivo y se verificó
+# recreándolo de verdad: vuelve con sus dos redes, sus 11 variables, y
+# `drain_erasures` y `reconcile_replica` responden OK.
+#
+# Es un TERCER proyecto de compose (`swissjob-erasure`), distinto de `swissjob`
+# y `swissjob-r5`. `scripts/deploy_nas.sh` (que acepta `core|bff|frontend`) NO
+# lo toca, así que su imagen no se actualiza con los despliegues normales — ver
+# A-29 en la auditoría: hoy corre `swissjob-backend:d2a38e9`, de 7 semanas antes
+# que el BFF, y por eso invalida una caché que DT-148 B3 ya retiró.
+#
+# Para recrearlo en el NAS:
+#   cd /share/CACHEDEV1_DATA/Public/unification-e15-20260914
+#   /share/Public/swissjob/bin-docker-compose \
+#     -p swissjob-erasure -f erasure.configured.yml up -d
+#
+# (El `docker compose` del QNAP no funciona por SSH; hay un binario dedicado en
+# esa ruta, que es el que usa `deploy_nas.sh`.)
+services:
+  erasure-cdc:
+    container_name: swissjob-erasure-cdc
+    image: ${SWISSJOB_BACKEND_IMAGE}
+    command: [python, -m, services.profile_erasure, --watch]
+    restart: unless-stopped
+    # En el NAS las variables van en `.env.nas.erasure` (600), igual que los
+    # demás servicios de ese directorio. Se listan aquí por NOMBRE para que la
+    # topología sea legible sin acceso a la máquina.
+    environment:
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND}
+      CORE_API_BASE_URL: ${CORE_API_BASE_URL}
+      CORE_CONSUMER_KEY: ${CORE_CONSUMER_KEY}
+      CORE_ERASURE_REPLICA_ID: ${CORE_ERASURE_REPLICA_ID}
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      # Las dos quedan en `false` a propósito: este contenedor NO despacha el
+      # scheduler ni la cosecha, sólo reconcilia borrados. Si se pusieran a
+      # `true` habría un SEGUNDO APScheduler compitiendo con el del BFF.
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED}
+      SCHEDULER_DAILY_HARVEST_ENABLED: ${SCHEDULER_DAILY_HARVEST_ENABLED}
+      SECRET_KEY: ${SECRET_KEY}
+    networks:
+      - swissjob-r5_core-net
+      - swissjob_swissjob-net
+
+networks:
+  swissjob-r5_core-net:
+    external: true
+  swissjob_swissjob-net:
+    external: true
