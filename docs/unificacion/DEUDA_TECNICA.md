@@ -111,6 +111,8 @@
 > | **A-70 + A-66** dos ratchets que no eran ratchets | `6866f45` | Los dos se medían contra sí mismos. A-66 congela por NOMBRE los dos defaults que ya existían: quitarlos exige dos líneas en tu `.env`, así que va a la ventana |
 > | **A-26** ninguna petición tenía techo | `890853d` | 120 s, elegido con las dos cotas medidas (47,5 s el recorrido más lento; 3600 s el techo de nginx). **Queda la otra mitad**: propagar el `signal` de react-query |
 > | **A-35, A-36, A-37, A-38, A-39** tanda acotada de frontend | `3be37c3` | El valor de contraste se CALCULÓ: la propuesta de la auditoría (#8A8A93) daba 3,42:1 y habría dejado el defecto dentro. Con test que recalcula los cuatro pares |
+> | **A-14 + A-29** erasure-cdc sin definición y con código de 7 semanas | `9c0f51a` | **Era PREREQUISITO de la rotación**: es uno de los tres consumidores del rol `swissjob`, y rotarla sin poder recrearlo lo habría roto para siempre |
+> | **A-61 + A-62 + A-16 + A-02** ventana de despliegue | `69a47f1` | Ejecutada el 2026-11-10 en UN ciclo de recreación. Redis exige credencial, broker con `noeviction`, trust proxy activo y credencial rotada — la vieja da `InvalidPasswordError` por la vía real |
 >
 > Suites: **705 backend** (eran 669) y **78 frontend** (eran 63). Ruff limpio.
 >
@@ -126,13 +128,26 @@
 > | **7** | **A-35, A-36, A-37, A-38, A-39** · paginación de guardados, chips muertos, etiquetas sin asociar, foco del modal, contraste | Frontend, acotados, sin riesgo |
 > | **8** | **A-21** · escritor latente de `match_results` | Decidir si la rama local sigue siendo camino de rollback |
 >
-> ### Bloqueados a tu confirmación (ventana de despliegue)
+> ### Bloqueados — y el motivo ya NO es la autorización
 >
-> **A-61 + A-62** (redis de producción sin contraseña y con `allkeys-lru` sobre
-> un broker), **A-16** (`RATE_LIMIT_TRUST_PROXY`, que **no está en ningún
-> compose**), **A-25** (cabeceras de nginx) y **la rotación de A-02**. Las cuatro
-> son la misma operación de mantenimiento: editar `.env.prod` en el NAS y
-> recrear los mismos contenedores. Ver el bloque de A-02 más arriba.
+> La ventana se ejecutó el 2026-11-10. Lo que queda bloqueado lo está por una
+> razón distinta y concreta:
+>
+> - **A-25** (cabeceras de seguridad en `nginx.conf`) **necesita reconstruir la
+>   imagen del frontend**, y `deploy_nas.sh` exige el SHA exacto de
+>   `github/main` — una guarda que existe para que `RELEASE_SHA` no mienta y que
+>   **no se puentea**. Con la rama 33 commits por delante y sin fusionar, no hay
+>   forma legítima de desplegarla.
+> - **Fusionar el PR**: `gh` no está instalado y no hay token; `main` está
+>   protegida con PR obligatorio y 9 checks. **Sólo lo puedes hacer tú.**
+>
+> Es decir: **todo el trabajo de estas sesiones —33 commits— está en la rama y
+> no en producción.** Producción sigue en `point5-14438b7` (BFF y frontend) y
+> `point5-6efebe5` (núcleo), que son de octubre.
+>
+> **A-66 (2ª mitad)**: los dos defaults de `CORE_DB_PASSWORD` y
+> `CORE_REDIS_PASSWORD` del compose de DESARROLLO siguen congelados en el
+> ratchet. Quitarlos exige dos líneas en tu `.env` local, así que no se tocó.
 >
 > **A-10** (`send_watchlist_digest`, no-op que devuelve `ok`) es **decisión del
 > propietario**, no tarea de código.

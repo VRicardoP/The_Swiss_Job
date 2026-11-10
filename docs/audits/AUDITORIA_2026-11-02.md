@@ -234,22 +234,30 @@ fichero**: `python3 scripts/check_compose_exposure.py docker-compose.yml`. Y
 guard comprueba el fichero que está bien y nunca mira el que está mal.** De los
 nueve composes del repo, sólo uno pasa por él.
 
-**Y hay un segundo agujero detrás, peor:** `deploy/nas/swissjob.configured.yml`
-—el fichero que A19-04 versiona como «la topología REAL del NAS» y que
-`deploy_nas.sh bff` retagea— contiene **sólo tres servicios**: `backend`,
-`worker` y `frontend`. **No define `redis` ni `postgres`.** Los dos únicos
-ficheros de `deploy/nas/` con una definición de redis son
-`containerstation-swissjob.yml` y `rehearsal-r5.yml`. Así que la afirmación «la
-topología REAL del NAS está versionada en `deploy/nas/`» es **incompleta en dos
-sitios**: le falta `swissjob-erasure-cdc` (A-14) y le faltan los servicios de
-datos del BFF.
+**Y hay un segundo agujero detrás:** `deploy/nas/swissjob.configured.yml` —el
+fichero que `deploy_nas.sh bff` retagea— contiene **sólo tres servicios**:
+`backend`, `worker` y `frontend`. No define `redis` ni `postgres`.
 
-**Fix:** `--requirepass` + healthcheck autenticado (copiar el patrón de
-`docker-compose.yml:33-56`), y **ejecutar `check_compose_exposure.py` sobre los
-nueve composes**, `deploy/nas/*` incluidos. Nótese que el orden importa: poner la
-contraseña exige que `REDIS_PASSWORD` llegue al contenedor y que el BFF y los dos
-workers la lleven en su URL, o se reproduce el bucle de `NOAUTH` que `CLAUDE.md`
-documenta.
+> **CORRECCIÓN (2026-11-10, al ejecutarlo).** De ahí concluí que la topología
+> estaba «incompleta en dos sitios». **Sólo lo estaba en uno.** `redis` y
+> `postgres` viven en el fichero PROPIO de Container Station
+> (`/share/.../container-station/data/application/swissjob/docker-compose.yml`),
+> y el repo SÍ lo versiona: es `deploy/nas/containerstation-swissjob.yml`. El
+> único hueco real era `swissjob-erasure-cdc` (A-14), ya cerrado. Lo que me
+> faltó fue comprobar qué compose define cada contenedor
+> (`docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}'`)
+> antes de sacar la conclusión.
+
+**Fix:** `--requirepass` + healthcheck autenticado, y **ejecutar
+`check_compose_exposure.py` sobre los nueve composes**. El orden importa: poner la
+contraseña exige que llegue al contenedor Y a la URL de los tres consumidores, o
+se reproduce el bucle de `NOAUTH` que `CLAUDE.md` documenta.
+
+> **CERRADO el 2026-11-10** (`69a47f1`). `redis-cli ping` sin credencial responde
+> ya `NOAUTH Authentication required.`. La credencial se puso DENTRO de la URL de
+> los tres consumidores (backend, worker, erasure-cdc) en vez de en una variable
+> aparte, para no depender del validador de `config.py`. Worker de Celery:
+> `1 node online`, cero `NOAUTH` en su log.
 
 ## A-62 · Ese mismo redis es un broker con política de EXPULSIÓN
 **Área:** `deploy/nas/containerstation-swissjob.yml` · **CONFIRMADO EJECUTANDO**
@@ -927,9 +935,19 @@ funcional**:
 un único consumidor y existir «para invalidar la caché que se iba».
 
 **Impacto:** al confirmar un borrado, producción invalida la caché VIEJA y **no**
-la del feed ni la de presentación escolar del perfil borrado. El payload cacheado
-de un usuario borrado puede sobrevivir en Redis hasta su TTL. Es GDPR, acotado hoy
+la de presentación escolar del perfil borrado, ni avisa al otro worker de
+gunicorn. El payload cacheado puede sobrevivir hasta su TTL. Es GDPR, acotado hoy
 sólo porque ha habido UNA petición de borrado en toda la vida del sistema.
+
+> **CORRECCIÓN (2026-11-10, al ejecutarlo).** Este párrafo decía que producción
+> «no invalida la del feed». Es FALSO: `d2a38e9` sí llama a `clear_feed_cache`.
+> Lo que le faltan son `clear_school_presentation_cache` y
+> `publicar_sin_esperar`. Comprobado con `git show` de las dos versiones del
+> fichero, que es lo que debí hacer al escribirlo.
+
+> **CERRADO el 2026-11-10** (`9c0f51a`): el contenedor apunta ya a
+> `swissjob-backend:point5-14438b7`, la misma imagen que el BFF corre, que sí
+> trae las tres llamadas.
 
 **Fix:** reconstruir el contenedor con la imagen vigente — que **requiere A-14
 antes**, porque no hay compose con el que recrearlo. Los dos van juntos.
