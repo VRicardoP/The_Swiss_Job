@@ -18,6 +18,11 @@ FROM nginx:1.27-alpine
 # El entrypoint oficial expande solo variables de entorno, no $host/$uri de nginx.
 ENV SWISSJOB_BACKEND_HOST=swissjob-backend
 COPY nginx.conf /etc/nginx/templates/default.conf.template
+# A-25: las cabeceras de seguridad van en un fichero aparte porque `add_header`
+# NO se hereda en un bloque que tenga su propio `add_header`, y los tres
+# `location` de este vhost tienen uno. NO va en `templates/` a propósito: no
+# lleva variables que expandir, y el entrypoint sólo procesa lo que hay ahí.
+COPY nginx-security-headers.conf /etc/nginx/nginx-security-headers.conf
 
 # Bundle estático
 COPY --from=builder /app/dist /usr/share/nginx/html
