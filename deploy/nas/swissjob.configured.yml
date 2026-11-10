@@ -14,6 +14,7 @@ services:
     container_name: swissjob-backend
     environment:
       REDIS_URL: ${REDIS_URL}
+      RATE_LIMIT_TRUST_PROXY: "true"
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       SMTP_USER: ${SMTP_USER}
       CELERY_BROKER_URL: ${CELERY_BROKER_URL}
@@ -134,6 +135,7 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       CELERY_BROKER_URL: ${CELERY_BROKER_URL}
       REDIS_URL: ${REDIS_URL}
+      RATE_LIMIT_TRUST_PROXY: "true"
       SECRET_KEY: ${SECRET_KEY}
       SMTP_FROM: ${SMTP_FROM}
       TEACHER_ALERT_EMAIL: ${TEACHER_ALERT_EMAIL}
