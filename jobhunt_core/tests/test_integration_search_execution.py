@@ -334,6 +334,107 @@ def test_schedule_and_manual_run_and_authority_disable(db):  # noqa: F811  (la f
     asyncio.run(go())
 
 
+@pytest.mark.parametrize("hours_ago, expected_due", [(1, False), (7, True)])
+@pytest.mark.parametrize("has_previous_run", [False, True])
+def test_failed_search_cooldown_before_next_sweep(
+    db,  # noqa: F811  (la fixture, no una redefinición)
+    hours_ago,
+    expected_due,
+    has_previous_run,
+):
+    factory, made = db
+
+    async def go():
+        async with factory() as s:
+            sid, _, _, _ = await new_search(s, made)
+            if has_previous_run:
+                await s.execute(
+                    sa.text(
+                        "UPDATE saved_searches SET last_run_at="
+                        "clock_timestamp() - interval '2 days' WHERE id=:id"
+                    ),
+                    {"id": sid},
+                )
+            await execution.record_failed_attempt(s, sid)
+            await s.execute(
+                sa.text(
+                    "UPDATE saved_search_execution SET last_attempt_at="
+                    "clock_timestamp() - CAST(:age AS interval) "
+                    "WHERE saved_search_id=:id"
+                ),
+                {"id": sid, "age": timedelta(hours=hours_ago)},
+            )
+            await s.commit()
+
+            assert (sid in await execution.due_search_ids(s)) is expected_due
+            assert execution.FAILED_SEARCH_COOLDOWN == timedelta(hours=6)
+
+    asyncio.run(go())
+
+
+def test_successful_search_is_due_again_after_its_frequency(db):  # noqa: F811  (la fixture, no una redefinición)
+    factory, made = db
+
+    async def go():
+        async with factory() as s:
+            sid, _, tenant, _ = await new_search(s, made)
+            assert (await run(s, sid, tenant))["status"] == "ok"
+            assert await s.scalar(
+                sa.text(
+                    "SELECT ss.last_run_at = e.last_attempt_at FROM saved_searches ss "
+                    "JOIN saved_search_execution e ON e.saved_search_id=ss.id "
+                    "WHERE ss.id=:id"
+                ),
+                {"id": sid},
+            )
+            # El éxito conserva el mismo sello al simular dos días transcurridos.
+            await s.execute(
+                sa.text(
+                    "UPDATE saved_searches SET last_run_at="
+                    "last_run_at - interval '2 days' WHERE id=:id"
+                ),
+                {"id": sid},
+            )
+            await s.execute(
+                sa.text(
+                    "UPDATE saved_search_execution SET last_attempt_at="
+                    "last_attempt_at - interval '2 days' WHERE saved_search_id=:id"
+                ),
+                {"id": sid},
+            )
+            await s.commit()
+
+            assert sid in await execution.due_search_ids(s)
+
+    asyncio.run(go())
+
+
+def test_never_attempted_search_is_due(db):  # noqa: F811  (la fixture, no una redefinición)
+    factory, made = db
+
+    async def go():
+        async with factory() as s:
+            sid, _, _, _ = await new_search(s, made)
+            assert sid in await execution.due_search_ids(s)
+
+    asyncio.run(go())
+
+
+def test_manual_search_bypasses_failed_search_cooldown(db):  # noqa: F811  (la fixture, no una redefinición)
+    factory, made = db
+
+    async def go():
+        async with factory() as s:
+            sid, _, tenant, _ = await new_search(s, made)
+            await execution.record_failed_attempt(s, sid)
+            await s.commit()
+
+            assert sid not in await execution.due_search_ids(s)
+            assert (await run(s, sid, tenant, force=True))["status"] == "ok"
+
+    asyncio.run(go())
+
+
 def test_search_delete_cascades_derived_state(db):  # noqa: F811  (la fixture, no una redefinición)
     factory, made = db
     corpus(factory, made, "Python developer")

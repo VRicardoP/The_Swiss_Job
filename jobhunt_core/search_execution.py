@@ -21,6 +21,7 @@ from jobhunt_core.saved_search_query import SwissJobSearchFilters, matching_quer
 
 CONTRACT = "swissjob-v1"
 MATCH_EVENT = "saved_search.matches"
+FAILED_SEARCH_COOLDOWN = timedelta(hours=6)
 INTERVALS = {
     "realtime": timedelta(minutes=5),
     "daily": timedelta(days=1),
@@ -221,6 +222,7 @@ async def due_search_ids(session, *, limit: int = 100):
     """Fair bounded sweep; locks are taken only when each aggregate executes."""
     if type(limit) is not int or not 1 <= limit <= 1000:
         raise ValueError("invalid search batch limit")
+    # El éxito iguala ambos sellos; un intento posterior al último éxito falló.
     return (
         (
             await session.execute(
@@ -234,9 +236,11 @@ async def due_search_ids(session, *, limit: int = 100):
               WHEN 'realtime' THEN interval '5 minutes'
               WHEN 'daily' THEN interval '1 day'
               WHEN 'weekly' THEN interval '7 days' END)
+          AND (e.last_attempt_at IS NULL OR e.last_attempt_at <= ss.last_run_at
+            OR e.last_attempt_at <= clock_timestamp() - CAST(:failed_cooldown AS interval))
         ORDER BY e.last_attempt_at NULLS FIRST, ss.id LIMIT :limit
     """),
-                {"limit": limit},
+                {"limit": limit, "failed_cooldown": FAILED_SEARCH_COOLDOWN},
             )
         )
         .scalars()
