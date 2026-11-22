@@ -7,6 +7,7 @@ from typing import Literal
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Path, Query, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import DBAPIError
 
 from jobhunt_core import runs, source_aggregate
 from jobhunt_core.api.deps import ApiError, get_session, require_scope
@@ -15,6 +16,7 @@ from jobhunt_core.api.idempotency import run_idempotent
 from jobhunt_core.tasks.harvest import run_scope_task
 
 router = APIRouter(prefix="/v1/harvest", tags=["harvest"])
+AGGREGATE_STATEMENT_TIMEOUT = "110s"
 
 
 class HarvestRunAcceptedDTO(BaseModel):
@@ -118,13 +120,28 @@ async def get_source_aggregate(
     source = source.strip().lower()
     if not source:
         raise ApiError(400, "invalid_source", "fuente vacía")
-    aggregate = await source_aggregate.fetch_source_aggregate(
-        session,
-        source,
-        item_limit=item_limit,
-        top_n=top_n,
-        lease=runs.SCOPE_LEASE_S,
-    )
+    try:
+        await session.execute(
+            sa.text("SELECT set_config('statement_timeout', :timeout, true)"),
+            {"timeout": AGGREGATE_STATEMENT_TIMEOUT},
+        )
+        aggregate = await source_aggregate.fetch_source_aggregate(
+            session,
+            source,
+            item_limit=item_limit,
+            top_n=top_n,
+            lease=runs.SCOPE_LEASE_S,
+        )
+    except DBAPIError as exc:
+        orig = getattr(exc, "orig", None)
+        code = getattr(orig, "pgcode", None) or getattr(orig, "sqlstate", None)
+        # 57014 incluye el timeout y la cancelación manual de esta lectura.
+        if code != "57014":
+            raise
+        await session.rollback()
+        raise ApiError(
+            503, "aggregate_timeout", "lectura del agregado cancelada"
+        ) from exc
     if aggregate is None:
         raise ApiError(404, "not_found", "fuente no encontrada")
     payload = SourceAggregateDTO(**aggregate).model_dump(mode="json")
