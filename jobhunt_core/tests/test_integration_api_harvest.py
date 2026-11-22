@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from jobhunt_core import runs
 from jobhunt_core.tests.test_integration_api import (  # noqa: F401
@@ -574,3 +576,79 @@ def test_source_aggregate_requires_read_scope_and_known_source(db):  # noqa: F81
         factory, "/v1/harvest/sources/no_such_source/aggregate", token=reader
     )
     assert (missing.status_code, missing.json()["code"]) == (404, "not_found")
+
+
+def test_source_aggregate_sets_local_timeout_before_query(db):  # noqa: F811
+    from jobhunt_core import source_aggregate
+
+    factory, created = db
+    source, _ = _seed_source(factory, created)
+    _cid, _kid, token = _issue(factory, created, "timeout-reader", ["vacancies:read"])
+    fetch = source_aggregate.fetch_source_aggregate
+    observed = []
+
+    async def check_timeout(session, *args, **kwargs):
+        observed.append(await session.scalar(sa.text("SHOW statement_timeout")))
+        return await fetch(session, *args, **kwargs)
+
+    with patch.object(source_aggregate, "fetch_source_aggregate", check_timeout):
+        response = _api(factory, f"/v1/harvest/sources/{source}/aggregate", token=token)
+    assert response.status_code == 200
+    assert observed == ["110s"]
+
+    async def outside_request():
+        async with factory() as session:
+            assert await session.scalar(sa.text("SHOW statement_timeout")) == "0"
+
+    asyncio.run(outside_request())
+
+
+@pytest.mark.parametrize("driver", ["postgres", "pgcode", "sqlstate"])
+def test_source_aggregate_cancellation_rolls_back_and_returns_503(db, driver):  # noqa: F811
+    factory, created = db
+    source, _ = _seed_source(factory, created)
+    _cid, _kid, token = _issue(factory, created, "cancel-reader", ["vacancies:read"])
+    rollback = AsyncSession.rollback
+    recovered = []
+
+    async def cancel(session, *args, **kwargs):
+        if driver == "postgres":
+            await session.execute(sa.text("SET LOCAL statement_timeout='1ms'"))
+            await session.execute(sa.text("SELECT pg_sleep(0.05)"))
+            pytest.fail("PostgreSQL did not cancel the query")
+        error = RuntimeError("query cancelled")
+        setattr(error, driver, "57014")
+        raise DBAPIError(None, None, error)
+
+    async def check_rollback(session):
+        await rollback(session)
+        assert await session.scalar(sa.text("SHOW statement_timeout")) == "0"
+        recovered.append(await session.scalar(sa.text("SELECT 1")))
+        await rollback(session)
+
+    with (
+        patch("jobhunt_core.source_aggregate.fetch_source_aggregate", cancel),
+        patch.object(AsyncSession, "rollback", check_rollback),
+    ):
+        response = _api(factory, f"/v1/harvest/sources/{source}/aggregate", token=token)
+    assert (response.status_code, response.json()["code"]) == (503, "aggregate_timeout")
+    assert recovered == [1]
+
+
+@pytest.mark.parametrize("sqlstate", ["23505", None])
+def test_source_aggregate_does_not_reclassify_other_database_errors(db, sqlstate):  # noqa: F811
+    factory, created = db
+    source, _ = _seed_source(factory, created)
+    _cid, _kid, token = _issue(factory, created, "error-reader", ["vacancies:read"])
+    original = RuntimeError("other database failure")
+    if sqlstate is not None:
+        original.sqlstate = sqlstate
+    error = DBAPIError(None, None, original)
+
+    async def fail(*args, **kwargs):
+        raise error
+
+    with patch("jobhunt_core.source_aggregate.fetch_source_aggregate", fail):
+        with pytest.raises(DBAPIError) as raised:
+            _api(factory, f"/v1/harvest/sources/{source}/aggregate", token=token)
+    assert raised.value is error
