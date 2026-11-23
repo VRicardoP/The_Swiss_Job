@@ -2,10 +2,10 @@
 
 import sqlalchemy as sa
 
-_SOURCE_AGGREGATE_SQL = sa.text(
-    """
-    WITH source_rows AS MATERIALIZED (
-      SELECT i.id AS incarnation_id, sl.external_id, i.url, i.apply_url,
+# The aggregate and the light "recent" read share these fragments, so both
+# keep one definition of a row, of the latest observation and of the order.
+
+_ROW_COLUMNS = """      SELECT i.id AS incarnation_id, sl.external_id, i.url, i.apply_url,
              i.first_seen_at, i.last_seen_at,
              o.content->>'title' AS title,
              o.content->>'company' AS company,
@@ -36,15 +36,18 @@ _SOURCE_AGGREGATE_SQL = sa.text(
              COALESCE(o.content->>'employment_type', latest.job_type) AS job_type,
              latest.job_types_raw,
              latest.published_at, latest.source_order
-      FROM sources s
+"""
+
+_ROW_JOINS = """      FROM sources s
       JOIN source_listings sl ON sl.source_id=s.id
       JOIN source_listing_incarnations i
         ON i.source_listing_id=sl.id AND i.ended_at IS NULL
       JOIN vacancies v
         ON v.id=i.vacancy_id AND v.archived_at IS NULL AND v.merged_into IS NULL
       JOIN offer_revisions o ON o.id=v.current_offer_revision_id
-      LEFT JOIN LATERAL (
-        SELECT COALESCE(
+"""
+
+_LATEST_A = """        SELECT COALESCE(
                  CASE WHEN jsonb_typeof(r.raw->'category')='string'
                       THEN r.raw->>'category' END,
                  CASE WHEN jsonb_typeof(r.raw->'_core_category')='string'
@@ -81,9 +84,13 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                CASE WHEN jsonb_typeof(r.raw->'_core_statistics_location')='string'
                     THEN r.raw->>'_core_statistics_location' END
                  AS statistics_location,
-               CASE WHEN jsonb_typeof(r.raw->'_core_order')='number'
+"""
+
+_SOURCE_ORDER = """               CASE WHEN jsonb_typeof(r.raw->'_core_order')='number'
                     THEN (r.raw->>'_core_order')::int END AS source_order,
-               CASE WHEN jsonb_typeof(r.raw->'job_city')='string'
+"""
+
+_LATEST_B = """               CASE WHEN jsonb_typeof(r.raw->'job_city')='string'
                     THEN r.raw->>'job_city' END AS city,
                CASE WHEN jsonb_typeof(r.raw->'job_state')='string'
                     THEN r.raw->>'job_state' END AS state,
@@ -99,7 +106,9 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                ) AS provider_description,
                CASE WHEN jsonb_typeof(r.raw->'job_id') IN ('string','number')
                     THEN r.raw->>'job_id' END AS provider_id,
-               COALESCE(
+"""
+
+_PUBLISHED_AT = """               COALESCE(
                  CASE WHEN jsonb_typeof(r.raw->'publication_date')='string'
                       THEN r.raw->'publication_date' END,
                  CASE WHEN jsonb_typeof(r.raw->'created_at')='string'
@@ -129,13 +138,15 @@ _SOURCE_AGGREGATE_SQL = sa.text(
                  CASE WHEN jsonb_typeof(r.raw->'date_posted')='string'
                        THEN r.raw->'date_posted' END
                ) AS published_at
-        FROM source_listing_revisions r
+"""
+
+_LATEST_END = """        FROM source_listing_revisions r
         WHERE r.incarnation_id=i.id
         ORDER BY r.fetched_at DESC, r.id DESC LIMIT 1
       ) latest ON true
-      WHERE s.name=:source
-    ),
-    source_meta AS (
+"""
+
+_SOURCE_META = """    source_meta AS (
       SELECT count(*) FILTER (WHERE hs.enabled)::int AS enabled_scopes,
              count(sss.scope_id) FILTER (WHERE hs.enabled)::int AS observed_scopes,
              max(sss.last_complete_at) FILTER (WHERE hs.enabled) AS last_complete_at,
@@ -147,7 +158,9 @@ _SOURCE_AGGREGATE_SQL = sa.text(
       LEFT JOIN source_scope_state sss ON sss.scope_id=hs.id
       WHERE s.name=:source
     ),
-    recent AS (
+"""
+
+_RECENT_HEAD = """    recent AS (
       SELECT jsonb_build_object(
                'external_id', external_id,
                'provider_id', provider_id,
@@ -188,7 +201,9 @@ _SOURCE_AGGREGATE_SQL = sa.text(
              ) AS item,
              last_seen_at, incarnation_id, published_at, source_order
       FROM source_rows
-      ORDER BY
+"""
+# Shared order of recent items: the light read picks its winners with it.
+_RECENT_ORDER_LIMIT = """      ORDER BY
         CASE WHEN :source IN ('adzuna','jsearch')
              THEN published_at #>> '{}' END DESC NULLS LAST,
         CASE WHEN :source IN ('adzuna','jsearch') THEN source_order END ASC NULLS LAST,
@@ -196,8 +211,43 @@ _SOURCE_AGGREGATE_SQL = sa.text(
              THEN source_order END ASC NULLS LAST,
         last_seen_at DESC, incarnation_id
       LIMIT :item_limit
-    ),
-    location_counts AS (
+"""
+_RECENT = _RECENT_HEAD + _RECENT_ORDER_LIMIT + "    ),\n"
+
+_META_SELECT = """           meta.enabled_scopes, meta.observed_scopes,
+           meta.last_complete_at, meta.last_query, meta.max_failures,
+           EXISTS(
+             SELECT 1 FROM source_harvest_runs shr
+             JOIN harvest_scopes hs ON hs.id=shr.scope_id
+             JOIN sources s ON s.id=hs.source_id
+             WHERE s.name=:source AND shr.status='running'
+               AND shr.finished_at IS NULL
+               AND COALESCE(shr.heartbeat_at, shr.started_at) >=
+                   clock_timestamp()-make_interval(secs => :lease)
+           ) AS update_in_progress,
+"""
+
+_ITEMS = """           COALESCE((SELECT jsonb_agg(item ORDER BY
+                       CASE WHEN :source IN ('adzuna','jsearch')
+                            THEN published_at #>> '{}' END DESC NULLS LAST,
+                       CASE WHEN :source IN ('adzuna','jsearch')
+                            THEN source_order END ASC NULLS LAST,
+                       CASE WHEN :source IN ('dynamitejobs','jobscout24')
+                            THEN source_order END ASC NULLS LAST,
+                       last_seen_at DESC, incarnation_id)
+                     FROM recent), '[]'::jsonb) AS items,
+"""
+
+_LATEST_LATERAL = (
+    "      LEFT JOIN LATERAL (\n"
+    + _LATEST_A
+    + _SOURCE_ORDER
+    + _LATEST_B
+    + _PUBLISHED_AT
+    + _LATEST_END
+)
+
+_COUNTS = """    location_counts AS (
       SELECT value, count(*)::int AS n FROM (
         SELECT statistics_location AS value FROM source_rows
       ) values_ WHERE value IS NOT NULL AND btrim(value)<>''
@@ -277,30 +327,9 @@ _SOURCE_AGGREGATE_SQL = sa.text(
       ) values_ WHERE value IS NOT NULL AND btrim(value)<>''
       GROUP BY value ORDER BY n DESC, value LIMIT :top_n
     )
-    SELECT EXISTS(SELECT 1 FROM sources WHERE name=:source) AS found,
-           (SELECT count(*)::int FROM source_rows) AS total,
-           (SELECT max(last_seen_at) FROM source_rows) AS corpus_updated_at,
-           meta.enabled_scopes, meta.observed_scopes,
-           meta.last_complete_at, meta.last_query, meta.max_failures,
-           EXISTS(
-             SELECT 1 FROM source_harvest_runs shr
-             JOIN harvest_scopes hs ON hs.id=shr.scope_id
-             JOIN sources s ON s.id=hs.source_id
-             WHERE s.name=:source AND shr.status='running'
-               AND shr.finished_at IS NULL
-               AND COALESCE(shr.heartbeat_at, shr.started_at) >=
-                   clock_timestamp()-make_interval(secs => :lease)
-           ) AS update_in_progress,
-           COALESCE((SELECT jsonb_agg(item ORDER BY
-                       CASE WHEN :source IN ('adzuna','jsearch')
-                            THEN published_at #>> '{}' END DESC NULLS LAST,
-                       CASE WHEN :source IN ('adzuna','jsearch')
-                            THEN source_order END ASC NULLS LAST,
-                       CASE WHEN :source IN ('dynamitejobs','jobscout24')
-                            THEN source_order END ASC NULLS LAST,
-                       last_seen_at DESC, incarnation_id)
-                     FROM recent), '[]'::jsonb) AS items,
-           COALESCE((SELECT jsonb_object_agg(value, n) FROM location_counts),
+"""
+
+_COUNT_SELECTS = """           COALESCE((SELECT jsonb_object_agg(value, n) FROM location_counts),
                     '{}'::jsonb) AS locations,
            COALESCE((SELECT jsonb_object_agg(value, n) FROM tag_counts),
                     '{}'::jsonb) AS tags,
@@ -320,9 +349,88 @@ _SOURCE_AGGREGATE_SQL = sa.text(
             FROM source_rows) AS remote,
            (SELECT count(*) FILTER (WHERE remote IS FALSE)::int
             FROM source_rows) AS onsite
-    FROM source_meta meta
-    """
+"""
+
+_SOURCE_AGGREGATE_SQL = sa.text(
+    "\n    WITH source_rows AS MATERIALIZED (\n"
+    + _ROW_COLUMNS
+    + _ROW_JOINS
+    + _LATEST_LATERAL
+    + "      WHERE s.name=:source\n    ),\n"
+    + _SOURCE_META
+    + _RECENT
+    + _COUNTS
+    + "    SELECT EXISTS(SELECT 1 FROM sources WHERE name=:source) AS found,\n"
+    + "           (SELECT count(*)::int FROM source_rows) AS total,\n"
+    + "           (SELECT max(last_seen_at) FROM source_rows) AS corpus_updated_at,\n"
+    + _META_SELECT
+    + _ITEMS
+    + _COUNT_SELECTS
+    + "    FROM source_meta meta\n    "
 )
+
+# Only these sources order their recent items by fields of the latest raw
+# observation; every other source orders by last_seen_at alone.
+_RAW_ORDERED_SOURCES = "('adzuna','jsearch','dynamitejobs','jobscout24')"
+
+# Light read for recent items: rank the current incarnations with the minimal
+# keys first, then extract the full row only for the `item_limit` winners.
+# The aggregate extracts every JSON field of EVERY row before limiting, which
+# is what made a recent list cost minutes on large sources (NAS, 2026-11).
+_SOURCE_RECENT_SQL = sa.text(
+    "\n    WITH candidates AS MATERIALIZED (\n"
+    + "      SELECT i.id AS incarnation_id, i.last_seen_at,\n"
+    + "             latest.published_at, latest.source_order\n"
+    + _ROW_JOINS
+    + "      LEFT JOIN LATERAL (\n"
+    + "        SELECT "
+    + _PUBLISHED_AT.lstrip()
+    + "               , "
+    + _SOURCE_ORDER.lstrip().rstrip().rstrip(",")
+    + "\n"
+    + _LATEST_END.replace(
+        "        WHERE r.incarnation_id=i.id\n",
+        "        WHERE r.incarnation_id=i.id\n"
+        f"          AND :source IN {_RAW_ORDERED_SOURCES}\n",
+    )
+    + "      WHERE s.name=:source\n    ),\n"
+    + "    chosen AS (\n"
+    + "      SELECT incarnation_id FROM candidates\n"
+    + _RECENT_ORDER_LIMIT
+    + "    ),\n"
+    + "    source_rows AS MATERIALIZED (\n"
+    + _ROW_COLUMNS
+    + _ROW_JOINS
+    + _LATEST_LATERAL
+    + "      WHERE s.name=:source\n"
+    + "        AND i.id IN (SELECT incarnation_id FROM chosen)\n"
+    + "    ),\n"
+    + _SOURCE_META
+    + _RECENT.rstrip().rstrip(",")
+    + "\n"
+    + "    SELECT EXISTS(SELECT 1 FROM sources WHERE name=:source) AS found,\n"
+    + "           (SELECT count(*)::int FROM candidates) AS total,\n"
+    + "           (SELECT max(last_seen_at) FROM candidates) AS corpus_updated_at,\n"
+    + _META_SELECT
+    + _ITEMS.rstrip().rstrip(",")
+    + "\n    FROM source_meta meta\n    "
+)
+
+
+def _snapshot(source: str, row) -> dict:
+    """Fields shared by the aggregate and the light recent read."""
+    return {
+        "source": source,
+        "total": row["total"],
+        "corpus_updated_at": row["corpus_updated_at"],
+        "last_complete_at": row["last_complete_at"],
+        "last_query": row["last_query"],
+        "enabled_scopes": row["enabled_scopes"],
+        "observed_scopes": row["observed_scopes"],
+        "max_consecutive_failures": row["max_failures"],
+        "update_in_progress": row["update_in_progress"],
+        "items": row["items"],
+    }
 
 
 async def fetch_source_aggregate(
@@ -346,15 +454,7 @@ async def fetch_source_aggregate(
     if not row["found"]:
         return None
     return {
-        "source": source,
-        "total": row["total"],
-        "corpus_updated_at": row["corpus_updated_at"],
-        "last_complete_at": row["last_complete_at"],
-        "last_query": row["last_query"],
-        "enabled_scopes": row["enabled_scopes"],
-        "observed_scopes": row["observed_scopes"],
-        "max_consecutive_failures": row["max_failures"],
-        "update_in_progress": row["update_in_progress"],
+        **_snapshot(source, row),
         "counts": {
             "locations": row["locations"],
             "tags": row["tags"],
@@ -367,5 +467,22 @@ async def fetch_source_aggregate(
             "remote": row["remote"],
             "onsite": row["onsite"],
         },
-        "items": row["items"],
     }
+
+
+async def fetch_source_recent(session, source: str, *, item_limit: int, lease: int):
+    """Same items, total, freshness and harvest state as the aggregate, without
+    its per-dimension counts."""
+    row = (
+        (
+            await session.execute(
+                _SOURCE_RECENT_SQL,
+                {"source": source, "item_limit": item_limit, "lease": lease},
+            )
+        )
+        .mappings()
+        .one()
+    )
+    if not row["found"]:
+        return None
+    return _snapshot(source, row)

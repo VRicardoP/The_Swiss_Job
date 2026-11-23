@@ -70,7 +70,7 @@ class SourceAggregateCountsDTO(BaseModel):
     onsite: int = Field(ge=0)
 
 
-class SourceAggregateDTO(BaseModel):
+class SourceRecentDTO(BaseModel):
     source: str
     total: int = Field(ge=0)
     corpus_updated_at: datetime | None = None
@@ -80,8 +80,11 @@ class SourceAggregateDTO(BaseModel):
     observed_scopes: int = Field(ge=0)
     max_consecutive_failures: int = Field(ge=0)
     update_in_progress: bool
-    counts: SourceAggregateCountsDTO
     items: list[SourceAggregateItemDTO]
+
+
+class SourceAggregateDTO(SourceRecentDTO):
+    counts: SourceAggregateCountsDTO
 
 
 async def _enabled_scope_ids(session, source: str) -> list[str]:
@@ -102,6 +105,34 @@ async def _enabled_scope_ids(session, source: str) -> list[str]:
     ]
 
 
+async def _bounded_read(session, read):
+    """Run one catalog read under AGGREGATE_STATEMENT_TIMEOUT; a cancelled read
+    rolls back and becomes a 503 instead of an orphaned query."""
+    try:
+        await session.execute(
+            sa.text("SELECT set_config('statement_timeout', :timeout, true)"),
+            {"timeout": AGGREGATE_STATEMENT_TIMEOUT},
+        )
+        return await read()
+    except DBAPIError as exc:
+        orig = getattr(exc, "orig", None)
+        code = getattr(orig, "pgcode", None) or getattr(orig, "sqlstate", None)
+        # 57014 incluye el timeout y la cancelación manual de esta lectura.
+        if code != "57014":
+            raise
+        await session.rollback()
+        raise ApiError(
+            503, "aggregate_timeout", "lectura del agregado cancelada"
+        ) from exc
+
+
+def _source_name(source: str) -> str:
+    source = source.strip().lower()
+    if not source:
+        raise ApiError(400, "invalid_source", "fuente vacía")
+    return source
+
+
 @router.get(
     "/sources/{source}/aggregate",
     response_model=SourceAggregateDTO,
@@ -117,34 +148,48 @@ async def get_source_aggregate(
 ):
     """Return one bounded catalog snapshot for a registered source."""
     del principal
-    source = source.strip().lower()
-    if not source:
-        raise ApiError(400, "invalid_source", "fuente vacía")
-    try:
-        await session.execute(
-            sa.text("SELECT set_config('statement_timeout', :timeout, true)"),
-            {"timeout": AGGREGATE_STATEMENT_TIMEOUT},
-        )
-        aggregate = await source_aggregate.fetch_source_aggregate(
+    source = _source_name(source)
+    aggregate = await _bounded_read(
+        session,
+        lambda: source_aggregate.fetch_source_aggregate(
             session,
             source,
             item_limit=item_limit,
             top_n=top_n,
             lease=runs.SCOPE_LEASE_S,
-        )
-    except DBAPIError as exc:
-        orig = getattr(exc, "orig", None)
-        code = getattr(orig, "pgcode", None) or getattr(orig, "sqlstate", None)
-        # 57014 incluye el timeout y la cancelación manual de esta lectura.
-        if code != "57014":
-            raise
-        await session.rollback()
-        raise ApiError(
-            503, "aggregate_timeout", "lectura del agregado cancelada"
-        ) from exc
+        ),
+    )
     if aggregate is None:
         raise ApiError(404, "not_found", "fuente no encontrada")
     payload = SourceAggregateDTO(**aggregate).model_dump(mode="json")
+    return with_etag(request, payload)
+
+
+@router.get(
+    "/sources/{source}/recent",
+    response_model=SourceRecentDTO,
+    responses={304: {"description": "Not Modified"}},
+)
+async def get_source_recent(
+    request: Request,
+    source: str = Path(min_length=1, max_length=100),
+    item_limit: int = Query(200, ge=1, le=500),
+    session=Depends(get_session),
+    principal=Depends(require_scope("vacancies:read")),
+):
+    """Recent items, total and harvest state of a source, without the
+    per-dimension counts that make /aggregate scan every row."""
+    del principal
+    source = _source_name(source)
+    recent = await _bounded_read(
+        session,
+        lambda: source_aggregate.fetch_source_recent(
+            session, source, item_limit=item_limit, lease=runs.SCOPE_LEASE_S
+        ),
+    )
+    if recent is None:
+        raise ApiError(404, "not_found", "fuente no encontrada")
+    payload = SourceRecentDTO(**recent).model_dump(mode="json")
     return with_etag(request, payload)
 
 
