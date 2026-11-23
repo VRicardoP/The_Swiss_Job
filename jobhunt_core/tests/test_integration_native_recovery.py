@@ -97,6 +97,24 @@ def test_revision_corpus_generation_and_attempt_watermark(db):
             await session.commit()
 
     asyncio.run(change_corpus_generation())
+    # A corpus change alone waits for the cooldown (one harvest must not
+    # re-evaluate every profile); once it elapses the profile is due again.
+    assert asyncio.run(_targets(factory)) == []
+
+    async def age_last_attempt(seconds):
+        async with factory() as session:
+            await session.execute(
+                sa.text(
+                    "UPDATE profile_recovery_state SET attempted_at = now() - "
+                    "make_interval(secs => :s) WHERE profile_id = :pid"
+                ),
+                {"s": seconds, "pid": profile_id},
+            )
+            await session.commit()
+
+    asyncio.run(age_last_attempt(matching_tasks.RECOVERY_CORPUS_COOLDOWN_S - 60))
+    assert asyncio.run(_targets(factory)) == []
+    asyncio.run(age_last_attempt(matching_tasks.RECOVERY_CORPUS_COOLDOWN_S + 60))
     assert asyncio.run(_targets(factory)) == [profile_id]
 
 

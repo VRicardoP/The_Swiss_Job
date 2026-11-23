@@ -1462,6 +1462,12 @@ async def declare_profile_exclusions(session, profile_id, reglas) -> dict:
                 for r in normalizadas
             ],
         )
+    # A user's change, unlike corpus drift, must not wait for the recovery
+    # cooldown: forget the previous attempts, as the profile snapshot does.
+    await session.execute(
+        sa.text("DELETE FROM profile_recovery_state WHERE profile_id = :p"),
+        {"p": profile_id},
+    )
     return {"declaradas": len(normalizadas)}
 
 

@@ -21,6 +21,13 @@ logger = logging.getLogger(__name__)
 
 RECOVERY_MAX_PROFILES = 1
 RECOVERY_EMBEDDING_ROUNDS = 1
+# Pausa mínima entre dos re-evaluaciones de la MISMA revisión de perfil causadas
+# solo por un cambio del corpus. Cada escritura de la cosecha incrementa
+# `corpus_generation`, así que sin pausa cada cosecha dejaba obsoletos todos los
+# perfiles y el worker los re-evaluaba sin descanso: medido en el NAS el
+# 2026-11-23, 8,9 h de cada 30 con dos consultas híbridas de 4-7 min por perfil.
+# Una revisión nueva del perfil (sin fila de estado) no espera.
+RECOVERY_CORPUS_COOLDOWN_S = 6 * 3600
 _NO_PROFILE = uuid.UUID(int=0)
 
 _ACTIVE_COMBOS_SQL = f"""
@@ -59,7 +66,8 @@ candidates AS (
                             WHERE pe.profile_revision_id = cur.revision_id
                               AND pe.model_id = c.model_id)
                AND (w.profile_revision_id IS NULL
-                    OR w.corpus_generation IS DISTINCT FROM (SELECT generation FROM gen)))
+                    OR (w.corpus_generation IS DISTINCT FROM (SELECT generation FROM gen)
+                        AND w.attempted_at <= now() - make_interval(secs => :cooldown))))
 )
 SELECT ca.id,
        (SELECT min(rs.attempted_at)
@@ -151,6 +159,7 @@ async def _recovery_targets(session) -> list:
                 "evaluated": [_NO_PROFILE],
                 "dim": embeddings.EMBED_DIM,
                 "cap": RECOVERY_MAX_PROFILES,
+                "cooldown": RECOVERY_CORPUS_COOLDOWN_S,
             },
         )
     ).all()

@@ -15,6 +15,8 @@ def test_matching_recovery_is_bounded_and_expires_with_its_tick():
 
     assert matching_tasks.RECOVERY_EMBEDDING_ROUNDS == 1
     assert matching_tasks.RECOVERY_MAX_PROFILES == 1
+    assert matching_tasks.RECOVERY_CORPUS_COOLDOWN_S == 6 * 3600
+    assert "make_interval(secs => :cooldown)" in matching_tasks._RECOVERY_NEEDED_SQL
     assert celery_app.conf.task_routes["jobhunt.matching.recover"] == {
         "queue": "core.matching"
     }

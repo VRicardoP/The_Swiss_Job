@@ -28,7 +28,7 @@ services:
       PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
       PYTHON_VERSION: 3.12.14
       PYTHONDONTWRITEBYTECODE: '1'
-    image: swissjob-core:point5-6efebe5
+    image: swissjob-core:point5-339d254
     logging:
       driver: json-file
       options:
@@ -93,7 +93,7 @@ services:
       PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
       PYTHON_VERSION: 3.12.14
       PYTHONDONTWRITEBYTECODE: '1'
-    image: swissjob-core:point5-6efebe5
+    image: swissjob-core:point5-339d254
     logging:
       driver: json-file
       options:
@@ -140,14 +140,14 @@ services:
       CORE_DELIVERY_HTTP_TOKEN: ${CORE_DELIVERY_HTTP_TOKEN}
       CORE_ENV: prod
       CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
-      CORE_SAVED_SEARCH_EXECUTION_ENABLED: 'true'
+      CORE_SAVED_SEARCH_EXECUTION_ENABLED: 'false'
       GPG_KEY: ${GPG_KEY}
       LANG: C.UTF-8
       PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
       PYTHON_VERSION: 3.12.14
       PYTHONDONTWRITEBYTECODE: '1'
-    image: swissjob-core:point5-6efebe5
+    image: swissjob-core:point5-339d254
     logging:
       driver: json-file
       options:
@@ -198,7 +198,7 @@ services:
       PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
       PYTHON_VERSION: 3.12.14
       PYTHONDONTWRITEBYTECODE: '1'
-    image: swissjob-core:point5-6efebe5
+    image: swissjob-core:point5-339d254
     logging:
       driver: json-file
       options:
@@ -221,9 +221,11 @@ services:
         hard: 65535
     user: core
     volumes:
-    - type: volume
-      source: swissjob-r5_core-hf-cache
+    - type: bind
+      source: /share/external/DEV3301_1/apps-ssd/core-hf-cache
       target: /tmp/hf-cache
+      bind:
+        create_host_path: false
     working_dir: /app
 networks:
   swissjob-r5_core-net:
