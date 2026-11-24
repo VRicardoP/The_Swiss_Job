@@ -140,7 +140,7 @@ services:
       CORE_DELIVERY_HTTP_TOKEN: ${CORE_DELIVERY_HTTP_TOKEN}
       CORE_ENV: prod
       CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
-      CORE_SAVED_SEARCH_EXECUTION_ENABLED: 'false'
+      CORE_SAVED_SEARCH_EXECUTION_ENABLED: 'true'
       GPG_KEY: ${GPG_KEY}
       LANG: C.UTF-8
       PATH: /usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
