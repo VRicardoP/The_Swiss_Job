@@ -62,6 +62,7 @@ services:
       CORE_FEEDBACK_ENABLED: 'true'
       CORE_MATCH_FACETS_ENABLED: 'true'
       FEEDBACK_WRITES_FROZEN: 'false'
+      FEED_WARMUP_INTERVAL_SECONDS: '600'
     restart: unless-stopped
     entrypoint:
     - ./scripts/entrypoint.sh
