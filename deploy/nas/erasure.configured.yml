@@ -36,6 +36,7 @@ services:
   erasure-cdc:
     container_name: swissjob-erasure-cdc
     image: ${SWISSJOB_BACKEND_IMAGE}
+    mem_limit: 256m
     command: [python, -m, services.profile_erasure, --watch]
     restart: unless-stopped
     # En el NAS las variables van en `.env.nas.erasure` (600), igual que los

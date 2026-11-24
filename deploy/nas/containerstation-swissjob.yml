@@ -41,7 +41,7 @@ services:
     - '60'
     - '1'
     - --maxmemory
-    - 512mb
+    - 200mb
     - --maxmemory-policy
     - noeviction
     - --requirepass
