@@ -1,4 +1,4 @@
-"""TES survives the real fenced sink twice with its advert date."""
+"""TES survives the real fenced sink twice with its sitemap date."""
 
 import asyncio
 
@@ -14,19 +14,17 @@ from jobhunt_core.tests.test_integration_harvest import (  # noqa: F401
     db,
     pytestmark,
 )
-from jobhunt_core.tests.test_native_tes import job, page
+from jobhunt_core.tests.test_native_tes import LASTMOD, entry, sitemap
 
 
 def test_tes_double_cycle_keeps_one_identity_per_offer(db, monkeypatch):  # noqa: F811
-    from jobhunt_core.harvest.providers import native_tes as module
-
-    monkeypatch.setattr(module, "PAGE_PAUSE_S", 0)
     factory, made = db
     (scope_id,) = _seed_scopes(factory, made, 1)
-    body = page(
-        [job(1), job(2, location="St. Gallen, Switzerland")],
-        num_found=2,
-        total_pages=1,
+    body = sitemap(
+        entry(
+            "https://www.tes.com/jobs/vacancy/teacher-of-physics-switzerland-2351631"
+        ),
+        entry("https://www.tes.com/jobs/vacancy/houseparent-switzerland-2351632"),
     )
 
     def transport(_request):
@@ -72,10 +70,8 @@ def test_tes_double_cycle_keeps_one_identity_per_offer(db, monkeypatch):  # noqa
             )
 
         assert [row.external_id for row in stored] == ["id:2351631", "id:2351632"]
-        assert stored[1].content["canton"] == "SG"
+        assert stored[1].content["title"] == "Houseparent"
         assert aggregate["total"] == 2
-        assert {item["published_at"] for item in aggregate["items"]} == {
-            "2026-10-11T22:00:00.000Z"
-        }
+        assert {item["published_at"] for item in aggregate["items"]} == {LASTMOD}
 
     asyncio.run(run())
