@@ -819,6 +819,25 @@ def test_harvest_health_alerts_on_failing_and_stale_scopes(db):
     assert out["scopes"] == 3
 
 
+def test_harvest_health_gives_a_weekly_source_its_own_stale_threshold(db, monkeypatch):
+    """Una fuente semanal cumple 7 días sin cosecha cada semana por diseño: con
+    el umbral general alertaría siempre. Con el suyo calla a los 10 días y habla
+    a los 16 (dos pasadas perdidas)."""
+    from jobhunt_core.harvest import health
+
+    factory, created = db
+    (scope,) = _seed_scopes(factory, created, n=1)
+    monkeypatch.setattr(health, "STALE_DAYS_BY_SOURCE", {"arbeitnow": 15})
+    ahora = datetime.now(timezone.utc)
+
+    _set_state(factory, scope, last_complete_at=ahora - timedelta(days=10))
+    assert _health(factory, now=ahora)["alertas"] == []
+    _set_state(factory, scope, last_complete_at=ahora - timedelta(days=16))
+    assert [a["code"] for a in _health(factory, now=ahora)["alertas"]] == [
+        "cosecha_sin_completar"
+    ]
+
+
 def test_harvest_health_alerts_when_a_scope_never_completed_a_sweep(db):
     """El caso EXACTO del barrido parcial perpetuo (G9 P2-C): el scope se ejecuta, persiste
     listings y nunca confirma una cosecha completa. `last_complete_at IS NULL` es la señal —

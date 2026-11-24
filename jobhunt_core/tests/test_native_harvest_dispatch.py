@@ -19,7 +19,12 @@ def test_native_dispatch_has_explicit_core_route_and_cadence():
         "harvest-dispatch-native-6h",
         "harvest-dispatch-native-12h",
         "harvest-dispatch-native-24h",
+        "harvest-dispatch-native-weekly",
     }
+    weekly = entries.pop("harvest-dispatch-native-weekly")
+    assert weekly["kwargs"] == {"cadence_hours": 168}
+    assert weekly["schedule"].day_of_week == {1}
+    assert weekly["schedule"].hour == {23} and weekly["schedule"].minute == {45}
     assert celery_app.conf.task_routes["jobhunt.harvest.dispatch_native"] == {
         "queue": "core.default"
     }
@@ -125,7 +130,8 @@ def test_source_cadence_is_explicit_and_new_sources_default_to_daily():
         for source in harvest.TWELVE_HOUR_SOURCES
     )
     assert harvest.source_cadence_hours("future_provider") == 24
-    assert harvest.source_cadence_hours("JSearch") is None
+    # De pago por página: una pasada semanal, nunca diaria.
+    assert harvest.source_cadence_hours("JSearch") == 168
 
 
 def test_failure_backoff_waits_12_24_then_48_hours():

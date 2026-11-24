@@ -26,9 +26,12 @@ SOURCE_URL_PREFIX = "https://jsearch.p.rapidapi.com/job/"
 RAPIDAPI_HOST = "jsearch.p.rapidapi.com"
 DEFAULT_QUERY = "software developer"
 DEFAULT_COUNTRY = "us"
-DEFAULT_DATE_POSTED = "month"
+# RapidAPI cobra una petición por página. El ámbito programado es semanal y
+# pide solo lo publicado esa semana: una página por pasada, 4-5 al mes (antes
+# 10 páginas del último mes en cada pasada). La búsqueda manual hereda el coste.
+DEFAULT_DATE_POSTED = "week"
 DEFAULT_PAGE = 1
-DEFAULT_NUM_PAGES = 10
+DEFAULT_NUM_PAGES = 1
 MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 MAX_RETRIES = 3
 RETRY_STATUSES = {429, 500, 502, 503, 504}

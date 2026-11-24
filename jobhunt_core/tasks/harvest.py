@@ -7,7 +7,7 @@ estado del scope avanzaría sin persistir. Convención del repo: tareas con
 
 import asyncio
 from contextlib import nullcontext
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import logging
 import uuid
@@ -26,7 +26,8 @@ from jobhunt_core.harvest.types import ScopeRunResult
 
 logger = logging.getLogger(__name__)
 
-HARVEST_CADENCES = (6, 12, 24)
+WEEKLY_CADENCE_HOURS = 168
+HARVEST_CADENCES = (6, 12, 24, WEEKLY_CADENCE_HOURS)
 SIX_HOUR_SOURCES = frozenset(
     {"jobgether", "himalayas", "jobicy", "jobscout24", "jobroom"}
 )
@@ -42,7 +43,8 @@ TWELVE_HOUR_SOURCES = frozenset(
         "weworkremotely",
     }
 )
-AUTOMATIC_HARVEST_EXCLUSIONS = frozenset({"jsearch"})
+# Fuentes de cuota de pago: una pasada por semana (JSearch cobra por página).
+WEEKLY_SOURCES = frozenset({"jsearch"})
 
 
 @celery_app.task(name="jobhunt.harvest.run_scope", bind=True, max_retries=1)
@@ -225,11 +227,11 @@ def _describe_scope_failure(exc: Exception) -> str:
     return str(exc)
 
 
-def source_cadence_hours(source_name: str) -> int | None:
+def source_cadence_hours(source_name: str) -> int:
     """Cadencia automática de una fuente; las nuevas empiezan a 24 h."""
     normalized = source_name.casefold()
-    if normalized in AUTOMATIC_HARVEST_EXCLUSIONS:
-        return None
+    if normalized in WEEKLY_SOURCES:
+        return WEEKLY_CADENCE_HOURS
     if normalized in SIX_HOUR_SOURCES:
         return 6
     if normalized in TWELVE_HOUR_SOURCES:
@@ -273,6 +275,10 @@ def current_window(cadence_hours: int) -> str:
     if cadence_hours not in HARVEST_CADENCES:
         raise ValueError(f"cadencia de cosecha no válida: {cadence_hours}")
     zurich = datetime.now(ZoneInfo("Europe/Zurich"))
+    if cadence_hours == WEEKLY_CADENCE_HOURS:
+        # El slot semanal empieza el lunes a las 00:00 de Zurich.
+        monday = zurich - timedelta(days=zurich.weekday())
+        return monday.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     return zurich.replace(
         hour=(zurich.hour // cadence_hours) * cadence_hours,
         minute=0,
