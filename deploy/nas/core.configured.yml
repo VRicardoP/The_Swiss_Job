@@ -55,9 +55,9 @@ services:
       test:
       - CMD
       - python
+      - -S
       - -c
-      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/ready',
-        timeout=5)
+      - 'import socket,sys;s=socket.create_connection(("127.0.0.1",8000),5);s.settimeout(5);s.sendall(b"GET /v1/ready HTTP/1.0\r\nHost: 127.0.0.1:8000\r\n\r\n");sys.exit(0 if s.recv(64).split(b" ")[1:2]==[b"200"] else 1)'
       timeout: 10s
       interval: 30s
       retries: 3

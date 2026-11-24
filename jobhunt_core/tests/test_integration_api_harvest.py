@@ -562,37 +562,40 @@ def test_jsearch_aggregate_preserves_raw_description(db):  # noqa: F811
     assert response.json()["items"][0]["description"] == "  provider spacing  "
 
 
-def test_source_aggregate_requires_read_scope_and_known_source(db):  # noqa: F811
+@pytest.mark.parametrize("read", ["aggregate", "recent"])
+def test_source_aggregate_requires_read_scope_and_known_source(db, read):  # noqa: F811
     factory, created = db
     source, _scope_ids = _seed_source(factory, created, scopes=1)
     _cid, _kid, writer = _issue(factory, created, "aggregate-writer", ["harvest:write"])
-    denied = _api(factory, f"/v1/harvest/sources/{source}/aggregate", token=writer)
+    denied = _api(factory, f"/v1/harvest/sources/{source}/{read}", token=writer)
     assert denied.status_code == 403
 
     _cid2, _kid2, reader = _issue(
         factory, created, "aggregate-missing", ["vacancies:read"]
     )
-    missing = _api(
-        factory, "/v1/harvest/sources/no_such_source/aggregate", token=reader
-    )
+    missing = _api(factory, f"/v1/harvest/sources/no_such_source/{read}", token=reader)
     assert (missing.status_code, missing.json()["code"]) == (404, "not_found")
 
 
-def test_source_aggregate_sets_local_timeout_before_query(db):  # noqa: F811
+@pytest.mark.parametrize(
+    ("read", "fetch_name"),
+    [("aggregate", "fetch_source_aggregate"), ("recent", "fetch_source_recent")],
+)
+def test_source_aggregate_sets_local_timeout_before_query(db, read, fetch_name):  # noqa: F811
     from jobhunt_core import source_aggregate
 
     factory, created = db
     source, _ = _seed_source(factory, created)
     _cid, _kid, token = _issue(factory, created, "timeout-reader", ["vacancies:read"])
-    fetch = source_aggregate.fetch_source_aggregate
+    fetch = getattr(source_aggregate, fetch_name)
     observed = []
 
     async def check_timeout(session, *args, **kwargs):
         observed.append(await session.scalar(sa.text("SHOW statement_timeout")))
         return await fetch(session, *args, **kwargs)
 
-    with patch.object(source_aggregate, "fetch_source_aggregate", check_timeout):
-        response = _api(factory, f"/v1/harvest/sources/{source}/aggregate", token=token)
+    with patch.object(source_aggregate, fetch_name, check_timeout):
+        response = _api(factory, f"/v1/harvest/sources/{source}/{read}", token=token)
     assert response.status_code == 200
     assert observed == ["110s"]
 
@@ -603,8 +606,17 @@ def test_source_aggregate_sets_local_timeout_before_query(db):  # noqa: F811
     asyncio.run(outside_request())
 
 
+@pytest.mark.parametrize(
+    ("read", "fetch_name"),
+    [("aggregate", "fetch_source_aggregate"), ("recent", "fetch_source_recent")],
+)
 @pytest.mark.parametrize("driver", ["postgres", "pgcode", "sqlstate"])
-def test_source_aggregate_cancellation_rolls_back_and_returns_503(db, driver):  # noqa: F811
+def test_source_aggregate_cancellation_rolls_back_and_returns_503(
+    db,  # noqa: F811  (la fixture, no una redefinición)
+    driver,
+    read,
+    fetch_name,
+):
     factory, created = db
     source, _ = _seed_source(factory, created)
     _cid, _kid, token = _issue(factory, created, "cancel-reader", ["vacancies:read"])
@@ -627,10 +639,10 @@ def test_source_aggregate_cancellation_rolls_back_and_returns_503(db, driver):  
         await rollback(session)
 
     with (
-        patch("jobhunt_core.source_aggregate.fetch_source_aggregate", cancel),
+        patch(f"jobhunt_core.source_aggregate.{fetch_name}", cancel),
         patch.object(AsyncSession, "rollback", check_rollback),
     ):
-        response = _api(factory, f"/v1/harvest/sources/{source}/aggregate", token=token)
+        response = _api(factory, f"/v1/harvest/sources/{source}/{read}", token=token)
     assert (response.status_code, response.json()["code"]) == (503, "aggregate_timeout")
     assert recovered == [1]
 
@@ -652,3 +664,51 @@ def test_source_aggregate_does_not_reclassify_other_database_errors(db, sqlstate
         with pytest.raises(DBAPIError) as raised:
             _api(factory, f"/v1/harvest/sources/{source}/aggregate", token=token)
     assert raised.value is error
+
+
+def test_source_recent_matches_aggregate_without_counts(db):  # noqa: F811
+    """The light read must return exactly the aggregate's items, order, total,
+    freshness and harvest state; only the per-dimension counts are dropped."""
+    factory, created = db
+    source, _scope_ids = _seed_source(factory, created, scopes=1)
+    for age, title in [(300, "Oldest"), (120, "Middle"), (60, "Newer"), (0, "Newest")]:
+        _seed_listing(
+            factory,
+            created,
+            source,
+            content={
+                "title": title,
+                "company": "ACME",
+                "description": title * 200,
+                "location": "Zurich",
+                "remote": age % 120 == 0,
+                "tags": ["Python"],
+            },
+            raw={"category": "Software", "pubDate": "2026-10-11T12:00:00Z"},
+            age_seconds=age,
+        )
+    _cid, _kid, token = _issue(factory, created, "recent-reader", ["vacancies:read"])
+    for limit in (1, 3, 10):
+        aggregate = _api(
+            factory,
+            f"/v1/harvest/sources/{source}/aggregate?item_limit={limit}&top_n=1",
+            token=token,
+        )
+        recent = _api(
+            factory,
+            f"/v1/harvest/sources/{source}/recent?item_limit={limit}",
+            token=token,
+        )
+        assert aggregate.status_code == recent.status_code == 200
+        expected = aggregate.json()
+        expected.pop("counts")
+        assert recent.json() == expected
+        assert recent.json()["total"] == 4
+        assert len(recent.json()["items"]) == min(limit, 4)
+    assert [i["title"] for i in recent.json()["items"]] == [
+        "Newest",
+        "Newer",
+        "Middle",
+        "Oldest",
+    ]
+    assert "counts" not in recent.json()
