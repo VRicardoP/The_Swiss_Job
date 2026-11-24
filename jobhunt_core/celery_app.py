@@ -130,6 +130,12 @@ celery_app.conf.update(
             "schedule": crontab(hour=23, minute=30),
             "kwargs": {"cadence_hours": 24},
         },
+        # Lunes, tras la pasada diaria de las 23:30: solo fuentes de cuota de pago.
+        "harvest-dispatch-native-weekly": {
+            "task": "jobhunt.harvest.dispatch_native",
+            "schedule": crontab(day_of_week=1, hour=23, minute=45),
+            "kwargs": {"cadence_hours": 168},
+        },
         "delivery-check-health": {
             "task": "jobhunt.delivery.check_health",
             "schedule": float(settings.CORE_DELIVERY_HEALTH_EVERY_S),

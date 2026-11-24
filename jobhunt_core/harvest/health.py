@@ -35,6 +35,10 @@ from jobhunt_core.harvest.admission import ADMISSION_CURSOR_KEY
 
 logger = logging.getLogger(__name__)
 
+# Una fuente semanal cumple 7 días sin cosecha completa cada semana, por
+# diseño: su umbral de «rancia» son dos pasadas perdidas más un día de margen.
+STALE_DAYS_BY_SOURCE = {"jsearch": 15}
+
 
 async def check_harvest_health(
     session: AsyncSession,
@@ -97,7 +101,12 @@ async def check_harvest_health(
     alertas: list[dict] = []
     for row in rows:
         alertas += _scope_alerts(
-            row, moment, max_failures, days, ratio_max, invalid_ratio_max
+            row,
+            moment,
+            max_failures,
+            max(days, STALE_DAYS_BY_SOURCE.get(row.source, 0)),
+            ratio_max,
+            invalid_ratio_max,
         )
     for alerta in alertas:
         logger.error("harvest_health: %s", alerta["msg"])

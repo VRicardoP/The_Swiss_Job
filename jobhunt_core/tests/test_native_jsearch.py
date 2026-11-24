@@ -73,7 +73,7 @@ def test_daily_request_content_and_normalization_are_exact(monkeypatch):
     original = row()
     result, requests = fetch({"data": [original]}, monkeypatch)
 
-    assert result.complete and result.error is None and result.pages_fetched == 10
+    assert result.complete and result.error is None and result.pages_fetched == 1
     assert result.next_cursor == {
         "items_seen": 1,
         "invalid": 0,
@@ -85,9 +85,9 @@ def test_daily_request_content_and_normalization_are_exact(monkeypatch):
     assert dict(request.url.params) == {
         "query": "software developer",
         "page": "1",
-        "num_pages": "10",
+        "num_pages": "1",
         "country": "us",
-        "date_posted": "month",
+        "date_posted": "week",
     }
     assert request.headers["x-rapidapi-host"] == RAPIDAPI_HOST
     assert request.headers["x-rapidapi-key"] == "rapid-secret"

@@ -184,3 +184,18 @@ def test_failed_scope_waits_until_its_backoff_has_elapsed(
         assert str(scope_id) in await harvest._enabled_native_scope_ids(12)
 
     asyncio.run(check())
+
+
+def test_la_ventana_semanal_va_de_lunes_a_lunes_en_zurich(monkeypatch):
+    """Una fuente semanal no debe repetir pasada dentro de la semana (la clave
+    del run es la ventana) ni compartir etiqueta con la semana siguiente."""
+    zurich = ZoneInfo("Europe/Zurich")
+
+    def ventana(dia, hora=12):
+        return _ventana_a(
+            datetime(2026, 11, dia, hora, 0, tzinfo=zurich), monkeypatch, 168
+        )
+
+    lunes, domingo = ventana(23, 23), ventana(29, 23)
+    assert lunes == domingo and lunes.startswith("2026-11-23T00:00:00")
+    assert ventana(30, 0).startswith("2026-11-30T00:00:00")
