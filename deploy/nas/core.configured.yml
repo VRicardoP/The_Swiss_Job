@@ -28,7 +28,7 @@ services:
       PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
       PYTHON_VERSION: 3.12.14
       PYTHONDONTWRITEBYTECODE: '1'
-    image: swissjob-core:point5-1ec6913
+    image: swissjob-core:point5-d8c6fa7
     logging:
       driver: json-file
       options:
@@ -80,7 +80,7 @@ services:
       CORE_ADZUNA_APP_KEY: ${CORE_ADZUNA_APP_KEY}
       CORE_BROKER_URL: ${CORE_BROKER_URL}
       CORE_DATABASE_URL: ${CORE_DATABASE_URL}
-      CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8000/api/v1/integration/inbox",
+      CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8001/api/v1/integration/inbox",
         "swissjob-shadow": "http://swissjob-backend:8000/api/v1/integration/events"}'
       CORE_DELIVERY_HTTP_TOKEN: ${CORE_DELIVERY_HTTP_TOKEN}
       CORE_ENV: prod
@@ -93,7 +93,7 @@ services:
       PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
       PYTHON_VERSION: 3.12.14
       PYTHONDONTWRITEBYTECODE: '1'
-    image: swissjob-core:point5-1ec6913
+    image: swissjob-core:point5-d8c6fa7
     logging:
       driver: json-file
       options:
@@ -135,7 +135,7 @@ services:
     environment:
       CORE_BROKER_URL: ${CORE_BROKER_URL}
       CORE_DATABASE_URL: ${CORE_DATABASE_URL}
-      CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8000/api/v1/integration/inbox",
+      CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8001/api/v1/integration/inbox",
         "swissjob-shadow": "http://swissjob-backend:8000/api/v1/integration/events"}'
       CORE_DELIVERY_HTTP_TOKEN: ${CORE_DELIVERY_HTTP_TOKEN}
       CORE_ENV: prod
@@ -147,7 +147,7 @@ services:
       PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
       PYTHON_VERSION: 3.12.14
       PYTHONDONTWRITEBYTECODE: '1'
-    image: swissjob-core:point5-1ec6913
+    image: swissjob-core:point5-d8c6fa7
     logging:
       driver: json-file
       options:
@@ -186,7 +186,7 @@ services:
     environment:
       CORE_BROKER_URL: ${CORE_BROKER_URL}
       CORE_DATABASE_URL: ${CORE_DATABASE_URL}
-      CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8000/api/v1/integration/inbox",
+      CORE_DELIVERY_HTTP_DESTINATIONS: '{"portfolio": "http://portfolio_backend:8001/api/v1/integration/inbox",
         "swissjob-shadow": "http://swissjob-backend:8000/api/v1/integration/events"}'
       CORE_DELIVERY_HTTP_TOKEN: ${CORE_DELIVERY_HTTP_TOKEN}
       CORE_ENV: prod
@@ -198,7 +198,7 @@ services:
       PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
       PYTHON_VERSION: 3.12.14
       PYTHONDONTWRITEBYTECODE: '1'
-    image: swissjob-core:point5-1ec6913
+    image: swissjob-core:point5-d8c6fa7
     logging:
       driver: json-file
       options:
