@@ -63,16 +63,21 @@ ISCS = """<html><head><title>Employment | ISCS</title></head><body><ul>
 </ul></body></html>"""
 
 VIS = """<html><head><title>Careers | Verbier International School</title></head><body>
-<p>Job Openings:</p>
-<h3><strong>IT Manager – </strong>Permanent, Full Time (ASAP)</h3>
-<p>All information is available on
-  <a href="https://www.tes.com/jobs/vacancy/it-manager-verbier-switzerland-2345691">TES</a>.</p>
-<h1>Safeguarding and child protection</h1>
-<h3>Contact us</h3><a href="https://example.test/not-a-job">Ignore</a>
+<h3>How we work</h3><a href="https://example.test/before">Ignore</a>
+<section><h3>Current Vacancies</h3>
+<p><strong><a href="https://www.tes.com/jobs/vacancy/schrole_0a518356-8a37-4881-bf35-3631876a071e">Assistant Head</a>&nbsp;</strong>(Pastoral) &ndash; August 2027, Full-Time</p>
+<p>&nbsp;</p>
+<p><a href="https://www.tes.com/jobs/vacancy/it-manager-verbier-switzerland-2345691"><strong>IT</strong> <strong>Manager</strong></a> &ndash; Permanent</p>
+</section>
+<h3>How to apply</h3><a href="https://example.test/not-a-job">Ignore</a>
 </body></html>"""
 
 VIS_EMPTY = """<html><head><title>Careers | Verbier International School</title></head>
-<body><p>Job Openings:</p><h1>Safeguarding and child protection</h1></body></html>"""
+<body><h3>Current Vacancies</h3><p>&nbsp;</p><h3>How to apply</h3></body></html>"""
+
+VIS_UNKNOWN_LINK = """<html><head><title>Careers | Verbier International School</title>
+</head><body><h3>Current Vacancies</h3>
+<p><a href="https://example.test/apply/1">Head of Science</a></p></body></html>"""
 
 
 def fetch(source, pages, *, params=None, monkeypatch=None):
@@ -227,20 +232,35 @@ def test_iscs_needs_a_keyword_and_a_bold_title():
     assert rows[0]["url"] == "https://iscs-zug.ch/employment/#primary-teacher"
 
 
-def test_vis_reads_only_the_job_openings_section():
+def test_vis_reads_only_the_current_vacancies_section():
     rows = board_rows(BOARDS_BY_SOURCE["swiss_schools_vis"], VIS)
 
+    common = {
+        "company": "Verbier International School",
+        "location": "Verbier, CH",
+        "school_id": "verbier_vis",
+        "language": "en",
+    }
     assert rows == [
         {
+            "source_id": "schrole_0a518356-8a37-4881-bf35-3631876a071e",
+            "title": "Assistant Head (Pastoral) – August 2027, Full-Time",
+            "url": "https://www.tes.com/jobs/vacancy/schrole_0a518356-8a37-4881-bf35-3631876a071e",
+            **common,
+        },
+        {
+            # The numeric TES id stays the identity: it is what earlier harvests stored.
             "source_id": "2345691",
-            "title": "IT Manager – Permanent, Full Time (ASAP)",
-            "company": "Verbier International School",
-            "location": "Verbier, CH",
+            "title": "IT Manager – Permanent",
             "url": "https://www.tes.com/jobs/vacancy/it-manager-verbier-switzerland-2345691",
-            "school_id": "verbier_vis",
-            "language": "en",
-        }
+            **common,
+        },
     ]
+
+
+def test_vis_link_outside_tes_is_a_visible_failure():
+    with pytest.raises(Exception, match="no TES link"):
+        board_rows(BOARDS_BY_SOURCE["swiss_schools_vis"], VIS_UNKNOWN_LINK)
 
 
 def test_vis_empty_section_is_a_verified_empty(monkeypatch):

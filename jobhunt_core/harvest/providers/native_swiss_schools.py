@@ -394,44 +394,46 @@ def _iscs(document: _Document, board: Board) -> list[dict]:
     return out
 
 
+_VIS_SECTION = "current vacancies"
+_VIS_LINK = "tes.com/jobs/vacancy/"
+
+
 def _vis(document: _Document, board: Board) -> list[dict]:
-    """VIS lists role headings followed by their public TES vacancy link."""
+    """VIS lists each role as a paragraph linking to its public TES vacancy."""
     marker = next(
         (
             index
             for index, element in enumerate(document.elements)
-            if element.tag == "p" and element.spaced_text.casefold() == "job openings:"
+            if element.tag == "h3" and element.spaced_text.casefold() == _VIS_SECTION
         ),
         None,
     )
     if marker is None:
-        raise StructureUnknown("the Job Openings marker is gone")
+        raise StructureUnknown("the Current Vacancies section is gone")
 
     out = []
-    elements = document.elements[marker + 1 :]
-    for index, heading in enumerate(elements):
-        if heading.tag in {"h1", "h2"}:
+    for link in document.elements[marker + 1 :]:
+        if link.tag in {"h1", "h2", "h3"}:
             break
-        if heading.tag != "h3":
+        if link.tag != "a" or "href" not in link.attrs:
             continue
-        link = None
-        for element in elements[index + 1 :]:
-            if element.tag in {"h1", "h2", "h3"}:
-                break
-            if (
-                element.tag == "a"
-                and "href" in element.attrs
-                and "tes.com/jobs/vacancy/" in element.attrs["href"]
-            ):
-                link = element
-                break
-        if link is None:
-            raise StructureUnknown("a VIS vacancy has no TES link")
         href = link.attrs["href"]
+        if _VIS_LINK not in href:
+            # A link we do not recognise inside the section is NOT "no vacancy".
+            raise StructureUnknown("a VIS vacancy has no TES link")
+        # Older vacancies end in a numeric TES id; Schrole ones only have a slug.
         match = _VIS_JOB_RE.search(href)
-        if match is None:
+        source_id = match.group(1) if match else href.rstrip("/").rsplit("/", 1)[-1]
+        if not source_id:
             raise StructureUnknown("a VIS vacancy has no stable TES id")
-        out.append(_stub(board, match.group(1), heading.spaced_text, href))
+        # The paragraph carries the conditions next to the linked role name.
+        holder = link
+        while holder.parent is not None and holder.tag != "p":
+            holder = holder.parent
+        text = (holder if holder.tag == "p" else link).spaced_text
+        out.append(
+            _stub(board, source_id, " ".join(text.replace("\xa0", " ").split()), href)
+        )
     return out
 
 
