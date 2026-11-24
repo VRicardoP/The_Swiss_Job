@@ -86,7 +86,7 @@ def test_daily_request_content_and_normalization_are_exact(monkeypatch):
         "query": "software developer",
         "page": "1",
         "num_pages": "1",
-        "country": "us",
+        "country": "ch",
         "date_posted": "week",
     }
     assert request.headers["x-rapidapi-host"] == RAPIDAPI_HOST

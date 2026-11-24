@@ -1,4 +1,4 @@
-"""core0058 moves the JSearch scope to its weekly contract and back, keeping its history."""
+"""core0058 and core0059 move the JSearch scope to its weekly Swiss contract and back, keeping its history."""
 
 import asyncio
 import json
@@ -19,7 +19,9 @@ pytestmark = pytest.mark.skipif(
     not os.getenv("CORE_ADMIN_DATABASE_URL"), reason="requires PG"
 )
 
-MONTHLY = {**SCOPE_PARAMS[0], "date_posted": "month", "num_pages": 10}
+# Frozen like the migrations: SCOPE_PARAMS[0] is only the final contract.
+WEEKLY_US = {**SCOPE_PARAMS[0], "country": "us"}
+MONTHLY = {**WEEKLY_US, "date_posted": "month", "num_pages": 10}
 STATE = (
     "SELECT h.id, h.params, h.enabled, "
     " (SELECT count(*) FROM source_scope_state s WHERE s.scope_id = h.id), "
@@ -28,7 +30,7 @@ STATE = (
 )
 
 
-def test_core0058_moves_the_scope_with_its_state_and_runs():
+def test_the_scope_moves_with_its_state_and_runs():
     admin_url = os.environ["CORE_ADMIN_DATABASE_URL"].replace(
         "postgresql://", "postgresql+asyncpg://"
     )
@@ -58,7 +60,9 @@ def test_core0058_moves_the_scope_with_its_state_and_runs():
     def execute(statement, params=None):
         return asyncio.run(sql(statement, params))
 
-    old, new = scope_id(SOURCE, MONTHLY), scope_id(SOURCE, SCOPE_PARAMS[0])
+    old, weekly, new = (
+        scope_id(SOURCE, params) for params in (MONTHLY, WEEKLY_US, SCOPE_PARAMS[0])
+    )
     asyncio.run(admin_sql(f'CREATE DATABASE "{name}"'))
     try:
         execute("CREATE EXTENSION vector")
@@ -85,6 +89,9 @@ def test_core0058_moves_the_scope_with_its_state_and_runs():
         )
 
         run_alembic(url, "upgrade", "core0058")
+        assert execute(STATE) == [(weekly, WEEKLY_US, True, 1, 1)]
+
+        run_alembic(url, "upgrade", "core0059")
         assert execute(STATE) == [(new, SCOPE_PARAMS[0], True, 1, 1)]
 
         run_alembic(url, "downgrade", "core0057")
