@@ -25,7 +25,7 @@ ENDPOINT = "https://jsearch.p.rapidapi.com/search"
 SOURCE_URL_PREFIX = "https://jsearch.p.rapidapi.com/job/"
 RAPIDAPI_HOST = "jsearch.p.rapidapi.com"
 DEFAULT_QUERY = "software developer"
-DEFAULT_COUNTRY = "us"
+DEFAULT_COUNTRY = "ch"
 # RapidAPI cobra una petición por página. El ámbito programado es semanal y
 # pide solo lo publicado esa semana: una página por pasada, 4-5 al mes (antes
 # 10 páginas del último mes en cada pasada). La búsqueda manual hereda el coste.
