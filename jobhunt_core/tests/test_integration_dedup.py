@@ -415,6 +415,9 @@ def test_hnsw_underfill_cae_al_scan_exacto(db, monkeypatch):
     asyncio.run(envejece())
 
     ejecutadas: list[str] = []
+    # Fase 6: el escaneo normal va en dos etapas; esta prueba fija el respaldo
+    # exacto del camino filtrado, que solo se usa al superar el tope de sondeo.
+    monkeypatch.setattr(dedup_mod, "DEDUP_NEIGHBOR_PROBE_MAX", 0)
     original = dedup_mod.MAX_SCAN_TUPLES
     original_count = dedup_mod._KNN_COUNT_SQL
     monkeypatch.setattr(dedup_mod.settings, "CORE_DEDUP_KNN", 6)
@@ -1153,7 +1156,7 @@ def test_opt2_conteo_omitido_con_k_vecinos_llenos(db):
     assert r["candidatos_nuevos"] == k  # los k vecinos a sim 1.0
 
 
-def test_opt2_conteo_se_ejecuta_con_underfill(db):
+def test_opt2_conteo_se_ejecuta_con_underfill(db, monkeypatch):
     """Mordida OPT-ALTA-2 (b): con MENOS de k vecinos el conteo SÍ se
     ejecuta (el sabotaje revienta), y con el SQL real el camino completo
     sigue respondiendo — el fallback P2-3 queda intacto justo en las filas
@@ -1190,6 +1193,8 @@ def test_opt2_conteo_se_ejecuta_con_underfill(db):
             return r
 
     asyncio.run(envejecer())
+    # Fase 6: el conteo pertenece al camino filtrado; se fuerza ese camino.
+    monkeypatch.setattr(dedup_mod, "DEDUP_NEIGHBOR_PROBE_MAX", 0)
     # 2 elegibles < k=5 ⇒ el conteo DEBE ejecutarse: el sabotaje muerde.
     original = dedup_mod._KNN_COUNT_SQL
     dedup_mod._KNN_COUNT_SQL = "SELECT no FROM tabla_inexistente_opt2"
@@ -1515,3 +1520,166 @@ def test_la_revalidacion_rechaza_pendientes_nivel_incompatibles(db):
 
     st = asyncio.run(estado())
     assert st.state == "rejected" and st.resolved_by == _REVALIDATE_RULE, st
+
+
+# --- Fase 6 del runbook del NAS: kNN en dos etapas --------------------------
+
+
+def _scan_espiado(factory):
+    """Pasada completa que además devuelve (sql, params) de cada consulta."""
+    ejecutadas: list[tuple[str, dict]] = []
+
+    async def go():
+        async with factory() as s:
+            real = s.execute
+
+            async def espia(stmt, params=None, *args, **kwargs):
+                ejecutadas.append((str(stmt), params or {}))
+                return await real(stmt, params, *args, **kwargs)
+
+            s.execute = espia
+            r = await scan_semantic_candidates(s, window_hours=0)
+            await s.commit()
+            return r
+
+    return asyncio.run(go()), ejecutadas
+
+
+def _pares_exactos(factory, created, borrar=False):
+    """Conjunto {(a, b, similitud)} de las fuentes del test; opcionalmente lo vacía."""
+    cond = (
+        "vacancy_a IN (SELECT i.vacancy_id FROM source_listing_incarnations i"
+        " JOIN source_listings l ON l.id = i.source_listing_id"
+        " WHERE l.source_id = ANY(:srcs))"
+    )
+
+    async def go():
+        async with factory() as s:
+            rows = (
+                await s.execute(
+                    sa.text(
+                        "SELECT vacancy_a, vacancy_b, similarity "
+                        f"FROM dedup_candidates WHERE {cond}"
+                    ),
+                    {"srcs": created["sources"]},
+                )
+            ).all()
+            if borrar:
+                await s.execute(
+                    sa.text(f"DELETE FROM dedup_candidates WHERE {cond}"),
+                    {"srcs": created["sources"]},
+                )
+                await s.commit()
+            return {(r.vacancy_a, r.vacancy_b, float(r.similarity)) for r in rows}
+
+    return asyncio.run(go())
+
+
+def _concentracion(n):
+    """n anuncios de UNA fuente a sim 1.0 entre sí + 1 de otra fuente a 0.96."""
+    return [
+        [
+            (f"python dev {j}", None, f"emp{chr(97 + j // 26)}{chr(97 + j % 26)} AG")
+            for j in range(n)
+        ],
+        ["casi python dev"],
+    ]
+
+
+def test_dos_etapas_dan_los_mismos_pares_que_el_camino_filtrado(db, monkeypatch):
+    """Paridad: mismo corpus, los dos caminos, mismos pares y misma similitud.
+
+    El corpus mezcla lo que decide el resultado: concentración intra (B-2),
+    ubicación incompatible y contenida, niveles distintos y un título lejano.
+    """
+    import jobhunt_core.dedup as dedup_mod
+
+    factory, created = db
+    _setup(
+        factory,
+        created,
+        [
+            [
+                (f"python dev {j}", "Zürich", f"Emp{'abcdef'[j]}rossa AG")
+                for j in range(6)
+            ]
+            + [
+                ("python dev berna", "Bern", "Berna AG"),
+                ("junior python dev", "Zürich", "Nivel AG"),
+            ],
+            [
+                ("casi python dev", "Zürich", "Otra AG"),
+                ("python dev contenida", "Zürich, Zürich", "Conte AG"),
+                ("senior python dev", "Zürich", "Jefes AG"),
+                ("java dev", "Zürich", "Lejos AG"),
+            ],
+        ],
+        backend_cls=CasiBackend,
+    )
+    monkeypatch.setattr(dedup_mod, "DEDUP_NEIGHBOR_PROBE_MAX", 0)
+    _, sql_filtrado = _scan_espiado(factory)
+    filtrado = _pares_exactos(factory, created, borrar=True)
+    monkeypatch.undo()
+    _, sql_dos_etapas = _scan_espiado(factory)
+    dos_etapas = _pares_exactos(factory, created)
+
+    assert any(q == dedup_mod._KNN_SQL for q, _ in sql_filtrado)
+    assert not any(q == dedup_mod._KNN_SQL for q, _ in sql_dos_etapas)
+    assert filtrado, "el corpus debe producir pares o la paridad no prueba nada"
+    assert dos_etapas == filtrado
+
+
+def test_dos_etapas_amplian_el_sondeo_si_todo_sigue_sobre_el_umbral(db):
+    """45 anuncios casi idénticos de una fuente llenan los 40 del primer sondeo
+    sin bajar del umbral: sin ampliar, el único vecino de OTRA fuente (0.96,
+    el más lejano) quedaría fuera y sus 45 pares se perderían."""
+    import jobhunt_core.dedup as dedup_mod
+
+    factory, created = db
+    _setup(factory, created, _concentracion(45), backend_cls=CasiBackend)
+    r, ejecutadas = _scan_espiado(factory)
+
+    sondeos = [p["n"] for q, p in ejecutadas if q == dedup_mod._NEAR_SQL]
+    assert dedup_mod.DEDUP_NEIGHBOR_PROBE in sondeos and 160 in sondeos
+    assert not any(q == dedup_mod._KNN_SQL for q, _ in ejecutadas)
+    pares = _pares_exactos(factory, created)
+    assert r["status"] == "ok" and len(pares) == 45
+    assert all(abs(sim - 0.96) < 0.005 for _, _, sim in pares)
+
+
+def test_dos_etapas_caen_al_camino_filtrado_al_superar_el_tope(db, monkeypatch):
+    """Si ni el sondeo máximo encuentra un vecino bajo el umbral, no se puede
+    asegurar que estén todos: la oferta va por el camino filtrado, sin perder pares."""
+    import jobhunt_core.dedup as dedup_mod
+
+    factory, created = db
+    _setup(factory, created, _concentracion(45), backend_cls=CasiBackend)
+    monkeypatch.setattr(
+        dedup_mod, "DEDUP_NEIGHBOR_PROBE_MAX", dedup_mod.DEDUP_NEIGHBOR_PROBE
+    )
+    r, ejecutadas = _scan_espiado(factory)
+
+    assert any(q == dedup_mod._KNN_SQL for q, _ in ejecutadas)
+    assert not any(q == dedup_mod._KNN_AMONG_SQL for q, _ in ejecutadas)
+    assert r["status"] == "ok" and len(_pares_exactos(factory, created)) == 45
+
+
+def test_dos_etapas_no_filtran_mas_alla_del_umbral(db):
+    """Una oferta sin vecinos sobre el umbral no paga el kNN filtrado: un sondeo
+    y, como mucho, las reglas aplicadas a su propio embedding."""
+    import jobhunt_core.dedup as dedup_mod
+
+    factory, created = db
+    _setup(
+        factory,
+        created,
+        [[("python solo", "Basel", "Una AG")], [("java otro", "Basel", "Otra AG")]],
+    )
+    r, ejecutadas = _scan_espiado(factory)
+
+    assert r["status"] == "ok" and r["candidatos_nuevos"] == 0
+    assert sum(q == dedup_mod._NEAR_SQL for q, _ in ejecutadas) == 2
+    filtradas = (dedup_mod._KNN_SQL, dedup_mod._KNN_COUNT_SQL)
+    assert not any(q in filtradas for q, _ in ejecutadas)
+    etapa2 = [p["hashes"] for q, p in ejecutadas if q == dedup_mod._KNN_AMONG_SQL]
+    assert all(len(h) == 1 for h in etapa2)

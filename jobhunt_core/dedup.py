@@ -274,7 +274,7 @@ _VEC_SUBQ = (
     " WHERE v2.id = :vid)"
 )
 
-_KNN_SQL = (
+_KNN_BODY = (
     "SELECT v.id AS vacancy_id, sl.source_id, "
     "       1 - (oe.vector <=> " + _VEC_SUBQ + ") AS sim "
     "FROM vacancies v "
@@ -297,8 +297,33 @@ _KNN_SQL = (
         _title_norm_sql("coalesce(orv.content->>'title','')"),
     )
     + " "
+)
+
+_KNN_SQL = _KNN_BODY + "ORDER BY oe.vector <=> " + _VEC_SUBQ + " LIMIT :k"
+
+# Fase 6 del runbook del NAS (2026-11-24). _KNN_SQL filtra DENTRO de la
+# búsqueda vectorial: cuando una oferta no tiene k vecinos compatibles cerca,
+# el índice recorre hasta MAX_SCAN_TUPLES candidatos aplicando a cada uno los
+# filtros de ubicación y nivel, y después el escaneo tira todo lo que queda por
+# debajo de CORE_DEDUP_SIM_MIN. Medido en producción: 1.400 ms de media por
+# oferta, y el 80 % de las ofertas no tiene ningún vecino sobre el umbral.
+#
+# Dos etapas dan el mismo resultado sin ese trabajo. Etapa 1: los :n embeddings
+# más cercanos, sin filtros ni joins.
+_NEAR_SQL = (
+    "SELECT oe.text_hash, 1 - (oe.vector <=> " + _VEC_SUBQ + ") AS sim "
+    "FROM offer_embeddings oe "
+    "WHERE oe.model_id = :mid "
     "ORDER BY oe.vector <=> " + _VEC_SUBQ + " "
-    "LIMIT :k"
+    "LIMIT :n"
+)
+
+# Etapa 2: las reglas de _KNN_SQL (mismo cuerpo, una sola definición) solo
+# sobre los embeddings que pasaron el umbral. Ordena por `sim` y no por el
+# operador de distancia a propósito: así el planificador no puede volver al
+# índice vectorial y entra por la clave de offer_embeddings.
+_KNN_AMONG_SQL = (
+    _KNN_BODY + "  AND oe.text_hash = ANY(:hashes) ORDER BY sim DESC LIMIT :k"
 )
 
 # Conteo EXACTO de elegibles por fila (revisión Track R, P2-3: el objetivo
@@ -581,6 +606,66 @@ async def lexical_backfill(session: AsyncSession) -> int:
 DEDUP_SCAN_BATCH_SIZE = 250
 
 
+# Vecinos que pide la etapa 1. 40 = el ef_search que el escaneo ya usaba; en
+# una muestra real de 200 ofertas ninguna pasó de 6 vecinos sobre el umbral.
+DEDUP_NEIGHBOR_PROBE = 40
+# Si los :n vecinos siguen todos sobre el umbral puede haber más: se amplía
+# (160, 640) y, pasado el tope, la oferta va por el camino filtrado de siempre.
+DEDUP_NEIGHBOR_PROBE_GROWTH = 4
+DEDUP_NEIGHBOR_PROBE_MAX = 640
+
+
+async def _near_hashes(
+    session: AsyncSession, *, model_id, vacancy_id, sim_min: float, ef_search: int
+) -> list | None:
+    """Embeddings con similitud >= sim_min respecto a la vacante: TODOS, o None.
+
+    La equivalencia con el camino filtrado exige no dejarse ninguno fuera. Están
+    todos cuando el sondeo devuelve menos de `n` filas o su última fila ya cae
+    bajo el umbral; si no, se amplía. None = tope superado sin poder asegurarlo.
+    """
+    n = DEDUP_NEIGHBOR_PROBE
+    try:
+        while n <= DEDUP_NEIGHBOR_PROBE_MAX:
+            if n > ef_search:
+                await session.execute(sa.text(f"SET LOCAL hnsw.ef_search = {int(n)}"))
+            near = (
+                await session.execute(
+                    sa.text(_NEAR_SQL), {"mid": model_id, "vid": vacancy_id, "n": n}
+                )
+            ).all()
+            if len(near) < n or near[-1].sim is None or float(near[-1].sim) < sim_min:
+                return [
+                    r.text_hash
+                    for r in near
+                    if r.sim is not None and float(r.sim) >= sim_min
+                ]
+            n *= DEDUP_NEIGHBOR_PROBE_GROWTH
+        return None
+    finally:
+        if n > ef_search:
+            await session.execute(
+                sa.text(f"SET LOCAL hnsw.ef_search = {int(ef_search)}")
+            )
+
+
+async def _knn_filtered(session: AsyncSession, knn_params: dict, k: int) -> list:
+    """Camino filtrado: kNN con las reglas dentro, conteo y respaldo exacto."""
+    vecinos = (await session.execute(sa.text(_KNN_SQL), knn_params)).all()
+    # Si el kNN llenó k, el conteo es matemáticamente redundante.
+    if len(vecinos) < k:
+        objetivo = (
+            await session.execute(sa.text(_KNN_COUNT_SQL), knn_params)
+        ).scalar_one()
+        if len(vecinos) < objetivo:
+            await session.execute(sa.text("SET LOCAL enable_indexscan = off"))
+            await session.execute(sa.text("SET LOCAL enable_bitmapscan = off"))
+            vecinos = (await session.execute(sa.text(_KNN_SQL), knn_params)).all()
+            await session.execute(sa.text("SET LOCAL enable_indexscan = on"))
+            await session.execute(sa.text("SET LOCAL enable_bitmapscan = on"))
+    return vecinos
+
+
 async def _scan_ann_rows(
     session: AsyncSession, rows, *, model_id, sim_min: float, k: int
 ) -> int:
@@ -588,7 +673,7 @@ async def _scan_ann_rows(
     # UNDERFILL del HNSW (auditoría Nº2, IMPORTANTE 1): pgvector aplica el
     # WHERE después de sacar candidatos aproximados. El scan iterativo sigue
     # hasta llenar el límite, con el mismo fallback exacto conservador.
-    ef_search = min(max(k, 40), 1000)
+    ef_search = min(max(k, DEDUP_NEIGHBOR_PROBE), 1000)
     await session.execute(sa.text(f"SET LOCAL hnsw.ef_search = {int(ef_search)}"))
     await session.execute(sa.text("SET LOCAL hnsw.iterative_scan = 'strict_order'"))
     await session.execute(
@@ -605,18 +690,23 @@ async def _scan_ann_rows(
             "loc": row.loc,
             "titulo": row.title,
         }
-        vecinos = (await session.execute(sa.text(_KNN_SQL), knn_params)).all()
-        # Si el kNN llenó k, el conteo es matemáticamente redundante.
-        if len(vecinos) < k:
-            objetivo = (
-                await session.execute(sa.text(_KNN_COUNT_SQL), knn_params)
-            ).scalar_one()
-            if len(vecinos) < objetivo:
-                await session.execute(sa.text("SET LOCAL enable_indexscan = off"))
-                await session.execute(sa.text("SET LOCAL enable_bitmapscan = off"))
-                vecinos = (await session.execute(sa.text(_KNN_SQL), knn_params)).all()
-                await session.execute(sa.text("SET LOCAL enable_indexscan = on"))
-                await session.execute(sa.text("SET LOCAL enable_bitmapscan = on"))
+        hashes = await _near_hashes(
+            session,
+            model_id=model_id,
+            vacancy_id=row.id,
+            sim_min=sim_min,
+            ef_search=ef_search,
+        )
+        if hashes is None:
+            vecinos = await _knn_filtered(session, knn_params, k)
+        elif hashes:
+            vecinos = (
+                await session.execute(
+                    sa.text(_KNN_AMONG_SQL), {**knn_params, "hashes": hashes}
+                )
+            ).all()
+        else:
+            vecinos = []
         for neighbor in vecinos:
             if neighbor.sim is None or float(neighbor.sim) < sim_min:
                 break
