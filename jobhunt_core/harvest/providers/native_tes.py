@@ -1,31 +1,36 @@
-"""TES.com's Switzerland listing — the embedded Next.js payload of the scraper.
+"""TES.com's Swiss vacancies, read from the jobs sitemap TES publishes.
 
-Rules copied, not imported: the core never loads the BFF runtime.
+Since 2026-11-17 every TES page a client without JavaScript asks for — the
+Switzerland listing this provider used to parse, its tRPC search endpoint and
+each vacancy page — answers a "Client Challenge". The one resource left open
+is the sitemap `robots.txt` declares (probe of 2026-11-24, authorised by the
+owner): `aws-sitemap-jobs-active.xml`, ~7,300 active vacancies worldwide with
+`<loc>` and `<lastmod>`. The challenge is not bypassed; only that file is read.
 
-- The offers travel inside `__NEXT_DATA__`, under
-  `props.pageProps.initialData`. The scraper reads them from the tRPC query
-  cache instead; on page 1 both carry **the same object** (verified over the
-  sealed capture), and `initialData` is the one that survives on later pages.
-- A page that parses to nothing, an unreadable payload or a payload without
-  that block is a VISIBLE failure, never "0 offers" — the exact defect the
-  scraper was fixed for (G1/P2-5).
+What the sitemap gives, and what it does not:
 
-Measured ceiling of the portal, recorded rather than hidden: **`?page=N` is
-ignored server-side**. Page 2 renders page 1's data (`currentPage: 1`), so the
-eight offers that `numFound` announces beyond the first twenty are unreachable
-without reverse-engineering the client-side route. The sweep therefore asks for
-page 2 ONCE: if the portal starts honouring the parameter the sweep follows it,
-and if it does not, the shortfall is logged and counted instead of being
-silently lost. The run is still COMPLETE — a permanent portal limitation must
-not keep `last_complete_at` frozen and turn the staleness alert into noise.
+- The Swiss vacancies are the URLs ending in `-switzerland-<id>` (34 on the
+  probe day). The id is the same number the old payload carried, so the
+  identity `id:<n>` of every offer already stored is preserved.
+- The title comes from the URL slug ("teacher-of-mathematics" → "Teacher of
+  mathematics"). Capitalisation is lost, and a slug sometimes carries the town
+  or school ("...-aiglon-college-chesi-res"): it stays in the title rather
+  than being guessed apart.
+- No employer, description, salary or contract: the normaliser reports
+  "Unknown" and empty text, as for any listing that lacks them.
+- `<lastmod>` travels as `advert.startDate`, the date field admission and the
+  catalogue already read for this source. It is the portal's last edit, the
+  closest date the sitemap offers.
 
-The scraper's `PAGE_SIZE = 1` comment ("server enforces limit=1 per page") is
-stale: the portal serves twenty per page today.
+A response that is not that sitemap (an HTML challenge, a renamed file) is a
+VISIBLE failure, never "0 offers". A sitemap without Swiss vacancies is a
+legitimate, complete empty harvest.
 """
 
 import asyncio
 import logging
 import random
+import re
 
 import httpx
 
@@ -39,25 +44,29 @@ from jobhunt_core.harvest.provider import (
 from jobhunt_core.harvest.providers.browser_headers import (
     BROWSER_HEADERS,
     MAX_PAGES_PARAM,
-    page_budget,
 )
-from jobhunt_core.harvest.providers.next_data import next_data
 from jobhunt_core.harvest.providers.rss_text import extract_job_skills, strip_html_tags
 from jobhunt_core.harvest.providers.search_metadata import swiss_canton
 from jobhunt_core.harvest.types import FetchResult, RawListing
 
 SOURCE_NAME = "tes"
 BASE_URL = "https://www.tes.com"
-LISTING_URL = f"{BASE_URL}/jobs/browse/switzerland"
-MAX_PAGES = 35  # = TESScraper.MAX_PAGES
-PAGE_PAUSE_S = 2.0  # = TESScraper.RATE_LIMIT_SECONDS
+SITEMAP_URL = f"{BASE_URL}/aws-sitemap-jobs-active.xml"
+VACANCY_PREFIX = f"{BASE_URL}/jobs/vacancy/"
+DEFAULT_LOCATION = "Switzerland"
+# The sitemap measured 1.7 MB on 2026-11-24; the budget leaves room to grow.
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_TAGS = 15  # = BaseJobProvider.MAX_TAGS
-REQUEST_TIMEOUT_S = 30
+REQUEST_TIMEOUT_S = 60
 MAX_RETRIES = 2
 RETRY_BACKOFF_S = 2.0
 RETRY_STATUSES = frozenset({500, 502, 503, 504})
 JITTER_RATIO = 0.5
+
+_URL_RE = re.compile(r"<url>(.*?)</url>", re.S)
+_LOC_RE = re.compile(r"<loc>\s*([^<]+?)\s*</loc>")
+_LASTMOD_RE = re.compile(r"<lastmod>\s*([^<]+?)\s*</lastmod>")
+_SWISS_SLUG_RE = re.compile(r"^([a-z0-9-]+?)-switzerland-(\d{1,12})$")
 
 logger = logging.getLogger(__name__)
 
@@ -78,34 +87,31 @@ def _first(value) -> str:
     return ""
 
 
-def _identity(job: dict) -> str:
-    value = job.get("id")
-    if isinstance(value, bool) or not isinstance(value, (int, str)):
-        return ""
-    value = str(value).strip()
-    return value if value and len(value) <= 200 else ""
+def _title(slug: str) -> str:
+    words = slug.replace("-", " ").split()
+    text = " ".join(words)
+    return text[:1].upper() + text[1:]
 
 
-def _page_payload(html: str) -> dict:
-    """`props.pageProps.initialData`, or a failure that names what is missing."""
-    data = next_data(html, SOURCE_NAME)
-    page_props = _object(_object(data.get("props")).get("pageProps"))
-    payload = page_props.get("initialData")
-    if not isinstance(payload, dict):
-        # Fall back to the tRPC cache the scraper reads, so a payload shape the
-        # portal reverts to is still understood.
-        for entry in (
-            _object(_object(page_props.get("trpcState")).get("json")).get("queries", [])
-            or []
-        ):
-            candidate = _object(_object(entry).get("state")).get("data")
-            if isinstance(candidate, dict) and "jobs" in candidate:
-                payload = candidate
-                break
-    if not isinstance(payload, dict) or not isinstance(payload.get("jobs"), list):
-        raise ProviderResponseError(
-            f"{SOURCE_NAME}: __NEXT_DATA__ carries no jobs payload"
-        )
+def _vacancy(entry: str) -> dict | None:
+    """Payload of one Swiss `<url>` entry, or None for any other vacancy."""
+    loc = _LOC_RE.search(entry)
+    if not loc or not loc.group(1).startswith(VACANCY_PREFIX):
+        return None
+    url = loc.group(1)
+    match = _SWISS_SLUG_RE.match(url[len(VACANCY_PREFIX) :])
+    if not match:
+        return None
+    lastmod = _LASTMOD_RE.search(entry)
+    payload = {
+        "id": int(match.group(2)),
+        "title": _title(match.group(1)),
+        "canonicalUrl": url[len(BASE_URL) :],
+        "displayLocation": DEFAULT_LOCATION,
+        "_core_url": url,
+    }
+    if lastmod:
+        payload["advert"] = {"startDate": lastmod.group(1)}
     return payload
 
 
@@ -156,13 +162,12 @@ async def _pause(seconds: float) -> None:
     await asyncio.sleep(seconds + random.uniform(0, seconds * JITTER_RATIO))
 
 
-async def _read(http, page: int) -> str:
+async def _read(http) -> str:
     for attempt in range(MAX_RETRIES + 1):
         try:
             async with http.stream(
                 "GET",
-                LISTING_URL,
-                params={"page": page},
+                SITEMAP_URL,
                 headers=BROWSER_HEADERS,
                 timeout=REQUEST_TIMEOUT_S,
                 follow_redirects=True,
@@ -203,61 +208,20 @@ class TESProvider(BaseProvider):
         register_handlers()
 
     async def fetch_new(self, params, cursor, http):
+        # `max_pages` is still accepted so a scope provisioned for the old
+        # listing keeps working; one sitemap is one request whatever it says.
         if not isinstance(params, dict) or set(params) - {MAX_PAGES_PARAM}:
             raise ProviderConfigError("tes scope takes no query parameters")
-        budget = page_budget(params, MAX_PAGES) or MAX_PAGES
-        by_identity: dict[str, dict] = {}
-        pages = invalid = 0
-        announced = 0
-        ignored_pagination = False
-
-        for page in range(1, budget + 1):
-            if pages:
-                await _pause(PAGE_PAUSE_S)
-            payload = _page_payload(await _read(http, page))
-            pages += 1
-            announced = max(announced, _count(payload.get("numFound")))
-            served = _count(payload.get("currentPage"))
-            if page > 1 and served and served != page:
-                # The portal ignored `?page=`: asking again would re-read the
-                # same rows. Said out loud, not retried.
-                ignored_pagination = True
-                break
-            fresh = 0
-            for job in payload["jobs"]:
-                if not isinstance(job, dict):
-                    invalid += 1
-                    continue
-                identity = _identity(job)
-                url = _s(job.get("canonicalUrl")).strip()
-                if (
-                    not identity
-                    or not url.startswith("/")
-                    or not _s(job.get("title")).strip()
-                ):
-                    invalid += 1
-                    continue
-                if identity not in by_identity:
-                    by_identity[identity] = {**job, "_core_url": BASE_URL + url}
-                    fresh += 1
-            total_pages = _count(payload.get("totalPages"))
-            if not fresh or (total_pages and page >= total_pages):
-                break
-
-        if not by_identity:
-            raise ProviderResponseError(f"{SOURCE_NAME}: listing carries no offers")
-        if invalid:
-            logger.warning("%s: %d unusable rows", SOURCE_NAME, invalid)
-        shortfall = max(0, announced - len(by_identity))
-        if shortfall:
-            logger.warning(
-                "%s: the portal announces %d offers and the listing only exposes "
-                "%d%s. The rest is not reachable from the rendered payload.",
-                SOURCE_NAME,
-                announced,
-                len(by_identity),
-                " (?page= is ignored server-side)" if ignored_pagination else "",
+        entries = _URL_RE.findall(await _read(http))
+        if not entries:
+            raise ProviderResponseError(
+                f"{SOURCE_NAME}: the jobs sitemap carries no <url> entries"
             )
+        by_identity: dict[str, dict] = {}
+        for entry in entries:
+            vacancy = _vacancy(entry)
+            if vacancy is not None:
+                by_identity.setdefault(str(vacancy["id"]), vacancy)
         listings = tuple(
             RawListing(external_id="id:" + identity, url=job["_core_url"], payload=job)
             for identity, job in by_identity.items()
@@ -265,24 +229,11 @@ class TESProvider(BaseProvider):
         return FetchResult(
             listings,
             {
-                "pages": pages,
-                "announced": announced,
-                "harvested": len(by_identity),
-                "shortfall": shortfall,
-                "pagination_ignored": ignored_pagination,
-                "items_seen": announced or len(by_identity) + invalid,
-                "invalid": invalid,
+                "sitemap_entries": len(entries),
+                "harvested": len(listings),
+                "items_seen": len(listings),
+                "invalid": 0,
             },
-            pages_fetched=pages,
-            # A permanent portal limitation must not freeze last_complete_at.
-            # DT-148 E1: un item ilegible NO congela `last_complete_at`. Antes
-            # bastaba uno para marcar el barrido incompleto, y un anuncio
-            # permanente dejaba el scope «parcial para siempre» — lo que además
-            # impedía que el kill-switch reseteara su contador de bloqueos. El
-            # recuento viaja en el cursor y `health` vigila la PROPORCIÓN.
+            pages_fetched=1,
             complete=True,
         )
-
-
-def _count(value) -> int:
-    return value if type(value) is int and value >= 0 else 0
