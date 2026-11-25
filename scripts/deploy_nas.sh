@@ -78,8 +78,8 @@ fi
 FULL_SHA="$(git rev-parse HEAD)"
 SHA="${FULL_SHA:0:7}"
 D=/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker
-C=/share/Public/swissjob/bin-docker-compose
-E=/share/CACHEDEV1_DATA/Public/unification-e15-20260914
+C=/share/external/DEV3301_1/apps-ssd/swissjob-deploy/bin-docker-compose
+E=/share/external/DEV3301_1/apps-ssd/swissjob-deploy/compose
 
 if [[ "$SERVICIO" == core ]]; then
   IMAGEN="swissjob-core:point5-$SHA"
@@ -147,8 +147,8 @@ if [[ "$MODO" != "--config-only" ]]; then
   echo "== empaquetando"
   docker save "$IMAGEN" | gzip -1 > "$TMP/imagen.tar.gz"
   echo "== enviando ($(du -h "$TMP/imagen.tar.gz" | cut -f1))"
-  scp -q "$TMP/imagen.tar.gz" "nas:/share/Public/swissjob/$SERVICIO-$SHA.tar.gz"
-  ssh nas "gunzip -c /share/Public/swissjob/$SERVICIO-$SHA.tar.gz | $D load"
+  scp -q "$TMP/imagen.tar.gz" "nas:/share/external/DEV3301_1/apps-ssd/swissjob-deploy/$SERVICIO-$SHA.tar.gz"
+  ssh nas "gunzip -c /share/external/DEV3301_1/apps-ssd/swissjob-deploy/$SERVICIO-$SHA.tar.gz | $D load && rm -f /share/external/DEV3301_1/apps-ssd/swissjob-deploy/$SERVICIO-$SHA.tar.gz"
 else
   echo "== config-only: se conserva la imagen viva $IMAGEN"
 fi
@@ -252,11 +252,11 @@ TMP_MIGRATE="$(mktemp -d /tmp/core-migrate.XXXXXX)"
 trap 'rm -rf "$TMP_MIGRATE"' EXIT
 LIVE_DB="$($D exec "$API" python -c 'import os; from urllib.parse import urlsplit; print(urlsplit(os.environ["CORE_DATABASE_URL"]).path.lstrip("/"))')"
 [[ "$LIVE_DB" =~ ^[a-zA-Z0-9_]+$ ]] || exit 1
-sed '/^CORE_DATABASE_URL=/d' /share/Public/swissjob/.env.core.prod > "$TMP_MIGRATE/runtime.env"
+sed '/^CORE_DATABASE_URL=/d' /share/external/DEV3301_1/apps-ssd/swissjob-deploy/.env.core.prod > "$TMP_MIGRATE/runtime.env"
 $D inspect "$API" --format '{{range .Config.Env}}{{println .}}{{end}}' \
   | grep '^CORE_DATABASE_URL=' >> "$TMP_MIGRATE/runtime.env"
-sed '/^CORE_ADMIN_DATABASE_URL=/d' /share/Public/swissjob/.env.core.admin.prod > "$TMP_MIGRATE/admin.env"
-ADMIN_LINE="$(grep '^CORE_ADMIN_DATABASE_URL=' /share/Public/swissjob/.env.core.admin.prod)"
+sed '/^CORE_ADMIN_DATABASE_URL=/d' /share/external/DEV3301_1/apps-ssd/swissjob-deploy/.env.core.admin.prod > "$TMP_MIGRATE/admin.env"
+ADMIN_LINE="$(grep '^CORE_ADMIN_DATABASE_URL=' /share/external/DEV3301_1/apps-ssd/swissjob-deploy/.env.core.admin.prod)"
 ADMIN_URL="${ADMIN_LINE#CORE_ADMIN_DATABASE_URL=}"
 printf 'CORE_ADMIN_DATABASE_URL=%s/%s\n' "${ADMIN_URL%/*}" "$LIVE_DB" >> "$TMP_MIGRATE/admin.env"
 chmod 600 "$TMP_MIGRATE/runtime.env" "$TMP_MIGRATE/admin.env"
@@ -271,7 +271,7 @@ fi
 
 ENV_PORTAL_BACKUP=""
 if [[ "$SERVICIO" == bff || "$SERVICIO" == worker ]]; then
-  ENV_PORTAL=/share/Public/swissjob/.env.prod
+  ENV_PORTAL=/share/external/DEV3301_1/apps-ssd/swissjob-deploy/.env.prod
   ENV_PORTAL_BACKUP="$ENV_PORTAL.before-dt144-$SERVICIO-$SHA"
   ssh nas bash -s -- "$ENV_PORTAL" "$ENV_PORTAL_BACKUP" <<'REMOTE_SCRUB_PORTAL_ENV'
 set -euo pipefail

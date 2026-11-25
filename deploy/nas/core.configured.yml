@@ -1,5 +1,5 @@
 # Topología REAL de producción en el NAS — core.configured.yml
-# Copia semántica de /share/CACHEDEV1_DATA/Public/unification-e15-20260914/core.configured.yml,
+# Copia semántica de /share/external/DEV3301_1/apps-ssd/swissjob-deploy/compose/core.configured.yml,
 # con 8 valores sensibles sustituidos por marcadores.
 # Refrescado el 2026-10-20 tras desplegar DT-148 (sección A + F1/F2) en 8ffb8b3:
 # filtros `category`/`since` del catálogo y kill-switch de bloqueos parciales.

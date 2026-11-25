@@ -2,7 +2,7 @@
 
 `core.configured.yml` y `swissjob.configured.yml` son **copias literales** de los
 composes que Container Station ejecuta en el NAS
-(`/share/CACHEDEV1_DATA/Public/unification-e15-20260914/`), con cada valor
+(`/share/external/DEV3301_1/apps-ssd/swissjob-deploy/compose/`), con cada valor
 sensible o identificador personal sustituido por `${VARIABLE}`. El del Portfolio
 vive en su propio repositorio (`ReactPortfolio/backend/deploy/nas/`).
 

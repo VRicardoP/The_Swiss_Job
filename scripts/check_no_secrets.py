@@ -98,6 +98,19 @@ LITERAL_LARGO = re.compile(
 # Banderas booleanas cuyo nombre contiene TOKEN pero cuyo valor fijo no es una
 # credencial. La lista es por clave y valor: no permite convertirlas en secretos
 # literales ni relajar otras claves sensibles.
+# Elemento de lista YAML (`- valor`) que es un único token con alfabeto de
+# credencial. Ninguna regla anterior lo veía porque todas exigen `clave:`, y es
+# justo la forma en que Container Station lleva la contraseña de Redis
+# (`command: [..., --requirepass, <valor>]` y `healthcheck.test`): un `cp` de
+# ese compose pasaba el CI con la contraseña dentro (medido el 2026-11-25).
+# Se excluyen rutas (`/…`, `./…`) y opciones (`-…`), y se exige además la forma
+# de `parece_credencial`; así `- --maxmemory-policy` o `- /share/…:ro` no saltan.
+# Y se piden minúsculas, MAYÚSCULAS y dígitos a la vez: los alias de red y los
+# nombres de contenedor (`swissjob-core-api-r5`, `swissjob-r5_core-net`) tienen
+# tres clases contando el guion y daban 9 falsos positivos en `deploy/nas/`.
+ELEMENTO_DE_LISTA = re.compile(
+    r"^\s*-\s+['\"]?(?P<valor>[A-Za-z0-9+=_][A-Za-z0-9+/=_-]{15,})['\"]?\s*$"
+)
 LITERALES_NO_SECRETOS = {
     "AUTH_REFRESH_TOKEN_IN_BODY": {"false"},
 }
@@ -202,6 +215,14 @@ def revisar(ruta: pathlib.Path) -> list[str]:
             hallazgos.append(
                 f"{ruta}:{n}: {m.group('clave')} tiene un literal largo con pinta de token"
             )
+            continue
+        m = ELEMENTO_DE_LISTA.match(linea)
+        if (
+            m
+            and parece_credencial(m.group("valor"))
+            and all(re.search(p, m.group("valor")) for p in (r"[a-z]", r"[A-Z]", r"\d"))
+        ):
+            hallazgos.append(f"{ruta}:{n}: elemento de lista con pinta de credencial")
     return hallazgos
 
 
