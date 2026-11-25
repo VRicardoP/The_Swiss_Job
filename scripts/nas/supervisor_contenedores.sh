@@ -40,11 +40,14 @@
 D="${DOCKER_BIN:-/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker}"
 [ -x "$D" ] || D=docker
 DESTINO="${SUPERVISOR_EMAIL:-lotharsan@gmail.com}"
-DIR="${SUPERVISOR_DIR:-/share/Public/swissjob/supervisor}"
+# Disco interno a propósito (2026-11-25): el SSD USB guarda PostgreSQL y Redis;
+# si se desconecta caen todos los contenedores, y un supervisor alojado en él
+# callaría justo entonces.
+DIR="${SUPERVISOR_DIR:-/share/homes/Ricardo/swissjob-supervisor/supervisor}"
 ESTADO="$DIR/estado"
 LOG="$DIR/supervisor.log"
 RECORDATORIO_S=21600
-ESPERADOS="swissjob-backend swissjob-worker portfolio_worker swissjob-core-api-r5 swissjob-core-worker-r5 swissjob-core-harvest-worker-r5 swissjob-core-ops-worker-r5 swissjob-postgres swissjob-redis swissjob-redis-core-r5 swissjob-frontend swissjob-erasure-cdc portfolio_backend portfolio_db portfolio_redis portfolio_ngrok ${EXTRA_ESPERADOS:-}"
+ESPERADOS="swissjob-backend swissjob-worker portfolio_worker swissjob-core-api-r5 swissjob-core-worker-r5 swissjob-core-harvest-worker-r5 swissjob-core-ops-worker-r5 swissjob-postgres swissjob-redis swissjob-redis-core-r5 swissjob-frontend swissjob-erasure-cdc portfolio_backend portfolio_db portfolio_ngrok ${EXTRA_ESPERADOS:-}"
 
 mkdir -p "$(dirname "$ESTADO")"
 ahora=$(date -u +%s)
@@ -99,7 +102,12 @@ enviar() {
   mensaje=$(printf 'To: %s\nFrom: %s\nSubject: %s\n\n%s\n\n-- supervisor_contenedores.sh, %s\n' \
     "$DESTINO" "${SMTP_FROM:-$DESTINO}" "$asunto" "$cuerpo" "$fecha")
   if [ -x /usr/sbin/ssmtp ]; then  # el sendmail del QTS es ssmtp; el de busybox (alpine) NO sirve
-    printf '%s\n' "$mensaje" | /usr/sbin/sendmail -t && echo "$fecha ENVIADO (sendmail): $asunto" >> "$LOG" && return
+    # El error se registra: sin esto caía a la rama SMTP y anotaba «sin sendmail
+    # ni SMTP_HOST», que ocultó durante seis semanas que sendmail SÍ existía y fallaba.
+    error_sendmail=$(printf '%s\n' "$mensaje" | /usr/sbin/sendmail -t 2>&1) \
+      && echo "$fecha ENVIADO (sendmail): $asunto" >> "$LOG" && return
+    echo "$fecha NO ENVIADO (sendmail: $(printf '%s' "${error_sendmail:-falló sin mensaje}" | head -1 | cut -c1-200)): $asunto" >> "$LOG"
+    return
   fi
   if [ -n "${SMTP_HOST:-}" ]; then
     # El motivo del fallo va al log: «sin SMTP_HOST» y «Gmail rechazó la

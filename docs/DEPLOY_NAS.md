@@ -11,10 +11,10 @@
 > ⚠ **2026-09-22: el NAS corre también el CORE, y es quien cosecha.** Los servicios
 > `swissjob-core-api-r5`, `swissjob-core-worker-r5` y `swissjob-core-capture-r5`
 > viven bajo el proyecto compose `swissjob-r5` con
-> `/share/CACHEDEV1_DATA/Public/unification-e15-20260914/core.configured.yml`, y el
+> `/share/external/DEV3301_1/apps-ssd/swissjob-deploy/compose/core.configured.yml`, y el
 > BFF público bajo `swissjob` con `swissjob.configured.yml` del mismo directorio —
 > **no** con los composes de este repositorio. El despliegue real se hace por CLI con
-> `/share/Public/swissjob/bin-docker-compose`, servicio a servicio
+> `/share/external/DEV3301_1/apps-ssd/swissjob-deploy/bin-docker-compose`, servicio a servicio
 > (`stop -t … <servicio>` + `up -d --no-deps <servicio>`), nunca con un `up` global
 > ni `--remove-orphans`. Procedimiento vigente y recibos:
 > `docs/audits/POINT4_CUTOVER_2026-09-22.md`.
@@ -153,13 +153,20 @@ grep -E "^POSTGRES_|^DATABASE_URL" /share/Public/swissjob/.env.prod
 
 ### 0.7 Rutas estándar en el NAS
 
+> **Desde el 2026-11-25 nada de esto vive en `/share/Public/swissjob`**, que ya no
+> existe: el directorio de despliegue está en el SSD
+> (`docs/PLAN_TRASLADO_SWISSJOB_NAS_A_SSD_2026-11-25.md`). Las rutas de
+> `/share/Public/swissjob` que quedan más abajo en este documento son del
+> despliegue inicial del legado y se conservan como historia.
+
 | Concepto | Ruta |
 |---|---|
-| Stack files | `/share/Public/swissjob/` |
-| `.env.prod` | `/share/Public/swissjob/.env.prod` |
-| YAML compose | `/share/Public/swissjob/docker-compose.qnap.yml` |
-| Tars imágenes | `/share/Public/swissjob/swissjob-{backend,frontend}.tar` |
-| Script init pgvector | `/share/Public/swissjob/docker/postgres/init-pgvector.sql` |
+| Directorio de despliegue | `/share/external/DEV3301_1/apps-ssd/swissjob-deploy/` (`.env*`, `bin-docker-compose`, tarballs en tránsito) |
+| Composes vivos (`core`, `swissjob`, `portfolio`, `erasure`) | `/share/external/DEV3301_1/apps-ssd/swissjob-deploy/compose/` |
+| Compose de Container Station (solo `postgres` y `redis`) | `/share/CACHEDEV1_DATA/.qpkg/container-station/data/application/swissjob/docker-compose.yml` |
+| Script init pgvector | `/share/external/DEV3301_1/apps-ssd/swissjob-deploy/docker/postgres/init-pgvector.sql` |
+| Datos | `/share/external/DEV3301_1/pgdata-swissjob`, `…/apps-ssd/redis-legacy`, `…/apps-ssd/redis-core` |
+| Supervisor | `/share/homes/Ricardo/swissjob-supervisor/` (disco interno, a propósito) |
 
 ---
 
@@ -801,7 +808,7 @@ escribiría. Si alguno sigue vivo, el script sale 1 y no hay Paso 2.
 
 El dump por defecto de §7 se hace con el rol `swissjob`; si ese rol no puede leer el
 esquema `jobhunt`, el backup no sirve para esta maniobra y hay que repetirlo con la
-credencial de `/share/Public/swissjob/.env.core.admin.prod`.
+credencial de `/share/external/DEV3301_1/apps-ssd/swissjob-deploy/.env.core.admin.prod`.
 
 ```bash
 docker exec swissjob-postgres \
@@ -1293,7 +1300,7 @@ en `backend`, `core-migrate` en el core). **Tiempo esperado**: <60 s gracias a
 | `Failed to create application "swissjob". ... container swissjob-backend is unhealthy` y al ver logs el último mensaje es `[entrypoint] Aplicando migraciones Alembic...` con traceback `asyncpg.exceptions.InvalidPasswordError` | `alembic.ini` con `sqlalchemy.url` hard-coded, o desincronización entre `POSTGRES_PASSWORD` y `DATABASE_URL` en `.env.prod`, o YAML del compose con literal distinto del `.env.prod` | 1. Verifica que la imagen tiene el fix: `docker run --rm --entrypoint sh swissjob-backend:prod -c 'grep sqlalchemy.url alembic.ini'` debe dar `driver://user:pass@localhost/dbname`. Si no, rebuild. 2. `grep -E "^POSTGRES_\|^DATABASE_URL" .env.prod` — passwords coinciden. 3. `grep environment docker-compose.qnap.yml` — no debe haber password literal en postgres. |
 | Backend `unhealthy` >90s tras arranque limpio | Ya NO debería pasar por el modelo (carga en background desde 2026-07-18). Si ocurre, es otra cosa (BD, Redis) | `docker logs -f swissjob-backend`: `Application startup complete.` debe salir en segundos; `Embedding model warmed up` llega después sin bloquear. Si el startup no completa, mira BD/Redis. |
 | Frontend devuelve 502 | Backend aún no healthy | `docker logs swissjob-backend` y esperar. Tras pasar healthy, refrescar. |
-| Postgres exited al arrancar | Permisos volumen o init-pgvector inaccesible | Verifica que `/share/Public/swissjob/docker/postgres/init-pgvector.sql` existe y es legible. |
+| Postgres exited al arrancar | Permisos volumen o init-pgvector inaccesible | Verifica que `/share/external/DEV3301_1/apps-ssd/swissjob-deploy/docker/postgres/init-pgvector.sql` existe y es legible. |
 | Worker no procesa jobs (queue crece) | Redis no conecta o tarea falla | `docker logs swissjob-worker` — buscar tracebacks. Verificar `redis-cli ping` desde dentro: `docker exec swissjob-worker redis-cli -h redis ping`. |
 | 0 jobs en Matches tras 6h | Scheduler dispatcha pero scrapers o providers fallan | `docker logs swissjob-worker` filtrar por errores de provider/scraper. Probablemente `CircuitBreaker` abierto en alguno. |
 | `unknown shorthand flag: 'f' in -f` en SSH | `docker compose` no disponible para tu usuario | Usa Container Station UI para `up`/`down`/`recreate`. Para todo lo demás, comandos `docker` directos (ver sección 4). |

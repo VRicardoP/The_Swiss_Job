@@ -1,18 +1,33 @@
 # Topología REAL de producción en el NAS — containerstation-swissjob.yml
-# T13 §7 / A19-04. Copia literal de /share/CACHEDEV1_DATA/.qpkg/container-station/data/application/swissjob/docker-compose.yml (lo gestiona Container Station: postgres, redis, frontend),
-# con los valores sensibles sustituidos por ${VARIABLE} (3). Verificado sin secretos por
-# scripts/check_no_secrets.py (también en CI). Refrescado el 2026-09-28 tras aplicar
-# healthchecks a 60 s y límites de memoria (A19-25, A19-11).
+# T13 §7 / A19-04. Copia literal de /share/CACHEDEV1_DATA/.qpkg/container-station/data/application/swissjob/docker-compose.yml
+# (proyecto `swissjob` de Container Station: SOLO postgres y redis), con los valores
+# sensibles sustituidos por ${VARIABLE}. Verificado sin secretos por
+# scripts/check_no_secrets.py (también en CI), que desde el 2026-11-25 ve también
+# los literales en elementos de lista (`--requirepass`).
+# Refrescado el 2026-11-25: datos en el SSD (create_host_path: false), directorio de
+# despliegue en /share/external/DEV3301_1/apps-ssd/swissjob-deploy y retiradas las
+# definiciones muertas de backend, worker y frontend (se despliegan desde
+# swissjob.configured.yml). Sin ellas, un `up` sin servicio ya no puede devolverlos
+# a imágenes `:prod` viejas.
 services:
   postgres:
     image: swissjob-postgres-core:pg16
     container_name: swissjob-postgres
     restart: unless-stopped
     env_file:
-    - /share/Public/swissjob/.env.prod
+    - /share/external/DEV3301_1/apps-ssd/swissjob-deploy/.env.postgres.runtime
     volumes:
-    - pgdata:/var/lib/postgresql/data
-    - /share/Public/swissjob/docker/postgres/init-pgvector.sql:/docker-entrypoint-initdb.d/init-pgvector.sql:ro
+    - type: bind
+      source: /share/external/DEV3301_1/pgdata-swissjob
+      target: /var/lib/postgresql/data
+      bind:
+        create_host_path: false
+    - type: bind
+      source: /share/external/DEV3301_1/apps-ssd/swissjob-deploy/docker/postgres/init-pgvector.sql
+      target: /docker-entrypoint-initdb.d/init-pgvector.sql
+      read_only: true
+      bind:
+        create_host_path: false
     healthcheck:
       test:
       - CMD
@@ -47,7 +62,11 @@ services:
     - --requirepass
     - ${REDIS_PASSWORD}
     volumes:
-    - redisdata:/data
+    - type: bind
+      source: /share/external/DEV3301_1/apps-ssd/redis-legacy
+      target: /data
+      bind:
+        create_host_path: false
     healthcheck:
       test:
       - CMD
@@ -60,74 +79,6 @@ services:
       retries: 5
     networks:
     - swissjob-net
-  backend:
-    image: swissjob-backend:prod
-    container_name: swissjob-backend
-    restart: unless-stopped
-    env_file:
-    - /share/Public/swissjob/.env.prod
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test:
-      - CMD-SHELL
-      - curl -fsS http://localhost:8000/health || exit 1
-      interval: 30s
-      timeout: 5s
-      start_period: 360s
-      retries: 5
-    networks:
-    - swissjob-net
-    environment:
-      CORE_ERASURE_REPLICA_ID: swissjob-live
-      CORE_INBOX_TOKEN: ${CORE_INBOX_TOKEN}
-  worker:
-    image: swissjob-backend:prod
-    container_name: swissjob-worker
-    restart: unless-stopped
-    env_file:
-    - /share/Public/swissjob/.env.prod
-    depends_on:
-      backend:
-        condition: service_healthy
-    entrypoint: []
-    command:
-    - celery
-    - -A
-    - celery_app
-    - worker
-    - -Q
-    - default,ai
-    - --concurrency=2
-    - --loglevel=info
-    networks:
-    - swissjob-net
-  frontend:
-    image: swissjob-frontend:prod
-    container_name: swissjob-frontend
-    restart: unless-stopped
-    ports:
-    - 4000:80
-    depends_on:
-      backend:
-        condition: service_healthy
-    healthcheck:
-      test:
-      - CMD-SHELL
-      - wget -q -O- http://127.0.0.1/nginx-health || exit 1
-      interval: 30s
-      timeout: 5s
-      retries: 3
-    networks:
-    - swissjob-net
 networks:
   swissjob-net:
     driver: bridge
-volumes:
-  pgdata:
-    driver: local
-  redisdata:
-    driver: local

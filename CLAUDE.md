@@ -263,6 +263,13 @@ solape que lleva más de 7 d sin cerrar.
 - **`backend/.env.prod.example` se GENERA** con `backend/scripts/gen_env_example.py`
   desde `Settings`; `tests/test_env_example_covers_settings.py` falla si alguien lo
   edita a mano y se queda corto. El de la raíz (28 claves de 130) se retiró.
+- **El directorio de despliegue del NAS está en el SSD desde el 2026-11-25**:
+  `/share/external/DEV3301_1/apps-ssd/swissjob-deploy/` (`.env*`, `bin-docker-compose`,
+  tarballs en tránsito, que se borran tras el `docker load`) y `…/compose/` (los
+  composes vivos). `/share/Public/swissjob` y `Public/unification-e15-20260914`
+  ya no existen. El compose de Container Station define SOLO `postgres` y `redis`:
+  las definiciones muertas de `backend`/`worker`/`frontend` se retiraron.
+  Plan y motivos: `docs/PLAN_TRASLADO_SWISSJOB_NAS_A_SSD_2026-11-25.md`.
 - **`scripts/deploy_nas.sh core|bff`** es el único camino de despliegue: retag POR
   SERVICIO (su primera versión fabricaba la deriva A19-21 con un `sed` global),
   migración del núcleo con contenedor desechable ANTES de recrear, `core-api` y
@@ -272,9 +279,11 @@ solape que lleva más de 7 d sin cerrar.
   `-harvest-worker-r5`, `-ops-worker-r5`), así que un despliegue los recrea
   todos; comprobar con `docker ps` que los tres vuelven.
 - **Supervisor de contenedores (A19-17)**: lo ejecuta el **crontab del QTS** cada
-  5 min (`/etc/config/crontab` → `/share/Public/swissjob/supervisor_contenedores.sh`),
-  y alerta si falta o no corre cualquiera de los **16** esperados (contados en
-  `scripts/nas/supervisor_contenedores.sh:47` el 2026-11-02; antes decía 15) —
+  5 min (`/etc/config/crontab` → `/share/homes/Ricardo/swissjob-supervisor/supervisor_contenedores.sh`,
+  en el disco interno a propósito: si cae el SSD USB, que es donde están los datos, el supervisor debe seguir hablando),
+  y alerta si falta o no corre cualquiera de los **15** esperados (contados en
+  `scripts/nas/supervisor_contenedores.sh` el 2026-11-25; eran 16 con `portfolio_redis`,
+  borrado ese día al fusionar su Redis en `swissjob-redis`) —
   incluidos `portfolio_worker`, el proceso de fondo del Portfolio (ver su
   `backend/CLAUDE.md`), y `swissjob-erasure-cdc`, el del aviso de arriba —,
   con anti-ruido (sólo cambios de estado + recordatorio cada 6 h). Fuente:
@@ -284,14 +293,16 @@ solape que lleva más de 7 d sin cerrar.
   cambio que escribía el otro y avisaba — **3.729 correos en 24 h**, y encima la
   copia del host era de antes de retirar `swissjob-redis-r5`, así que pedía un
   contenedor inexistente. El script lleva desde entonces un guard de ejecución
-  única (240 s) que lo impide aunque se rearme el otro camino. El correo SÍ sale
-  por esta vía: usa el `sendmail` (ssmtp) del QTS; el contenedor no lo tenía y
-  caía al SMTP de Gmail, que sigue rechazando la credencial: la contraseña SMTP de producción tiene 14 caracteres (una de
-  aplicación de Gmail tiene 16) y Gmail la rechaza —también para los cuatro avisos
-  por email del BFF, que llevan tiempo sin salir—. Hasta que el propietario
-  ponga una válida en `supervisor.env` y en el compose, el supervisor registra en
-  `/share/Public/swissjob/supervisor/supervisor.log` y `estado`. El crontab del
-  QTS no se pudo armar (exige suid); la entrada queda en `/etc/config/crontab`.
+  única (240 s) que lo impide aunque se rearme el otro camino. El correo sale
+  por el `sendmail` (ssmtp) del QTS, que usa la autorización OAuth de Gmail del
+  Centro de notificaciones. **Medido el 2026-11-25: no salió NINGÚN aviso desde el
+  15-10** — ssmtp respondía `invalid_grant` (autorización revocada) y el script lo
+  registraba como «sin sendmail ni SMTP_HOST», que era falso. Ahora registra el
+  error real de sendmail; si vuelve a fallar, reautorizar Gmail en el QTS. Los
+  cuatro avisos por email del BFF van por otro camino (SMTP con contraseña de
+  aplicación) y también llevan tiempo sin salir. El cron del QTS SÍ ejecuta el
+  supervisor (`ultimo_run` avanza cada 5 min); estado y registro en
+  `/share/homes/Ricardo/swissjob-supervisor/supervisor/`.
 - **CI**: job `core-test` (postgres-core con wal2json construido desde
   `docker/postgres-core`, `CREATE EXTENSION vector`, bootstrap con
   `jobhunt_core.migrate`, suite completa). `jobhunt_core/requirements.txt` se fijó

@@ -153,7 +153,8 @@ def test_el_compose_del_NAS_sigue_autoarrancando_los_escritores(servicio):
     [
         "docker-compose.prod.yml",
         "docker-compose.qnap.yml",
-        "deploy/nas/containerstation-swissjob.yml",
+        # `containerstation-swissjob.yml` ya no define backend ni worker desde el
+        # 2026-11-25 (eran definiciones muertas): se despliegan desde este otro.
         "deploy/nas/swissjob.configured.yml",
     ],
 )

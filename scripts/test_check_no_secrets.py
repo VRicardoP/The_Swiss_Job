@@ -98,3 +98,45 @@ def test_en_yaml_la_anotacion_si_se_revisa(tmp_path: Path):
     compose = tmp_path / "compose.yml"
     compose.write_text("SMTP_PASSWORD: hunter2hunter2\n")
     assert revisar(compose) == [f"{compose}:1: SMTP_PASSWORD lleva un literal"]
+
+
+# --- Elementos de lista YAML (2026-11-25) ---------------------------------
+#
+# Container Station lleva la contraseña de Redis como `- <valor>` bajo
+# `command:` y `healthcheck.test:`. Ninguna regla anterior lo veía porque todas
+# exigen `clave:`. Control negativo: quitando `ELEMENTO_DE_LISTA` de `revisar`,
+# el primer caso falla.
+
+
+def test_literal_en_elemento_de_lista_es_un_hallazgo(tmp_path: Path):
+    compose = tmp_path / "compose.yml"
+    compose.write_text(
+        "services:\n  redis:\n    command:\n    - redis-server\n    - --requirepass\n"
+        "    - Zx9Kq2Lm8Pw4Rt6Yv1Bn3Cd5Fg7Hj0As\n"
+    )
+    assert revisar(compose) == [
+        f"{compose}:6: elemento de lista con pinta de credencial"
+    ]
+
+
+def test_elementos_de_lista_legitimos_no_son_hallazgos(tmp_path: Path):
+    compose = tmp_path / "compose.yml"
+    compose.write_text(
+        "    - ${REDIS_PASSWORD}\n"
+        "    - --maxmemory-policy\n"
+        "    - swissjob-net\n"
+        "    - default,ai\n"
+        "    - /share/external/DEV3301_1/apps-ssd/swissjob-deploy/docker/postgres/"
+        "init-pgvector.sql:/docker-entrypoint-initdb.d/init-pgvector.sql:ro\n"
+        "    - /share/external/DEV3301_1/apps-ssd/swissjob-deploy/.env.postgres.runtime\n"
+        "    - jobhunt_core.tasks.celery_app\n"
+    )
+    assert revisar(compose) == []
+
+
+def test_alias_de_red_en_lista_no_es_un_hallazgo(tmp_path: Path):
+    compose = tmp_path / "compose.yml"
+    compose.write_text(
+        "        aliases:\n        - swissjob-core-api-r5\n    - swissjob-r5_core-net\n"
+    )
+    assert revisar(compose) == []
