@@ -4,6 +4,7 @@ import uuid
 import httpx
 import pytest
 
+from jobhunt_core.delivery import PermanentDeliveryError
 from jobhunt_core.http_delivery import HttpDestinationTransport
 
 
@@ -67,3 +68,28 @@ def test_unknown_destination_fails_closed():
     event = _event()
     with pytest.raises(RuntimeError, match="sin inbox HTTP"):
         transport("swissjob-shadow", event)
+
+
+def _answering(status):
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(status, request=request)
+        )
+    )
+    return HttpDestinationTransport(
+        {"portfolio": "http://bff/inbox"}, "secret", 5, client=client
+    )
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 409, 413, 422])
+def test_permanent_4xx_is_flagged_for_immediate_dead_letter(status):
+    """D6: a 4xx that is not 408 or 429 answers the same on every retry."""
+    with pytest.raises(PermanentDeliveryError, match=f"HTTP {status}"):
+        _answering(status)("portfolio", _event())
+
+
+@pytest.mark.parametrize("status", [408, 429, 500, 502, 503])
+def test_transient_status_keeps_its_retries(status):
+    with pytest.raises(httpx.HTTPStatusError) as raised:
+        _answering(status)("portfolio", _event())
+    assert not isinstance(raised.value, PermanentDeliveryError)

@@ -349,7 +349,12 @@ solape que lleva más de 7 d sin cerrar.
   corregidos el mismo día** (`docs/unificacion/DEUDA_TECNICA.md` §0.C, con una prueba
   por hallazgo en `backend/tests/test_a20_fixes.py`). Lo que cambia para quien opere:
   el `/v1` acepta `profile` opcional en PATCH/DELETE de candidaturas y el BFF lo
-  envía en vez de drenar el feed — **desplegar el núcleo ANTES que el BFF**; el
+  envía en vez de drenar el feed. *(La regla «desplegar el núcleo ANTES que el
+  BFF» que nacía de aquí ya no aplica: hoy el BFF no llama a esos endpoints, y
+  desde D6 (2026-11-26) los receptores ignoran los campos que no conocen —el
+  buzón del BFF, el de Portfolio y las facetas—, así que un núcleo más nuevo ya
+  no rompe a un BFF más viejo. Lo que sigue valiendo es desplegar el núcleo
+  antes cuando el BFF empiece a USAR un campo o endpoint nuevo.)*; el
   oyente SSE se reconecta solo tras un fallo de Redis; bcrypt y el parseo del CV
   van al threadpool; `alembic check` es paso del CI (los modelos declaran ya el
   índice HNSW, el GIN del `search_vector` y `ix_match_results_application_status`,

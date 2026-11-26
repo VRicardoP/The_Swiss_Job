@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 class SearchMatches(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     search_id: uuid.UUID
     profile_id: uuid.UUID
     search_name: str = Field(strict=True, min_length=1, max_length=200)
@@ -49,7 +49,7 @@ class SearchMatches(BaseModel):
 
 
 class DocumentChange(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     document_id: uuid.UUID
     profile_id: uuid.UUID
     version: int = Field(strict=True, ge=1, le=2)
@@ -57,7 +57,7 @@ class DocumentChange(BaseModel):
 
 
 class CoreEvent(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     event_id: uuid.UUID
     type: str = Field(min_length=1, max_length=100)
     aggregate: str = Field(min_length=1, max_length=100)
@@ -91,7 +91,7 @@ class CoreEvent(BaseModel):
 
 
 class Envelope(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     consumer_id: str = Field(min_length=1, max_length=100)
     event: CoreEvent
 

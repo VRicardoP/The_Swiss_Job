@@ -128,6 +128,9 @@ async def _dispatch_impl(limit: int) -> dict[str, Any]:
                             "dest": row.destination,
                             "attempts": row.attempts + 1,
                             "error": str(exc)[:500],
+                            "permanent": isinstance(
+                                exc, delivery.PermanentDeliveryError
+                            ),
                         }
                     )
                 # G5-P2-2: el resultado se persiste AQUÍ, no al final del lote.

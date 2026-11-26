@@ -440,6 +440,48 @@ async def test_core_facets_validates_the_strict_contract(db_session):
     assert await core.facets(user_id) == payload
 
 
+@pytest.mark.parametrize("broken", [False, True])
+async def test_core_facets_ignore_unknown_fields_but_not_broken_known_ones(
+    db_session, broken
+):
+    """D6: a field added by a newer core is dropped, not a reason to send the
+    UI down the 3,000-row fallback. A known field that breaks its contract
+    still fails closed."""
+    from services.matching.core_client import CoreUnavailableError, _facets_cache
+
+    user_id = await seed_local(db_session)
+    core_profile_id = uuid.uuid4()
+    await set_profile_link(db_session, user_id, core_profile_id)
+    known = {
+        "version": "facet-v1",
+        "total": 3,
+        "top_score": 92.5,
+        "strong_count": 2,
+        "watchlist_count": 1,
+        "categories": [
+            {"id": "A", "label": "Content", "short_label": "Content", "count": 3}
+        ],
+    }
+    sent = {
+        **known,
+        "new_top_level": {"x": 1},
+        "categories": [{**known["categories"][0], "new_per_category": True}],
+    }
+    if broken:
+        sent["strong_count"] = -1
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=sent)
+
+    _facets_cache.clear()
+    core = make_core_matching(db_session, httpx.MockTransport(handler))
+    if broken:
+        with pytest.raises(CoreUnavailableError):
+            await core.facets(user_id)
+    else:
+        assert await core.facets(user_id) == known
+
+
 async def test_recent_warmed_feed_serves_category_without_core_roundtrip(
     seeded, monkeypatch
 ):

@@ -9,6 +9,9 @@ from jobhunt_core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Los dos 4xx que dicen «ahora no», no «nunca»: timeout leyendo y límite de ritmo.
+_RETRYABLE_4XX = frozenset({408, 429})
+
 
 class HttpDestinationTransport:
     """Enruta por consumer; un destino desconocido falla cerrado."""
@@ -48,6 +51,13 @@ class HttpDestinationTransport:
                 "X-Event-ID": str(event["event_id"]),
             },
         )
+        status = response.status_code
+        if 400 <= status < 500 and status not in _RETRYABLE_4XX:
+            # D6: el inbox ha leído el evento y lo rechaza; repetirlo da lo
+            # mismo. Sin el cuerpo de la respuesta: puede repetir datos.
+            raise delivery.PermanentDeliveryError(
+                f"rechazo permanente de {destination!r}: HTTP {status}"
+            )
         response.raise_for_status()
 
 

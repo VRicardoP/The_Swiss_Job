@@ -2065,6 +2065,55 @@ def test_g8_retire_exhausted_toma_los_locks_en_el_orden_canonico_del_modulo(
     )
 
 
+def test_d6_un_rechazo_permanente_va_a_dead_letter_en_el_primer_intento(
+    db, monkeypatch, caplog
+):
+    """D6: un 4xx permanente (el transporte HTTP lo traduce a
+    PermanentDeliveryError) no gasta los ocho intentos: muere en el primero,
+    con `dead_at`, y el gate de salud lo ve."""
+    from jobhunt_core.tasks.delivery import _check_health_impl
+
+    factory, created = db
+    pid, vacs = _setup_evaluated(factory, created, titles=("backend python",))
+    monkeypatch.setattr(delivery, "BACKOFF_BASE_S", 0)
+
+    def rechaza(destination, event):
+        raise delivery.PermanentDeliveryError("rechazo permanente: HTTP 422")
+
+    delivery.set_transport(rechaza)
+    try:
+        with caplog.at_level(logging.ERROR, logger="jobhunt_core.delivery"):
+            r = _dispatch()
+    finally:
+        delivery.set_transport(None)
+    assert (r["dead"], r["failed"]) == (1, 0), r
+    row = _rows(
+        factory,
+        "SELECT d.attempts, d.state, d.last_error, d.dead_at "
+        "FROM integration_outbox_deliveries d "
+        "JOIN integration_outbox o ON o.event_id = d.event_id "
+        "WHERE o.subject_profile_id = :p",
+        p=pid,
+    )[0]
+    assert (row.attempts, row.state) == (1, "dead")
+    assert "HTTP 422" in row.last_error and row.dead_at is not None
+    assert any("DEAD-LETTER" in rec.getMessage() for rec in caplog.records)
+    health = asyncio.run(_check_health_impl(factory))
+    assert "dead_total" in health["alerts"] and not health["healthy"]
+
+
+def test_d6_un_fallo_transitorio_conserva_sus_reintentos(db, monkeypatch):
+    factory, created = db
+    _setup_evaluated(factory, created, titles=("backend python",))
+    monkeypatch.setattr(delivery, "BACKOFF_BASE_S", 0)
+    delivery.set_transport(FakeInbox(fail_times=10**6).transport)
+    try:
+        r = _dispatch()
+    finally:
+        delivery.set_transport(None)
+    assert (r["dead"], r["failed"]) == (0, 1), r
+
+
 def test_d5_un_destino_que_no_consume_el_tipo_no_recibe_ni_el_evento(db, monkeypatch):
     """D5: Portfolio no lee su buzón, así que el núcleo no le emite nada. Aquí
     se declara así al consumidor del test para ejercitar el camino de matching

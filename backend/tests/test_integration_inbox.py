@@ -84,6 +84,39 @@ async def test_document_receipt_replay_and_owner_erase(
     )
 
 
+async def test_unknown_fields_are_ignored_and_never_stored(
+    client, db_session, monkeypatch
+):
+    """D6: a field added by a newer core does not turn every event into a 422
+    retried until dead-letter. Only metadata and the hash of the KNOWN fields
+    are kept, so an unknown field changes neither what is stored nor the
+    replay identity."""
+    monkeypatch.setattr(settings, "CORE_INBOX_TOKEN", "synthetic-inbox-token")
+    _, _, pid = await owner(client, db_session)
+    body = event(pid)
+    plain = copy.deepcopy(body)
+    body["new_envelope_field"] = {"x": 1}
+    body["event"]["new_event_field"] = "must never be stored or echoed"
+    first = await client.post(URL, json=body, headers=HEADERS)
+    assert first.status_code == 202, first.text
+    assert first.json()["inserted"] is True
+    assert "must never" not in first.text
+    # Same event without the unknown fields: an idempotent replay, not a conflict.
+    replay = await client.post(URL, json=plain, headers=HEADERS)
+    assert replay.status_code == 202 and replay.json()["inserted"] is False
+    # An unknown key inside a document payload is accepted too, and not kept.
+    other = event(pid)
+    other["event"]["payload"]["content"] = "must never be stored or echoed"
+    assert (await client.post(URL, json=other, headers=HEADERS)).status_code == 202
+    rows = (await db_session.scalars(select(IntegrationInbox))).all()
+    assert len(rows) == 2
+    for row in rows:
+        stored = {
+            c.name: getattr(row, c.name) for c in IntegrationInbox.__table__.columns
+        }
+        assert "must never" not in repr(stored)
+
+
 async def test_conflicting_replay_is_not_acknowledged(client, db_session, monkeypatch):
     monkeypatch.setattr(settings, "CORE_INBOX_TOKEN", "synthetic-inbox-token")
     _, _, pid = await owner(client, db_session)
@@ -99,7 +132,7 @@ async def test_conflicting_replay_is_not_acknowledged(client, db_session, monkey
 
 
 @pytest.mark.parametrize(
-    "change", ["consumer", "owner", "version", "deleted", "extra_content", "nul"]
+    "change", ["consumer", "owner", "version", "deleted", "nul", "extra_but_broken"]
 )
 async def test_rejects_invalid_or_foreign_event(
     client, db_session, monkeypatch, change
@@ -117,8 +150,11 @@ async def test_rejects_invalid_or_foreign_event(
         body["event"]["version"] = 2
     elif change == "deleted":
         body["event"]["payload"]["deleted"] = True
-    elif change == "extra_content":
-        body["event"]["payload"]["content"] = "must never be stored or echoed"
+    elif change == "extra_but_broken":
+        # D6: unknown fields are ignored, never a pass for a broken known one.
+        body["new_envelope_field"] = 1
+        body["event"]["new_event_field"] = "must never be stored or echoed"
+        body["event"]["version"] = 2
     else:
         body["event"]["type"] = "bad\x00type"
     response = await client.post(URL, json=body, headers=HEADERS)
