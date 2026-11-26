@@ -291,4 +291,6 @@ class StelleAdminProvider(BaseProvider):
             # impedía que el kill-switch reseteara su contador de bloqueos. El
             # recuento viaja en el cursor y `health` vigila la PROPORCIÓN.
             complete=exhausted,
+            # Hasta el `total` que anuncia el propio portal (D7).
+            exhaustive=exhausted,
         )

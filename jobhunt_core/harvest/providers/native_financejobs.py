@@ -208,6 +208,9 @@ class FinancejobsProvider(BaseProvider):
         # DT-148 E1: un item ilegible NO congela `last_complete_at` ni suma
         # un fallo consecutivo. El recuento viaja en el cursor y
         # `harvest/health.py` alerta por PROPORCIÓN de ilegibles.
+        # D7: sólo la página vacía prueba el fin del listado; agotar un
+        # presupuesto declarado es completo pero NO exhaustivo.
+        swept_all = exhausted and error is None
         exhausted = exhausted or (MAX_PAGES_PARAM in params and pages >= budget)
         return FetchResult(
             tuple(listings),
@@ -216,4 +219,5 @@ class FinancejobsProvider(BaseProvider):
             complete=exhausted and error is None,
             error=error,
             blocked_with=blocked_with,
+            exhaustive=swept_all,
         )

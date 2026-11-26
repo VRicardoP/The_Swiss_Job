@@ -18,6 +18,10 @@ FINAL, en la MISMA transacción que la persistencia. Además (revisión externa)
 - Y si ese corte fue un BLOQUEO del portal (FetchResult.blocked_with: 403/429/503),
   cuenta además como bloqueo y puede disparar el kill-switch, igual que si la
   excepción hubiera llegado hasta aquí (DT-148 A2).
+- Un barrido que el provider declara EXHAUSTIVO (recorrió el listado entero,
+  `FetchResult.exhaustive`) deja además su sello en `exhaustive_sweep_at`: es la
+  prueba que `archive.close_disappeared` necesita para cerrar lo que el portal
+  ya no publica (D7).
 """
 
 import json
@@ -48,6 +52,14 @@ logger = logging.getLogger(__name__)
 
 # Clave interna (no del provider) con el fingerprint semántico dentro del cursor.
 FINGERPRINT_KEY = "_params_fp"
+
+# D7: barridos EXHAUSTIVOS seguidos sin ver una oferta antes de darla por
+# retirada del portal. Uno no basta: una paginación por offset que se mueve
+# mientras se recorre (arbeitnow) omite filas de forma TEMPORAL, y el
+# siguiente barrido las vuelve a ver. Tres cubren dos omisiones seguidas y,
+# a la cadencia de 6 h, cierran en ~18 h lo que el portal retiró, frente a
+# los 120 días del barrido de rancias. Se guardan sólo los N últimos sellos.
+EXHAUSTIVE_SWEEPS = 3
 
 
 async def _still_claim_owner(session, scope_id: str, token) -> bool:
@@ -228,19 +240,33 @@ async def run_scope(
             # `consecutive_blocks` y seguía recibiendo las cuatro peticiones
             # diarias para siempre. El provider lo informa en `blocked_with`.
             blocked = result.blocked_with is not None
+            # D7: el sello de barrido exhaustivo es el `now()` de ESTA
+            # transacción — el mismo que el sink acaba de escribir en
+            # `last_seen_at` de todo lo visto —, así que «no vista en los N
+            # últimos» es exactamente `last_seen_at < sello[N]`. Un barrido
+            # exhaustivo VACÍO no sella: un portal sin ofertas y uno roto que
+            # contesta `[]` son indistinguibles, y sellarlo cerraría la fuente
+            # entera.
+            exhaustive = result.complete and result.exhaustive and bool(result.listings)
             blocks = (
                 await session.execute(
                     sa.text(
                         "INSERT INTO source_scope_state "
                         "(scope_id, cursor, last_complete_at, consecutive_failures, "
-                        " consecutive_blocks, last_blocked_at) "
+                        " consecutive_blocks, last_blocked_at, exhaustive_sweep_at) "
                         "VALUES (:sid, CAST(:cur AS jsonb), "
                         "CASE WHEN :complete THEN now() END, "
                         "CASE WHEN :failed THEN 1 ELSE 0 END, "
                         "CASE WHEN :blocked THEN 1 ELSE 0 END, "
-                        "CASE WHEN :blocked THEN now() END) "
+                        "CASE WHEN :blocked THEN now() END, "
+                        "CASE WHEN :exhaustive THEN ARRAY[now()] "
+                        "ELSE '{}'::timestamptz[] END) "
                         "ON CONFLICT (scope_id) DO UPDATE SET "
                         "cursor = EXCLUDED.cursor, "
+                        "exhaustive_sweep_at = CASE WHEN :exhaustive THEN "
+                        "  (ARRAY[now()] || source_scope_state.exhaustive_sweep_at)"
+                        "  [1:CAST(:keep AS int)] "
+                        "ELSE source_scope_state.exhaustive_sweep_at END, "
                         "last_complete_at = CASE WHEN :complete THEN now() "
                         "ELSE source_scope_state.last_complete_at END, "
                         "consecutive_failures = CASE WHEN :complete THEN 0 "
@@ -263,6 +289,8 @@ async def run_scope(
                         "complete": result.complete,
                         "failed": failed,
                         "blocked": blocked,
+                        "exhaustive": exhaustive,
+                        "keep": EXHAUSTIVE_SWEEPS,
                     },
                 )
             ).scalar_one()

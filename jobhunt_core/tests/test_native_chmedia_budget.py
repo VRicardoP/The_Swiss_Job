@@ -39,3 +39,4 @@ def test_elapsed_budget_stops_before_next_request(monkeypatch):
     )
     assert len(requests) == 1 and len(result.listings) == 1
     assert not result.complete and result.error is None
+    assert not result.exhaustive  # D7: cortado por el reloj, no por el fin

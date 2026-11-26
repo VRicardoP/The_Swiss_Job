@@ -274,4 +274,6 @@ class SwissDevJobsProvider(BaseProvider):
             # impedía que el kill-switch reseteara su contador de bloqueos. El
             # recuento viaja en el cursor y `health` vigila la PROPORCIÓN.
             complete=True,
+            # `jobsLight` es el feed ENTERO en una sola respuesta (D7).
+            exhaustive=True,
         )
