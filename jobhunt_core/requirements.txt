@@ -11,6 +11,10 @@ psycopg2-binary==2.9.13
 alembic==1.20.0
 pgvector==0.5.0
 celery==5.6.3
+# kombu fijado: sin él, un rebuild que invalida la capa de pip instala la última
+# (5.7.0 exige redis-py>=6.1 y redis está en 5.3.1) y los workers mueren al
+# arrancar con VersionMismatch. Pasó el 2026-11-26 al desplegar 6eebe92.
+kombu==5.6.2
 redis==5.3.1
 pydantic-settings==2.15.0
 # Embeddings (A-06): import PEREZOSO — la imagen puede omitirlo (p.ej. tests
