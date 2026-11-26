@@ -3,8 +3,7 @@
 # con 8 valores sensibles sustituidos por marcadores.
 # Refrescado el 2026-10-20 tras desplegar DT-148 (sección A + F1/F2) en 8ffb8b3:
 # filtros `category`/`since` del catálogo y kill-switch de bloqueos parciales.
-# D10 (2026-11-26, AÚN NO DESPLEGADO): `CORE_GROQ_API_KEY` en core-ops-worker es
-# lo que hay que añadir al compose vivo; hasta entonces esta copia va por delante.
+# D10 (2026-11-26, desplegado en 5d316c2): `CORE_GROQ_API_KEY` solo en core-ops-worker.
 name: unification-e15-20260914
 services:
   core-api:
@@ -30,7 +29,7 @@ services:
       PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
       PYTHON_VERSION: 3.12.14
       PYTHONDONTWRITEBYTECODE: '1'
-    image: swissjob-core:point5-0e7e4fd
+    image: swissjob-core:point5-5d316c2
     logging:
       driver: json-file
       options:
@@ -95,7 +94,7 @@ services:
       PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
       PYTHON_VERSION: 3.12.14
       PYTHONDONTWRITEBYTECODE: '1'
-    image: swissjob-core:point5-0e7e4fd
+    image: swissjob-core:point5-5d316c2
     logging:
       driver: json-file
       options:
@@ -150,7 +149,7 @@ services:
       PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
       PYTHON_VERSION: 3.12.14
       PYTHONDONTWRITEBYTECODE: '1'
-    image: swissjob-core:point5-0e7e4fd
+    image: swissjob-core:point5-5d316c2
     logging:
       driver: json-file
       options:
@@ -201,7 +200,7 @@ services:
       PYTHON_SHA256: 5c8462af5790baf43a321a1559dbe0db06d1be4300fb85fb53c40060668e548a
       PYTHON_VERSION: 3.12.14
       PYTHONDONTWRITEBYTECODE: '1'
-    image: swissjob-core:point5-0e7e4fd
+    image: swissjob-core:point5-5d316c2
     logging:
       driver: json-file
       options:
