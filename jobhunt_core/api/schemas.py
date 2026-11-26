@@ -54,6 +54,11 @@ class VacancyDTO(BaseModel):
     # significa «no lo sé»: el consumidor vuelve a detectarlo, que es el
     # comportamiento de siempre.
     language: str | None = Field(default=None, max_length=5)
+    # D10: título en inglés, traducido UNA vez por título en el núcleo
+    # (`title_translation`). ADITIVO y OPCIONAL: ausente = no hace falta
+    # (EN/ES), aún no traducido o el LLM lo devolvió igual. El consumidor
+    # muestra `title`; nunca traduce por su cuenta al servir.
+    title_en: str | None = None
     job_category: str | None = Field(default=None, pattern=r"^(?:[A-M]|otros)$")
     primary_listing: PrimaryListingDTO | None = None
     listings: list[ListingDTO] = []

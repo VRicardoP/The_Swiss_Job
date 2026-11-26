@@ -28,7 +28,7 @@ from models.title_language import JobTitleLanguage
 from routers.match import _build_results_response, _to_match_response
 from services import language_store
 from services.matching.core_client import CoreMatchView, _job_view
-from services.translation_service import TranslationService
+from services.language_detection import LanguageDetector
 
 
 @pytest.fixture
@@ -36,7 +36,7 @@ def detector_que_estalla(monkeypatch):
     def estallar(cls, text):
         raise AssertionError(f"el camino de respuesta detectó el idioma de {text!r}")
 
-    monkeypatch.setattr(TranslationService, "_detect_language", classmethod(estallar))
+    monkeypatch.setattr(LanguageDetector, "_detect_language", classmethod(estallar))
 
 
 def _match():
@@ -164,7 +164,7 @@ async def test_encolar_ignora_titulos_vacios(db_session):
 def test_presentacion_limpia_html_historico():
     item = _item("Editor")
     item["job"].description_snippet = "<p>Clean <strong>copy</strong></p>"
-    assert _to_match_response(item, {}, {}).job_description == "Clean copy"
+    assert _to_match_response(item, {}).job_description == "Clean copy"
 
 
 def test_presentacion_resume_una_oferta_sin_descripcion():
@@ -172,37 +172,31 @@ def test_presentacion_resume_una_oferta_sin_descripcion():
     item["job"].description_snippet = None
     item["job"].location = "Europe"
     item["job"].tags = ["Python", "FastAPI"]
-    assert _to_match_response(item, {}, {}).job_description == (
+    assert _to_match_response(item, {}).job_description == (
         "Location: Europe. Skills: Python, FastAPI."
     )
 
 
 def test_servir_no_detecta_aunque_el_titulo_sea_desconocido(detector_que_estalla):
-    resp = _to_match_response(
-        _item("Título jamás visto"), translations={}, languages={}
-    )
+    resp = _to_match_response(_item("Título jamás visto"), languages={})
     assert resp.job_language is None, "sin dato, el indicador se omite; NO se deduce"
 
 
 def test_servir_usa_el_idioma_derivado(detector_que_estalla):
     item = _item("Softwareentwickler")
-    resp = _to_match_response(
-        item, translations={}, languages={"Softwareentwickler": "de"}
-    )
+    resp = _to_match_response(item, languages={"Softwareentwickler": "de"})
     assert resp.job_language == "de"
 
 
 def test_el_idioma_del_core_gana_al_derivado(detector_que_estalla):
     """La canónica es el dato de la fuente; el derivado es nuestra deducción."""
     item = _item("Softwareentwickler", language="fr")
-    resp = _to_match_response(
-        item, translations={}, languages={"Softwareentwickler": "de"}
-    )
+    resp = _to_match_response(item, languages={"Softwareentwickler": "de"})
     assert resp.job_language == "fr"
 
 
 def test_desconocido_resuelto_no_inventa_indicador(detector_que_estalla):
-    resp = _to_match_response(_item("??"), translations={}, languages={"??": ""})
+    resp = _to_match_response(_item("??"), languages={"??": ""})
     assert resp.job_language is None
 
 
@@ -257,7 +251,7 @@ async def test_la_tarea_resuelve_los_pendientes_y_los_saca_de_la_cola(
 
     monkeypatch.setattr("database.task_session", sesion_de_prueba)
     monkeypatch.setattr(
-        TranslationService,
+        LanguageDetector,
         "_detect_language",
         classmethod(lambda cls, text: "de" if "entwickler" in text else ""),
     )
@@ -290,7 +284,7 @@ async def test_la_tarea_respeta_el_tamano_del_lote(db_session, monkeypatch):
 
     monkeypatch.setattr("database.task_session", sesion_de_prueba)
     monkeypatch.setattr(
-        TranslationService, "_detect_language", classmethod(lambda cls, text: "en")
+        LanguageDetector, "_detect_language", classmethod(lambda cls, text: "en")
     )
 
     await language_store.record_pending(
@@ -313,7 +307,7 @@ async def test_sin_pendientes_la_tarea_no_toca_el_detector(db_session, monkeypat
 
     monkeypatch.setattr("database.task_session", sesion_de_prueba)
     monkeypatch.setattr(
-        TranslationService,
+        LanguageDetector,
         "_detect_language",
         classmethod(lambda cls, text: (_ for _ in ()).throw(AssertionError("detectó"))),
     )

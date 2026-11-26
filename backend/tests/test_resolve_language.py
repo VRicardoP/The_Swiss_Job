@@ -1,4 +1,4 @@
-"""Tests de caracterización para TranslationService._resolve_language.
+"""Tests de caracterización para LanguageDetector._resolve_language.
 
 Fija el comportamiento actual (heurística de caracteres + tokens largos +
 2 ramas de langdetect con distinto umbral) antes de refactorizar.
@@ -8,7 +8,7 @@ Valores capturados de la implementación vigente.
 import pytest
 from langdetect import DetectorFactory
 
-from services.translation_service import TranslationService as T
+from services.language_detection import LanguageDetector as T
 
 # langdetect usa una semilla aleatoria interna; la fijamos para que las ramas 3-4
 # (langdetect) sean deterministas y el test no sea flaky. Los valores esperados de

@@ -75,6 +75,7 @@ celery_app.conf.update(
         "jobhunt.maintenance.dedup_lex_backfill": {"queue": "core.default"},
         "jobhunt.maintenance.dedup_revalidate_by_rule": {"queue": "core.default"},
         "jobhunt.maintenance.purge_retention": {"queue": "core.default"},
+        "jobhunt.maintenance.translate_titles": {"queue": "core.default"},
         # La recuperación nativa drena embeddings y ejecuta matching. La
         # misma cola garantiza que sólo el worker de modelo
         # carga el bi-encoder; en core.default bloqueaba durante minutos la
@@ -206,6 +207,14 @@ if settings.CORE_SAVED_SEARCH_EXECUTION_ENABLED:
     celery_app.conf.beat_schedule["saved-searches-run-due"] = {
         "task": "jobhunt.searches.run_due",
         "schedule": 300.0,
+    }
+
+# D10: sin clave de Groq no hay quien traduzca; la entrada ni existe.
+if settings.CORE_GROQ_API_KEY:
+    celery_app.conf.beat_schedule["maintenance-translate-titles"] = {
+        "task": "jobhunt.maintenance.translate_titles",
+        "schedule": float(settings.CORE_TITLE_TRANSLATION_EVERY_S),
+        "options": {"expires": float(settings.CORE_TITLE_TRANSLATION_EVERY_S)},
     }
 
 celery_app.conf.include = [

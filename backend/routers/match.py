@@ -26,7 +26,6 @@ from schemas.match import (
 )
 from scrapers.swiss_schools_config import get_school
 from services.schools.presentation import overlay_school_results
-from services.groq_service import GroqService
 from services.profile_defaults import DEFAULT_WEIGHTS
 from services import language_store
 from services.matching.core_client import CoreMatching
@@ -38,7 +37,6 @@ from services.matching import (
     resolve_matching,
 )
 from services.matching.warm import mark_active
-from services.translation_service import TranslationService
 from utils.text import strip_html_tags
 
 logger = logging.getLogger(__name__)
@@ -48,11 +46,6 @@ router = APIRouter(prefix="/api/v1/match", tags=["match"])
 
 def _redis(request: Request):
     return getattr(request.app.state, "redis_client", None)
-
-
-def _get_groq(request: Request) -> GroqService:
-    """Build GroqService with Redis from app state."""
-    return GroqService(redis_client=_redis(request))
 
 
 def _matching_http_error(exc: MatchingError) -> HTTPException:
@@ -86,22 +79,22 @@ def _presentation_description(job) -> str | None:
 
 def _to_match_response(
     item: dict,
-    translations: dict[str, str],
     languages: dict[str, str] | None = None,
 ) -> MatchResultResponse:
     """Mapea un resultado del servicio a MatchResultResponse.
 
-    Traducción e idioma llegan YA CALCULADOS. Esta función no detecta nada:
-    detectar aquí costaba 50,1 ms por oferta servida y ~90 s por petición
-    (punto 5). Quien detecta es `tasks.language_tasks`, en segundo plano."""
+    Traducción e idioma llegan YA CALCULADOS. Esta función no detecta ni
+    traduce nada: detectar aquí costaba 50,1 ms por oferta servida y ~90 s
+    por petición (punto 5). El idioma lo resuelve `tasks.language_tasks` en
+    segundo plano; el título en inglés lo traduce el CORE una vez por título
+    (D10) y viaja como `VacancyDTO.title_en`."""
     match = item["match"]
     job = item["job"]
 
     original_title = job.title or ""
-    translated = translations.get(original_title)
-    # Mostrar traducción si el LLM produjo algo diferente al original.
-    # No usar job.language para bloquear: puede ser erróneo (langdetect falla en
-    # títulos cortos o mixtos alemán-inglés → job.language = "en" incorrecto).
+    # D10: sin `title_en` del core (aún no traducido, EN/ES, o fila local
+    # del archivo `jobs`) se sirve el original. Nunca se llama al LLM aquí.
+    translated = getattr(job, "title_en", None)
     is_translated = bool(translated and translated.strip() != original_title.strip())
     job_title_en = translated if is_translated else None
     # Indicador de idioma de la UI. Dos orígenes, en este orden:
@@ -166,15 +159,13 @@ async def _build_results_response(
     results: list[dict],
     total: int,
     weights: dict,
-    groq: GroqService | None = None,
     db: AsyncSession | None = None,
-    *,
-    translate: bool = True,
 ):
-    """Build MatchResultsResponse from service results, with title translations.
+    """Build MatchResultsResponse from service results.
 
-    `translate=False` (la pantalla principal, 3.000 ofertas) NO llama al LLM:
-    sirve lo que el calentamiento de fondo ya dejó en Redis (A19-15 §D).
+    D10: el parámetro `translate` de las rutas se retiró. FastAPI ignora un
+    query param desconocido, así que `?translate=true|false` del frontend
+    sigue respondiendo 200: las dos formas sirven ya el `title_en` del core.
     """
     # Idioma ya resuelto, en UNA consulta por página. Los títulos que aún no
     # tengan fila se encolan para la tarea de fondo: encolar es un INSERT
@@ -190,25 +181,7 @@ async def _build_results_response(
         if pendientes:
             await language_store.record_pending(pendientes)
 
-    # Batch-translate non-EN/ES titles
-    translations: dict[str, str] = {}
-    if groq and results and not translate:
-        # A19-15 §D: sin LLM en la petición, pero lo que el fondo ya tradujo se
-        # sirve. Una ida a Redis (MGET) para 3.000 títulos, cero detecciones.
-        translations = await TranslationService(groq).cached_translations(
-            [item["job"].title or "" for item in results]
-        )
-    elif groq and translate:
-        titles_with_lang = [
-            {"title": item["job"].title or "", "language": item["job"].language or ""}
-            for item in results
-        ]
-        translator = TranslationService(groq)
-        translations = await translator.translate_titles(
-            titles_with_lang, languages=languages
-        )
-
-    data = [_to_match_response(item, translations, languages) for item in results]
+    data = [_to_match_response(item, languages) for item in results]
 
     return MatchResultsResponse(
         data=data,
@@ -239,14 +212,9 @@ async def get_match_results(
     db: AsyncSession = Depends(get_db),
     limit: int = Query(20, ge=1, le=3000),
     offset: int = Query(0, ge=0),
-    translate: bool = Query(True),
     category: str | None = Query(None, pattern=r"^(?:[A-M]|otros|__watchlist)$"),
 ):
-    """Get latest AI match results for the current user.
-
-    translate=false omite la traducción de títulos (útil para carga masiva
-    de categorización donde las traducciones no son necesarias).
-    """
+    """Get latest AI match results for the current user."""
     if category is not None and not settings.CORE_MATCH_FACETS_ENABLED:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await mark_active(_redis(request), current_user.id)
@@ -280,25 +248,20 @@ async def get_match_results(
     )
 
     results = await overlay_school_results(db, current_user.id, results)
-    return await _build_results_response(
-        results, total, weights, _get_groq(request), db, translate=translate
-    )
+    return await _build_results_response(results, total, weights, db)
 
 
 @router.get("/history", response_model=MatchResultsResponse)
 async def get_match_history(
-    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    translate: bool = Query(True),
 ):
     """Get full match history for the current user (all past results).
 
     Hoy el legacy sirve history con la MISMA lectura que /results; la
     costura conserva esa igualdad (una sola operacion `results` del puerto).
-    `translate=false` (A20-09) lee los títulos ya calentados y no llama al LLM.
     """
     matching = await resolve_matching(db, current_user.id)
     try:
@@ -318,10 +281,7 @@ async def get_match_history(
     )
 
     results = await overlay_school_results(db, current_user.id, results)
-    groq = _get_groq(request)
-    return await _build_results_response(
-        results, total, weights, groq, db, translate=translate
-    )
+    return await _build_results_response(results, total, weights, db)
 
 
 @router.post("/{job_hash}/feedback", response_model=MatchFeedbackResponse)
@@ -384,17 +344,12 @@ async def clear_feedback(
 
 @router.get("/saved", response_model=MatchResultsResponse)
 async def get_saved_jobs(
-    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     limit: int = Query(100, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    translate: bool = Query(True),
 ):
-    """Devuelve los empleos marcados como 'Good' (thumbs_up o applied).
-
-    `translate=false` (A20-09): títulos del MGET calentado en fondo, sin LLM.
-    """
+    """Devuelve los empleos marcados como 'Good' (thumbs_up o applied)."""
     matching = (
         feedback_writer(db)
         if settings.CORE_FEEDBACK_ENABLED
@@ -416,10 +371,7 @@ async def get_saved_jobs(
         else DEFAULT_WEIGHTS
     )
 
-    groq = _get_groq(request)
-    return await _build_results_response(
-        results, total, weights, groq, db, translate=translate
-    )
+    return await _build_results_response(results, total, weights, db)
 
 
 @router.post("/{job_hash}/implicit", response_model=ImplicitFeedbackResponse)

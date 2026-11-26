@@ -56,6 +56,18 @@ class CoreSettings(BaseSettings):
     CORE_ADZUNA_APP_KEY: str = ""
     CORE_JSEARCH_RAPIDAPI_KEY: str = ""
 
+    # D10 — traducción de títulos al inglés UNA vez, en el núcleo
+    # (`title_translation`). Sin clave la tarea no hace nada y el beat ni la
+    # programa. Sólo la necesita el worker de operaciones (beat + core.default).
+    # El modelo es el que usaba el BFF para traducir (`GROQ_RERANK_MODEL`):
+    # Groq decomisa modelos sin avisar, compruébalo contra el catálogo vivo
+    # (GET /openai/v1/models). El esfuerzo de razonamiento se envía sólo si no
+    # está vacío (qwen razonaba por defecto y quemaba max_tokens).
+    CORE_GROQ_API_KEY: str = ""
+    CORE_TITLE_TRANSLATION_MODEL: str = "qwen/qwen3.8-27b"
+    CORE_TITLE_TRANSLATION_REASONING_EFFORT: str = "none"
+    CORE_TITLE_TRANSLATION_EVERY_S: int = Field(default=900, ge=60)
+
     # Embeddings (A-06, ADR-02): modelo multilingüe 384d.
     # DT-148 B4: CORE_EMBEDDING_MODEL_NAME se retiró y era ACTIVAMENTE engañoso.
     # El backend carga `(name, version)` de CADA encoder REGISTRADO en la base

@@ -46,6 +46,19 @@ def dedup_revalidate_by_rule_task(apply: bool = False) -> dict:
     return asyncio.run(_run(partial(revalidate_pending_candidates, apply=apply)))
 
 
+@celery_app.task(name="jobhunt.maintenance.translate_titles")
+def translate_titles_task() -> dict:
+    """Títulos al inglés, una vez por título (D10, jobhunt_core/title_translation.py)."""
+    return asyncio.run(_translate_titles_impl())
+
+
+async def _translate_titles_impl() -> dict:
+    from jobhunt_core.title_translation import run_pass
+
+    async with task_session_factory() as factory:
+        return await run_pass(factory)
+
+
 @celery_app.task(name="jobhunt.maintenance.purge_retention")
 def purge_retention_task() -> dict:
     """Retención de las tablas de trabajo terminado (O-4, jobhunt_core/retention.py)."""

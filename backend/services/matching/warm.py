@@ -73,7 +73,7 @@ async def calentar_una_vez(redis=None) -> dict[str, int]:
     por usuario."""
     from services.matching import resolve_matching
 
-    calentados, facetas, fallos, traducidos = 0, 0, 0, 0
+    calentados, facetas, fallos = 0, 0, 0
     async with async_session() as db:
         usuarios = await _usuarios_enrolados(db)
     usuarios = await _usuarios_activos(redis, usuarios)
@@ -89,7 +89,6 @@ async def calentar_una_vez(redis=None) -> dict[str, int]:
                 calentar_facetas = getattr(backend, "warm_facets", None)
                 if calentar_facetas is not None and await calentar_facetas(user_id):
                     facetas += 1
-                traducidos += await _traducir_en_fondo(db, backend, user_id, redis)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -102,54 +101,7 @@ async def calentar_una_vez(redis=None) -> dict[str, int]:
         "calentados": calentados,
         "facetas": facetas,
         "fallos": fallos,
-        "traducidos": traducidos,
     }
-
-
-async def _traducir_en_fondo(db, backend, user_id, redis) -> int:
-    """A19-15 §D — traduce títulos del recorrido cacheado que aún no están en
-    Redis, acotado por pasada. Devuelve cuántos se pidieron al LLM.
-
-    Va aquí y no en el router a propósito: el camino de respuesta NO llama al
-    LLM (CLAUDE.md §5). Esto lo paga el fondo, una vez por título, y la
-    pantalla principal sólo lee. Sin Groq configurado no hace nada.
-    """
-    if not settings.TRANSLATION_WARMUP_ENABLED or redis is None:
-        return 0  # sin Redis no hay dónde dejar la traducción: sería pagar en vano
-    titulos_de = getattr(backend, "cached_feed_titles", None)
-    if titulos_de is None:
-        return 0
-    titulos = await titulos_de(user_id)
-    if not titulos:
-        return 0
-    from services import language_store
-    from services.groq_service import GroqService
-    from services.translation_service import SKIP_LANGUAGES, TranslationService
-
-    groq = GroqService(redis_client=redis)
-    if not groq.is_available:
-        return 0
-    translator = TranslationService(groq)
-    ya = await translator.cached_translations(titulos)
-    pendientes = [t for t in dict.fromkeys(titulos) if t not in ya]
-    # El idioma va ANTES del corte: un título en EN/ES nunca se cachea (no hay
-    # traducción que guardar), así que si entraba en la ventana la ocupaba en
-    # TODAS las pasadas y la traducción no avanzaba (282 de 284 pasadas con
-    # `traducidos: 200` en producción, 25-11). Un fallo del proveedor no marca
-    # nada: lo que no se tradujo sigue sin clave y vuelve a la pasada siguiente.
-    idiomas, _vistos = await language_store.lookup(db, pendientes)
-    pendientes = [
-        t
-        for t in pendientes
-        if idiomas.get(language_store.normalise(t)) not in SKIP_LANGUAGES
-    ]
-    pendientes = pendientes[: settings.TRANSLATION_WARMUP_MAX_PER_PASS]
-    if not pendientes:
-        return 0
-    await translator.translate_titles(
-        [{"title": t, "language": ""} for t in pendientes], languages=idiomas
-    )
-    return len(pendientes)
 
 
 async def run_feed_warmup(redis=None) -> None:
@@ -162,12 +114,7 @@ async def run_feed_warmup(redis=None) -> None:
     while True:
         try:
             resumen = await calentar_una_vez(redis)
-            if (
-                resumen["calentados"]
-                or resumen["facetas"]
-                or resumen["fallos"]
-                or resumen["traducidos"]
-            ):
+            if resumen["calentados"] or resumen["facetas"] or resumen["fallos"]:
                 logger.info("calentamiento del feed: %s", resumen)
         except asyncio.CancelledError:
             raise

@@ -27,7 +27,7 @@ import pytest
 
 from routers.match import _to_match_response
 from services.matching.core_client import CoreMatchView, _job_view
-from services.translation_service import TranslationService
+from services.language_detection import LanguageDetector
 
 
 def _match():
@@ -74,7 +74,7 @@ def detector_que_estalla(monkeypatch):
     def estallar(cls, text):
         raise AssertionError(f"se detectó el idioma de {text!r} teniéndolo ya")
 
-    monkeypatch.setattr(TranslationService, "_detect_language", classmethod(estallar))
+    monkeypatch.setattr(LanguageDetector, "_detect_language", classmethod(estallar))
 
 
 # --- Mapeo del BFF: el campo llega desde el VacancyDTO del core ------------
@@ -108,7 +108,7 @@ def test_con_idioma_conocido_el_router_no_detecta(detector_que_estalla):
         "job": _job_view(_vacancy(language="fr"), "core"),
         "school": None,
     }
-    resp = _to_match_response(item, translations={})
+    resp = _to_match_response(item)
     assert resp.job_language == "fr"
 
 
@@ -123,7 +123,7 @@ def test_sin_idioma_el_router_no_deduce_nada(detector_que_estalla):
     declarado; lo resuelve la tarea de fondo para la siguiente.
     Ver `tests/test_language_store.py`."""
     item = {"match": _match(), "job": _job_view(_vacancy(), "core"), "school": None}
-    resp = _to_match_response(item, translations={})
+    resp = _to_match_response(item)
     assert resp.job_language is None
 
 
@@ -135,5 +135,5 @@ def test_un_idioma_invalido_no_impide_servir(detector_que_estalla):
         "job": _job_view(_vacancy(title="", language=7), "core"),
         "school": None,
     }
-    resp = _to_match_response(item, translations={})
+    resp = _to_match_response(item)
     assert resp.job_language is None

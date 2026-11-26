@@ -13,7 +13,7 @@ deterministic, instead of timing it on a loaded two-core NAS.
 
 import pytest
 
-from services.translation_service import TranslationService
+from services.language_detection import LanguageDetector
 
 
 @pytest.fixture(autouse=True)
@@ -26,7 +26,7 @@ def _clear_cache():
     proves nothing, which is the same defect the acceptance probe had."""
 
     def clear():
-        clear_fn = getattr(TranslationService._detect_language, "cache_clear", None)
+        clear_fn = getattr(LanguageDetector._detect_language, "cache_clear", None)
         if clear_fn is not None:
             clear_fn()
 
@@ -37,23 +37,23 @@ def _clear_cache():
 
 def test_repeated_titles_are_detected_once(monkeypatch):
     llamadas = []
-    original = TranslationService._resolve_language.__func__
+    original = LanguageDetector._resolve_language.__func__
 
     def contar(cls, text, language):
         llamadas.append(text)
         return original(cls, text, language)
 
-    monkeypatch.setattr(TranslationService, "_resolve_language", classmethod(contar))
+    monkeypatch.setattr(LanguageDetector, "_resolve_language", classmethod(contar))
 
     for _ in range(5):
-        TranslationService._detect_language("Softwareentwickler (m/w/d)")
+        LanguageDetector._detect_language("Softwareentwickler (m/w/d)")
     assert len(llamadas) == 1, f"detected {len(llamadas)} times instead of once"
 
 
 def test_different_titles_are_each_detected(monkeypatch):
     """The cache must not collapse distinct titles into one answer."""
-    de = TranslationService._detect_language("Softwareentwickler gesucht in Zürich")
-    fr = TranslationService._detect_language("Développeur logiciel à Genève")
+    de = LanguageDetector._detect_language("Softwareentwickler gesucht in Zürich")
+    fr = LanguageDetector._detect_language("Développeur logiciel à Genève")
     assert de and fr and de != fr, f"expected different languages, got {de!r}/{fr!r}"
 
 
@@ -71,11 +71,11 @@ def test_the_same_title_always_gets_the_same_answer():
     never promised.
     """
     titulo = "Sviluppatore software"
-    primera = TranslationService._detect_language(titulo)
-    repetidas = {TranslationService._detect_language(titulo) for _ in range(20)}
+    primera = LanguageDetector._detect_language(titulo)
+    repetidas = {LanguageDetector._detect_language(titulo) for _ in range(20)}
     assert repetidas == {primera}, f"the badge flipped: {repetidas}"
 
 
 def test_an_empty_title_needs_no_detector(monkeypatch):
     """The common degenerate case must not reach the detector at all."""
-    assert TranslationService._detect_language("") == ""
+    assert LanguageDetector._detect_language("") == ""
