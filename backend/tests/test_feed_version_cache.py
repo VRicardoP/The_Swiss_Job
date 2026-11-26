@@ -455,3 +455,24 @@ def test_un_recorrido_CONFIRMADO_si_queda_sellado(monkeypatch):
 
     assert core_client._feed_cache["p1"][0] == "v1"
     assert core_client._feed_verified_at["p1"] > 0, "debe quedar sellado"
+
+
+async def test_una_coincidencia_de_version_renueva_el_sello(monkeypatch):
+    """F7: la versión declarada que coincide con la cacheada ES una
+    confirmación, igual que la de `_remember_feed`. Sin sellarla, el atajo por
+    categoría caducaba a los 2 intervalos del calentador aunque cada pasada
+    confirmase la versión, y `/match/results?category=X` volvía al core."""
+    monkeypatch.setattr(core_client, "_feed_verified_at", {})
+    cliente = _Cliente(_paginas(1, 3, 3))
+    m = _matching(cliente)
+    pid = uuid.uuid4()
+    await m._fetch_full_feed(pid)  # recorrido completo, confirmado y sellado
+    core_client._feed_verified_at[str(pid)] = 0.0  # pasado el plazo de frescura
+    assert not core_client._warm_cache_is_fresh(0.0)
+
+    await m._fetch_full_feed(pid)  # la versión coincide: sale de caché
+
+    assert cliente.peticiones_pagina == 1
+    assert core_client._warm_cache_is_fresh(core_client._feed_verified_at[str(pid)]), (
+        "la coincidencia de versión no renovó el sello del atajo por categoría"
+    )
