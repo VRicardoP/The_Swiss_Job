@@ -3,6 +3,8 @@
 # con 8 valores sensibles sustituidos por marcadores.
 # Refrescado el 2026-10-20 tras desplegar DT-148 (sección A + F1/F2) en 8ffb8b3:
 # filtros `category`/`since` del catálogo y kill-switch de bloqueos parciales.
+# D10 (2026-11-26, AÚN NO DESPLEGADO): `CORE_GROQ_API_KEY` en core-ops-worker es
+# lo que hay que añadir al compose vivo; hasta entonces esta copia va por delante.
 name: unification-e15-20260914
 services:
   core-api:
@@ -139,6 +141,7 @@ services:
         "swissjob-shadow": "http://swissjob-backend:8000/api/v1/integration/events"}'
       CORE_DELIVERY_HTTP_TOKEN: ${CORE_DELIVERY_HTTP_TOKEN}
       CORE_ENV: prod
+      CORE_GROQ_API_KEY: ${CORE_GROQ_API_KEY}
       CORE_RESULT_BACKEND: ${CORE_RESULT_BACKEND}
       CORE_SAVED_SEARCH_EXECUTION_ENABLED: 'true'
       GPG_KEY: ${GPG_KEY}

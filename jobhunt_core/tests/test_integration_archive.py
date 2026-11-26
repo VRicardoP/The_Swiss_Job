@@ -13,6 +13,7 @@ import asyncio
 import os
 import uuid
 
+import httpx
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -21,7 +22,10 @@ from jobhunt_core import applications
 from jobhunt_core.tests import dbcleanup
 from jobhunt_core.archive import archive_sweep
 from jobhunt_core.config import settings
+from jobhunt_core.harvest.provider import BaseProvider
+from jobhunt_core.harvest.runner import EXHAUSTIVE_SWEEPS, run_scope
 from jobhunt_core.harvest.sink import RawListing, RawListingSink
+from jobhunt_core.harvest.types import FetchResult
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("CORE_ADMIN_DATABASE_URL"),
@@ -43,7 +47,9 @@ def db():
             for stmt in reversed(created["extra_sql"]):
                 await s.execute(sa.text(stmt))
             await dbcleanup.purge_source_graph(
-                s, [created["source"]], created["scopes"]
+                s,
+                [created["source"], *created.get("extra_sources", [])],
+                created["scopes"],
             )
             await s.commit()
         await engine.dispose()
@@ -375,3 +381,216 @@ def test_b3_sink_no_refresca_snapshot_archivado_por_el_barrido(db):
     st = asyncio.run(check())
     # pre-fix: vivas=0, vacantes=1 (la cosecha enterrada en la archivada)
     assert st.vivas == 1 and st.archivadas == 1 and st.vacantes == 2
+
+
+# ---------------------------------------------------------------------------
+# D7 — cierre de lo que desaparece de un portal de barrido exhaustivo
+# ---------------------------------------------------------------------------
+
+
+class _Barrido(BaseProvider):
+    """Devuelve EXACTAMENTE los external_id pedidos, como un portal recorrido
+    entero (`exhaustive=True`) o como uno incremental (`exhaustive=False`)."""
+
+    name = "arbeitnow"
+
+    def __init__(self, exts, exhaustive=True):
+        self.exts, self.exhaustive = exts, exhaustive
+
+    async def fetch_new(self, params, cursor, http) -> FetchResult:
+        return FetchResult(
+            listings=tuple(
+                RawListing(
+                    external_id=e, url=f"https://x/{e}", payload={"title": e, "v": 1}
+                )
+                for e in self.exts
+            ),
+            next_cursor={},
+            exhaustive=self.exhaustive,
+        )
+
+
+def _barrer(factory, scope, exts, exhaustive=True):
+    async def go():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: httpx.Response(500))
+        ) as http:
+            return await run_scope(
+                scope,
+                _Barrido(exts, exhaustive),
+                RawListingSink(),
+                http,
+                session_factory=factory,
+            )
+
+    assert asyncio.run(go()).status == "ok"
+
+
+def _sellos(factory, scope) -> int:
+    return _sql(
+        factory,
+        "SELECT cardinality(exhaustive_sweep_at) FROM source_scope_state "
+        "WHERE scope_id = :s",
+        s=scope,
+    ).scalar_one()
+
+
+def _nuevo_scope(factory, created, source_id, params="{}") -> uuid.UUID:
+    scope_id = uuid.uuid4()
+    _sql(
+        factory,
+        "INSERT INTO harvest_scopes (id, source_id, params, tier) "
+        "VALUES (:id, :src, CAST(:p AS jsonb), 0)",
+        id=scope_id,
+        src=source_id,
+        p=params,
+    )
+    created["scopes"].append(scope_id)
+    return scope_id
+
+
+def test_d7_exhaustivo_cierra_lo_no_visto_en_n_barridos_y_no_antes(db):
+    """La oferta `fuera` desaparece del portal tras el primer barrido. Con
+    N-1 barridos sin ella sigue abierta; al N-ésimo se cierra y su vacante —sin
+    otra encarnación— queda archivada, igual que en la rama de rancias. La
+    oferta que sigue publicada no se toca."""
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    _barrer(factory, scope, ["sigue", "fuera"])
+    for _ in range(EXHAUSTIVE_SWEEPS - 1):
+        _barrer(factory, scope, ["sigue"])
+    r = _sweep(factory)
+    assert r["cerradas_desaparecidas"] == 0
+    assert tuple(_estado(factory, "fuera")) == (False, True)
+
+    _barrer(factory, scope, ["sigue"])  # N-ésimo barrido sin `fuera`
+    assert _sellos(factory, scope) == EXHAUSTIVE_SWEEPS  # sólo se guardan N
+    r = _sweep(factory)
+    assert r["cerradas_desaparecidas"] == 1
+    assert r["archivadas_desaparecidas"] == 1
+    assert tuple(_estado(factory, "fuera")) == (True, False)
+    assert tuple(_estado(factory, "sigue")) == (False, True)
+    # Idempotente: el siguiente barrido diario no encuentra nada más.
+    assert _sweep(factory)["cerradas_desaparecidas"] == 0
+
+
+def test_d7_incremental_no_cierra_por_ausencia(db):
+    """Un portal que NO se recorre entero (ventana de fechas, presupuesto de
+    páginas) no prueba nada con una ausencia: completo pero no exhaustivo no
+    sella y no cierra; esas ofertas siguen esperando a los 120 días."""
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    _barrer(factory, scope, ["sigue", "fuera"], exhaustive=False)
+    for _ in range(EXHAUSTIVE_SWEEPS + 1):
+        _barrer(factory, scope, ["sigue"], exhaustive=False)
+    assert _sellos(factory, scope) == 0
+    assert _sweep(factory)["cerradas_desaparecidas"] == 0
+    assert tuple(_estado(factory, "fuera")) == (False, True)
+
+
+def test_d7_barrido_exhaustivo_vacio_no_sella(db):
+    """Un `[]` exhaustivo es indistinguible de un portal roto: sellarlo
+    cerraría la fuente entera a los N barridos."""
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    _barrer(factory, scope, ["sigue"])
+    for _ in range(EXHAUSTIVE_SWEEPS):
+        _barrer(factory, scope, [])
+    assert _sellos(factory, scope) == 1
+    assert _sweep(factory)["cerradas_desaparecidas"] == 0
+
+
+def test_d7_otro_scope_de_la_fuente_sin_sellos_bloquea_el_cierre(db):
+    """La encarnación es de la FUENTE: si otro scope suyo no ha barrido
+    exhaustivamente N veces, pudo ser él quien la viera, y no se cierra."""
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    _nuevo_scope(factory, created, created["source"], '{"keyword": "otro"}')
+    _barrer(factory, scope, ["sigue", "fuera"])
+    for _ in range(EXHAUSTIVE_SWEEPS):
+        _barrer(factory, scope, ["sigue"])
+    assert _sweep(factory)["cerradas_desaparecidas"] == 0
+    assert tuple(_estado(factory, "fuera")) == (False, True)
+
+
+def test_d7_vacante_compartida_reasigna_primary_y_sigue_viva(db):
+    """Si la vacante conserva otra encarnación activa (otra fuente con la
+    misma URL), el cierre no la archiva: el primary pasa a la superviviente,
+    como en el reciclado."""
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    _barrer(factory, scope, ["sigue", "compartida"])
+
+    otra_fuente = uuid.uuid4()
+    _sql(
+        factory,
+        "INSERT INTO sources (id, name, tier) VALUES (:id, 'remotive', 0)",
+        id=otra_fuente,
+    )
+    created.setdefault("extra_sources", []).append(otra_fuente)
+    otro_scope = _nuevo_scope(factory, created, otra_fuente)
+
+    async def adjuntar():
+        async with factory() as s:
+            await RawListingSink().handle(
+                s,
+                str(otro_scope),
+                (
+                    RawListing(
+                        external_id="rem-1",
+                        url="https://x/compartida",
+                        payload={"title": "compartida"},
+                    ),
+                ),
+            )
+            await s.commit()
+
+    asyncio.run(adjuntar())
+
+    def _vacante():
+        return _sql(
+            factory,
+            "SELECT v.id, v.archived_at, v.primary_incarnation_id, "
+            "  (SELECT i.id FROM source_listing_incarnations i "
+            "   JOIN source_listings l ON l.id = i.source_listing_id "
+            "   WHERE l.external_id = 'rem-1' AND i.ended_at IS NULL) "
+            "    AS superviviente "
+            "FROM vacancies v "
+            "JOIN source_listing_incarnations i ON i.vacancy_id = v.id "
+            "JOIN source_listings l ON l.id = i.source_listing_id "
+            "WHERE l.external_id = 'compartida'",
+        ).one()
+
+    antes = _vacante()
+    assert antes.superviviente is not None  # el attach por URL ocurrió
+    assert antes.primary_incarnation_id != antes.superviviente
+
+    for _ in range(EXHAUSTIVE_SWEEPS):
+        _barrer(factory, scope, ["sigue"])
+    r = _sweep(factory)
+    assert r["cerradas_desaparecidas"] == 1
+    assert r["archivadas_desaparecidas"] == 0
+    despues = _vacante()
+    assert despues.id == antes.id and despues.archived_at is None
+    assert despues.primary_incarnation_id == despues.superviviente
+
+
+def test_d7_el_cierre_va_por_lotes_y_los_completa_todos(db, monkeypatch):
+    """El primer barrido tras desplegar cierra de golpe todo el atraso. Va por
+    lotes (cada uno confirma y suelta sus FOR UPDATE) y no deja ninguno: con un
+    tope de 1 y tres ofertas desaparecidas, cierra las tres en una pasada."""
+    from jobhunt_core import archive
+
+    monkeypatch.setattr(archive, "CLOSE_DISAPPEARED_BATCH", 1)
+    monkeypatch.setattr(archive.close_disappeared, "__defaults__", (1,))
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    _barrer(factory, scope, ["sigue", "a", "b", "c"])
+    for _ in range(EXHAUSTIVE_SWEEPS):
+        _barrer(factory, scope, ["sigue"])
+    r = _sweep(factory)
+    assert r["cerradas_desaparecidas"] == 3
+    assert r["archivadas_desaparecidas"] == 3
+    for ext in ("a", "b", "c"):
+        assert tuple(_estado(factory, ext)) == (True, False)
+    assert tuple(_estado(factory, "sigue")) == (False, True)

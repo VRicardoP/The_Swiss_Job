@@ -250,6 +250,8 @@ class ArbeitnowProvider(BaseProvider):
             pages_fetched=pages,
             complete=complete,
             error=sweep.error,
+            # Completo aquí SÓLO es agotar `links.next` del feed entero (D7).
+            exhaustive=complete,
         )
 
 

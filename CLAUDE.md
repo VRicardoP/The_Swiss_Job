@@ -58,7 +58,8 @@
   con cero filas en toda su vida)
 - **Core**: paquete `jobhunt_core/` — API v1 FastAPI (`core-api`, puerto 8003 en
   local) y Celery con **beat embebido** (`-B`) y **13 cadencias incondicionales
-  + 1 condicional** (re-contadas el 2026-11-02; antes decía «14» a secas): cada
+  + 2 condicionales** (re-contadas el 2026-11-02; la segunda condicional,
+  `maintenance-translate-titles`, entra con `CORE_GROQ_API_KEY`, D10): cada
   **5 min** el despacho del outbox, la salud de la entrega y la recuperación de
   matching — **el barrido de búsquedas guardadas (`saved-searches-run-due`) es la
   condicional**: sólo entra al beat si `CORE_SAVED_SEARCH_EXECUTION_ENABLED`, que
@@ -359,11 +360,13 @@ solape que lleva más de 7 d sin cerrar.
   van al threadpool; `alembic check` es paso del CI (los modelos declaran ya el
   índice HNSW, el GIN del `search_vector` y `ix_match_results_application_status`,
   que antes solo existían en la base y un `--autogenerate` habría borrado).
-- **Los títulos de la pantalla principal se traducen EN EL FONDO** (A19-15 §D):
-  `services/matching/warm.py`, tras calentar el feed de cada usuario, traduce ≤ 100 títulos por
-  pasada que aún no estén en Redis (`TRANSLATION_WARMUP_*`); `/match` con
-  `translate=false` los lee con un MGET y NUNCA llama al LLM (la prueba instala
-  un Groq que lanza). Sin `GROQ_API_KEY` o sin Redis no se paga nada.
+- **Los títulos en inglés los traduce el NÚCLEO, una vez por título** (D10,
+  2026-11-26): tabla `title_translations` (`core0062`), tarea
+  `jobhunt.maintenance.translate_titles` en el worker de operaciones (sólo con
+  `CORE_GROQ_API_KEY`; sin ella ni entra al beat), servida como
+  `VacancyDTO.title_en` en el mismo JOIN del contenido. El BFF y Portfolio sólo
+  la LEEN: el calentador, `translate=true|false` y la caché `translate:title:*`
+  del BFF se retiraron. Detalle y estados en `jobhunt_core/title_translation.py`.
 
 ## Restricciones del proyecto
 
@@ -698,11 +701,11 @@ backend/             # EL BFF. API para el frontend + avisos por email
     catalog/         #   cliente del catálogo del core: search, detalle y `recent`
     matching/        #   cliente del feed /v1 + caché por VERSIÓN (ver más abajo)
     documents/ profiles/ schools/   #   un cliente por capacidad, todos al core
-    groq_service.py  #   `get_chat_response` (traducción y documentos). La rama de
+    groq_service.py  #   `get_chat_response` (documentos y carta). La rama de
                      #   re-ranking que queda dentro está MUERTA desde el corte:
                      #   442 LOC sin llamador que DT-148 B1 retira
     gemini_service.py#   Gemini 3.6 Flash, PRIMARIO de CV/carta; fallback a Groq
-    translation_service.py  # títulos a inglés (DE/FR/IT), caché Redis 30 d
+    language_detection.py   # idioma del título para la UI (la traducción es del core, D10)
     teacher_alert.py #   docencia de primaria: categoría H del catálogo + nivel
     email_service.py #   SMTP stdlib para los avisos
   scrapers/swiss_schools_config.py  # tabla de colegios vigilados, no un scraper

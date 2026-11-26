@@ -68,11 +68,8 @@ class Settings(BaseSettings):
     # proceso, así que calentar en uno no sirve al otro.
     FEED_WARMUP_ENABLED: bool = True
     FEED_WARMUP_INTERVAL_SECONDS: int = 60
-    # A19-15 §D: traducir los títulos del feed EN SEGUNDO PLANO (dentro del
-    # calentamiento), para que la pantalla principal (translate=false) los lea de
-    # Redis sin pagar un LLM por petición. Cota por pasada: son llamadas a Groq.
-    TRANSLATION_WARMUP_ENABLED: bool = True
-    TRANSLATION_WARMUP_MAX_PER_PASS: int = Field(default=100, ge=0)
+    # D10: TRANSLATION_WARMUP_ENABLED y _MAX_PER_PASS se retiraron. Los títulos
+    # en inglés los traduce el CORE una vez por título (VacancyDTO.title_en).
 
     # App
     SECRET_KEY: str = "change-me-in-production"
@@ -128,7 +125,9 @@ class Settings(BaseSettings):
     # gpt-oss-120b (reemplazo recomendado por Groq). Es un modelo de razonamiento pero
     # su cadena de pensamiento va en un campo `reasoning` aparte: `.content` sale limpio.
     GROQ_MODEL: str = "openai/gpt-oss-120b"
-    # Modelo rápido — traducción de títulos + re-ranking Stage 3 (alto volumen).
+    # Modelo rápido — hoy, la carta de colegios (`letter_generator`). D10: la
+    # traducción de títulos se fue al core con el mismo modelo por defecto
+    # (`CORE_TITLE_TRANSLATION_MODEL`); el re-ranking Stage 3 murió antes.
     # Cadena de decomisos de Groq: llama-4-scout (2026-07-17) → qwen3.6-27b →
     # qwen3.8-27b (2026-09-15). qwen3.6-27b ya NO existe en el catálogo:
     # devolvía `model_not_found`, es decir, la traducción de títulos y el

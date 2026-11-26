@@ -13,6 +13,7 @@ def test_short_page_is_not_end_when_portal_says_more(monkeypatch):
     result, requests = fetch(pages=pages, monkeypatch=monkeypatch)
     assert len(result.listings) == 20 and len(requests) == 2
     assert result.complete
+    assert result.exhaustive  # D7: hasta la última página declarada
 
 
 def test_full_final_page_can_be_complete_from_metadata(monkeypatch):

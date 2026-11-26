@@ -349,7 +349,7 @@ async def test_results_shape_maps_to_match_result_response(seeded, impl):
     items, total = await matchings[impl].results(user_id)
     assert total == len(VISIBLE_ORDER)
     for item in items:
-        resp = _to_match_response(item, translations={})
+        resp = _to_match_response(item)
         assert isinstance(resp, MatchResultResponse)
         assert resp.job_hash in CASE_HASHES.values()
 

@@ -41,6 +41,7 @@ from jobhunt_core.api.http_contract import (
 from jobhunt_core.api.idempotency import run_idempotent
 from jobhunt_core.erasure import ProfileErasedError
 from jobhunt_core.match_categories import content_search_text_sql, sql_case
+from jobhunt_core.title_translation import TITLE_KEY_SQL
 
 # Los errores del contrato quedan DOCUMENTADOS en OpenAPI (auditoría A-09:
 # ErrorDTO debe aparecer en components, no ser código muerto).
@@ -303,6 +304,15 @@ def _canonical_language(value) -> str | None:
     return candidato
 
 
+def _served_title_en(title_en: str | None, title: str) -> str | None:
+    """Sólo una traducción que DICE algo: si el LLM devolvió el título tal
+    cual (ya estaba en inglés), servirla haría que el consumidor la pintara
+    como «traducido»."""
+    if title_en and title_en != title.strip():
+        return title_en
+    return None
+
+
 async def _vacancy_dtos(session, vacancy_ids) -> dict:
     """{vacancy_id: VacancyDTO} de vacantes ACTIVAS y presentables (con
     canónica vigente). Tres queries por LOTE, sea cual sea la página."""
@@ -312,8 +322,13 @@ async def _vacancy_dtos(session, vacancy_ids) -> dict:
     contents = (
         await session.execute(
             sa.text(
-                "SELECT v.id, o.content FROM vacancies v "
+                # D10: la traducción viaja en el MISMO JOIN del contenido —
+                # cero consultas extra por página— con la misma expresión de
+                # clave que usa el descubrimiento (title_translation).
+                "SELECT v.id, o.content, tt.title_en FROM vacancies v "
                 "JOIN offer_revisions o ON o.id = v.current_offer_revision_id "
+                "LEFT JOIN title_translations tt "
+                f"  ON tt.title_key = {TITLE_KEY_SQL} "
                 "WHERE v.id = ANY(:ids) "
                 "AND v.archived_at IS NULL AND v.merged_into IS NULL"
             ),
@@ -368,9 +383,11 @@ async def _vacancy_dtos(session, vacancy_ids) -> dict:
     for row in contents:
         c = row.content
         primary = primaries.get(row.id)
+        title = c.get("title") or ""
         out[row.id] = schemas.VacancyDTO(
             id=row.id,
-            title=c.get("title") or "",
+            title=title,
+            title_en=_served_title_en(row.title_en, title),
             company=c.get("company"),
             description=c.get("description"),
             salary=c.get("salary"),

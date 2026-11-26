@@ -202,4 +202,6 @@ class CHMediaProvider(BaseProvider):
             complete=exhausted and error is None,
             error=error,
             blocked_with=blocked_with,
+            # Sin parámetros y hasta la última página declarada (D7).
+            exhaustive=exhausted and error is None,
         )
