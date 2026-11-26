@@ -29,6 +29,39 @@ from models.jobhunt_profile_map import JobhuntProfileMap
 
 logger = logging.getLogger(__name__)
 
+# Marca de actividad: el router la escribe al servir el feed o sus facetas, y el
+# calentador sólo calienta a quien la tiene. Sin ella se calentaba a todos los
+# enrolados cada pasada aunque nadie entrase (1.732 versiones/día sin usuarios).
+# Coste aceptado: quien vuelve tras más de un día paga la primera carga en frío.
+ACTIVE_KEY_PREFIX = "feed:active:"
+ACTIVE_TTL_SECONDS = 86_400
+
+
+async def mark_active(redis, user_id) -> None:
+    """Marca al usuario como activo. Sin Redis no hace nada; un fallo no se
+    propaga: la marca es una optimización del fondo, no parte de la respuesta."""
+    if redis is None:
+        return
+    try:
+        await redis.set(f"{ACTIVE_KEY_PREFIX}{user_id}", b"1", ex=ACTIVE_TTL_SECONDS)
+    except Exception:
+        logger.debug("marca de actividad del feed no escrita para %s", user_id)
+
+
+async def _usuarios_activos(redis, usuarios: list) -> list:
+    """Filtra por la marca de actividad en UNA ida (MGET). Sin Redis, o si
+    falla, devuelve todos: es el comportamiento de antes de la marca."""
+    if redis is None or not usuarios:
+        return usuarios
+    try:
+        marcas = await redis.mget([f"{ACTIVE_KEY_PREFIX}{u}" for u in usuarios])
+    except Exception:
+        logger.warning(
+            "calentamiento del feed: Redis sin respuesta, se calienta a todos"
+        )
+        return usuarios
+    return [u for u, marca in zip(usuarios, marcas) if marca]
+
 
 async def _usuarios_enrolados(db) -> list:
     """Usuarios con vínculo de identidad en el core; sin vínculo no hay feed."""
@@ -36,12 +69,14 @@ async def _usuarios_enrolados(db) -> list:
 
 
 async def calentar_una_vez(redis=None) -> dict[str, int]:
-    """Una pasada sobre todos los enrolados. No propaga fallos por usuario."""
+    """Una pasada sobre los enrolados con marca de actividad. No propaga fallos
+    por usuario."""
     from services.matching import resolve_matching
 
     calentados, facetas, fallos, traducidos = 0, 0, 0, 0
     async with async_session() as db:
         usuarios = await _usuarios_enrolados(db)
+    usuarios = await _usuarios_activos(redis, usuarios)
     for user_id in usuarios:
         try:
             async with async_session() as db:
@@ -89,7 +124,7 @@ async def _traducir_en_fondo(db, backend, user_id, redis) -> int:
         return 0
     from services import language_store
     from services.groq_service import GroqService
-    from services.translation_service import TranslationService
+    from services.translation_service import SKIP_LANGUAGES, TranslationService
 
     groq = GroqService(redis_client=redis)
     if not groq.is_available:
@@ -97,10 +132,20 @@ async def _traducir_en_fondo(db, backend, user_id, redis) -> int:
     translator = TranslationService(groq)
     ya = await translator.cached_translations(titulos)
     pendientes = [t for t in dict.fromkeys(titulos) if t not in ya]
+    # El idioma va ANTES del corte: un título en EN/ES nunca se cachea (no hay
+    # traducción que guardar), así que si entraba en la ventana la ocupaba en
+    # TODAS las pasadas y la traducción no avanzaba (282 de 284 pasadas con
+    # `traducidos: 200` en producción, 25-11). Un fallo del proveedor no marca
+    # nada: lo que no se tradujo sigue sin clave y vuelve a la pasada siguiente.
+    idiomas, _vistos = await language_store.lookup(db, pendientes)
+    pendientes = [
+        t
+        for t in pendientes
+        if idiomas.get(language_store.normalise(t)) not in SKIP_LANGUAGES
+    ]
     pendientes = pendientes[: settings.TRANSLATION_WARMUP_MAX_PER_PASS]
     if not pendientes:
         return 0
-    idiomas, _vistos = await language_store.lookup(db, pendientes)
     await translator.translate_titles(
         [{"title": t, "language": ""} for t in pendientes], languages=idiomas
     )

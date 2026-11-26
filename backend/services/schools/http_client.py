@@ -52,9 +52,7 @@ class SchoolClient:
         if not settings.CORE_CONSUMER_KEY and self._factory is default_client_factory:
             raise CoreUnavailableError("school core credential unavailable")
         try:
-            async with asyncio.timeout(
-                max(float(settings.CORE_HTTP_TIMEOUT_SECONDS), 1) * 2
-            ):
+            async with asyncio.timeout(settings.CORE_FEED_TOTAL_BUDGET_S):
                 async with self._factory() as client:
                     response = await client.request(method, path, **kwargs)
             if response.status_code == 404:
@@ -75,9 +73,7 @@ class SchoolClient:
     async def pages(self, path, params=None):
         result, seen, cursor = [], set(), None
         try:
-            async with asyncio.timeout(
-                max(float(settings.CORE_HTTP_TIMEOUT_SECONDS), 1) * 2
-            ):
+            async with asyncio.timeout(settings.CORE_FEED_TOTAL_BUDGET_S):
                 for _ in range(100):
                     query = {"limit": 100, **(params or {})}
                     if cursor:

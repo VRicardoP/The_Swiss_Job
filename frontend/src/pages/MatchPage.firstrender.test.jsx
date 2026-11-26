@@ -32,7 +32,6 @@ const estado = vi.hoisted(() => ({ facets: undefined, perfil: undefined }));
 vi.mock("../hooks/useMatch", () => ({
   useMatchFacets: () => estado.facets,
   useMatchResults: () => ({ data: undefined, isLoading: false, isError: false, error: null }),
-  useAnalyze: () => ({ mutate: () => {}, isPending: false }),
   useSubmitFeedback: () => ({ mutate: () => {} }),
   useClearFeedback: () => ({ mutate: () => {} }),
   useSubmitImplicit: () => ({ mutate: () => {} }),
@@ -81,5 +80,20 @@ describe("MatchPage · primer render", () => {
     // 91.4 se redondea a 91: prueba que el valor viaja hasta el tile y que la
     // extracción del escalar no rompió el camino bueno.
     expect(html).toContain("91");
+  });
+
+  it("no ofrece el análisis interactivo retirado (F6)", () => {
+    // El core recalcula solo; el botón llamaba a un endpoint que respondía 409.
+    estado.facets = {
+      data: { total: 0, top_score: 0, strong_count: 0, watchlist_count: 0, categories: [] },
+      isSuccess: true,
+      isError: false,
+      isLoading: false,
+    };
+    estado.perfil = { data: { has_cv_embedding: true }, isLoading: false };
+    const html = pintar();
+    expect(html).toContain("No matches yet");
+    expect(html).not.toContain("Find new matches");
+    expect(html).not.toContain("Find matches");
   });
 });

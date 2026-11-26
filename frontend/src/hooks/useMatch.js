@@ -1,17 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { matchApi } from "../config/api";
 
-export function useAnalyze() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () => matchApi.analyze(),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["match-results"] });
-      qc.invalidateQueries({ queryKey: ["match-facets"] });
-    },
-  });
-}
-
 export function useMatchFacets() {
   return useQuery({
     queryKey: ["match-facets"],

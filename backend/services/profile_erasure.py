@@ -18,6 +18,12 @@ from services.profiles.core_client import default_client_factory
 
 logger = logging.getLogger(__name__)
 
+# Pausa entre pasadas del reconciliador. Corre en cada proceso de gunicorn y en
+# swissjob-erasure-cdc, y cada pasada lee recibos y reescribe acuses en el core:
+# a 30 s eran ~17.000 peticiones/día para un recibo. No hay plazo de propagación
+# comprometido (BORRADO_COORDINADO_E13.md, COTAS_Y_DECISIONES.md).
+ERASURE_POLL_SECONDS = 900
+
 
 def clear_erased_caches(profile_id):
     if profile_id is not None:
@@ -243,7 +249,7 @@ async def run_erasure_delivery():
                     await reconcile_replica()
         except Exception as exc:
             logger.warning("profile erasure drain deferred (%s)", type(exc).__name__)
-        await asyncio.sleep(30)
+        await asyncio.sleep(ERASURE_POLL_SECONDS)
 
 
 if __name__ == "__main__":

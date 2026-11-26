@@ -1,6 +1,6 @@
 """Core matching feed, facets, saved items and feedback endpoints.
 
-Core owns matching computation, so the interactive analyze endpoint is closed.
+Core owns matching computation; there is no interactive analyze endpoint.
 The retained feedback switch and local application overlay preserve the state
 whose separate migration gates are still active.
 """
@@ -11,15 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
-from core.rate_limit import limiter
 from core.security import get_current_user
 from database import get_db
 from models.user import User
 from schemas.match import (
     ImplicitFeedbackRequest,
     ImplicitFeedbackResponse,
-    MatchAnalyzeRequest,
-    MatchAnalyzeResponse,
     MatchFeedbackRequest,
     MatchFeedbackResponse,
     MatchFacetsResponse,
@@ -40,6 +37,7 @@ from services.matching import (
     MatchingUnsupportedError,
     resolve_matching,
 )
+from services.matching.warm import mark_active
 from services.translation_service import TranslationService
 from utils.text import strip_html_tags
 
@@ -48,10 +46,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/match", tags=["match"])
 
 
+def _redis(request: Request):
+    return getattr(request.app.state, "redis_client", None)
+
+
 def _get_groq(request: Request) -> GroqService:
     """Build GroqService with Redis from app state."""
-    redis_client = getattr(request.app.state, "redis_client", None)
-    return GroqService(redis_client=redis_client)
+    return GroqService(redis_client=_redis(request))
 
 
 def _matching_http_error(exc: MatchingError) -> HTTPException:
@@ -67,30 +68,6 @@ def _matching_http_error(exc: MatchingError) -> HTTPException:
             detail="Operation not available on the active matching backend",
         )
     raise exc  # error de programacion: no enmascarar como HTTP
-
-
-@router.post("/analyze", response_model=MatchAnalyzeResponse)
-@limiter.limit("3/minute")
-async def analyze_matches(
-    request: Request,
-    body: MatchAnalyzeRequest = MatchAnalyzeRequest(),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Trigger AI matching pipeline for the current user.
-
-    Stage 1: pgvector cosine similarity on ALL active jobs
-    Stage 2: Multi-factor scoring (embedding + salary + location + recency)
-    Stage 3: LLM re-ranking via Groq (if API key configured) — top-K only
-    """
-    raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail=(
-            "Matching for this profile is governed by the core engine; "
-            "results recompute automatically when your CV or the job "
-            "corpus changes. Local analysis is disabled."
-        ),
-    )
 
 
 def _presentation_description(job) -> str | None:
@@ -242,11 +219,13 @@ async def _build_results_response(
 
 @router.get("/facets", response_model=MatchFacetsResponse)
 async def get_match_facets(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     if not settings.CORE_MATCH_FACETS_ENABLED:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    await mark_active(_redis(request), current_user.id)
     try:
         return await CoreMatching(db).facets(current_user.id)
     except MatchingError as exc:
@@ -270,6 +249,7 @@ async def get_match_results(
     """
     if category is not None and not settings.CORE_MATCH_FACETS_ENABLED:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    await mark_active(_redis(request), current_user.id)
     matching = (
         CoreMatching(db)
         if category is not None

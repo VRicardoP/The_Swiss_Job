@@ -430,13 +430,6 @@ export const analyticsApi = {
 }
 
 export const matchApi = {
-  analyze() {
-    return authRequest("/match/analyze", {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
-  },
-
   getFacets() {
     return authRequest("/match/facets");
   },

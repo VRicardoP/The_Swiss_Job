@@ -913,6 +913,12 @@ class CoreMatching:
             if version is not None:
                 cacheado = _feed_cache.get(pid)
                 if cacheado is not None and cacheado[0] == version:
+                    # F7: la versión EXACTA es una confirmación del recorrido
+                    # cacheado, igual que la de `_remember_feed`: se sella. Sin
+                    # esto el atajo por categoría caducaba aunque el calentador
+                    # confirmase la versión en cada pasada. No reabre A-03:
+                    # aquí se sella por haber coincidido, no por existir.
+                    _feed_verified_at[pid] = time.monotonic()
                     return list(cacheado[1]), cacheado[2]
             category_page_limit = None
             if category is not None:

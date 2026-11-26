@@ -75,9 +75,7 @@ class CoreSavedSearches:
         if pid is None:
             raise SearchCoreError()
         try:
-            async with asyncio.timeout(
-                max(float(settings.CORE_HTTP_TIMEOUT_SECONDS), 1) * 2
-            ):
+            async with asyncio.timeout(settings.CORE_FEED_TOTAL_BUDGET_S):
                 async with self.client_factory() as client:
                     yield client, pid
         except (httpx.HTTPError, TimeoutError, ValueError, TypeError, KeyError):
