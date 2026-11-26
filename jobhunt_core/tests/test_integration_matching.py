@@ -1426,3 +1426,145 @@ def test_exclusiones_del_perfil_se_aplican_en_la_recuperacion(db):
     asyncio.run(limpiar())
     asyncio.run(excluir("tag_contains", "t-parcial"))
     assert len(asyncio.run(calcular())) == 3
+
+
+# --------------------------------------------------------------------------
+# Tarea 2.1 (R1, plan de eficiencia 2026-11-26): el respaldo exacto del híbrido
+# se decide con el tamaño del brazo ANN (`ann_rows`), no contando
+# `semantic_rank` en el corte fusionado.
+# --------------------------------------------------------------------------
+_LEXICAL_TITLES = [
+    "kubernetes platform engineer",
+    "kubernetes devops engineer",
+    "kubernetes sre engineer",
+]
+_SEMANTIC_TITLES = ["warehouse accountant", "retail cashier", "farm hand"]
+
+
+def _hybrid_corpus_with_lexical_only_on_top(factory, created):
+    """Seis ofertas, top-K = 3. Las tres más cercanas al perfil no casan con su
+    consulta léxica y las tres que casan están lejos: el ANN trae 3 (lleno) y
+    el corte fusionado se lo quedan las solo-léxicas, que puntúan más en RRF
+    (1,15/61 frente a 1/61). Devuelve (pid, mid, hybrid_id)."""
+    pid, mid, _cosine_id, vacs = _setup(
+        factory,
+        created,
+        _LEXICAL_TITLES + _SEMANTIC_TITLES,
+        profile_content={"title": "kubernetes engineer", "skills": ["kubernetes"]},
+    )
+
+    async def configure():
+        async with factory() as s:
+            hybrid_id = await matching.ensure_policy(
+                s,
+                matching.HYBRID_POLICY_NAME,
+                matching.HYBRID_POLICY_VERSION,
+                weights=matching.HYBRID_POLICY_WEIGHTS,
+            )
+            created["policies"].append(hybrid_id)
+            near = [1.0, 0.0] + [0.0] * (embeddings.EMBED_DIM - 2)
+            far = [0.0, 1.0] + [0.0] * (embeddings.EMBED_DIM - 2)
+            await s.execute(
+                sa.text(
+                    "UPDATE profile_embeddings SET vector = CAST(:v AS vector) "
+                    "WHERE profile_id = :p AND model_id = :m"
+                ),
+                {"v": str(near), "p": pid, "m": mid},
+            )
+            vectors = [(t, far) for t in _LEXICAL_TITLES]
+            vectors += [(t, near) for t in _SEMANTIC_TITLES]
+            for title, vector in vectors:
+                await s.execute(
+                    sa.text(
+                        "UPDATE offer_embeddings oe SET vector = CAST(:v AS vector) "
+                        "FROM offer_revisions o "
+                        "WHERE o.vacancy_id = :vid AND oe.text_hash = o.text_hash "
+                        "AND oe.model_id = :m"
+                    ),
+                    {"v": str(vector), "vid": vacs[title], "m": mid},
+                )
+            await s.commit()
+            return hybrid_id
+
+    return pid, mid, asyncio.run(configure())
+
+
+@pytest.fixture()
+def exact_fallbacks(db):
+    """Cuenta las ejecuciones REALES del respaldo exacto (su SET LOCAL)."""
+    from sqlalchemy import event
+
+    factory, _created = db
+    engine = factory.kw["bind"]
+    counter = {"n": 0}
+
+    def count(conn, cursor, statement, parameters, context, executemany):
+        if "enable_indexscan = off" in statement:
+            counter["n"] += 1
+
+    event.listen(engine.sync_engine, "before_cursor_execute", count)
+    yield counter
+    event.remove(engine.sync_engine, "before_cursor_execute", count)
+
+
+def _hybrid_feed(factory, pid, mid, hybrid_id, limit=3):
+    async def go():
+        async with factory() as s:
+            return await matching.compute_policy_feed(
+                s, pid, mid, hybrid_id, limit=limit
+            )
+
+    return asyncio.run(go())["rows"]
+
+
+def test_full_semantic_arm_skips_exact_fallback_despite_lexical_only_rows(
+    db, exact_fallbacks
+):
+    factory, created = db
+    pid, mid, hybrid_id = _hybrid_corpus_with_lexical_only_on_top(factory, created)
+
+    rows = _hybrid_feed(factory, pid, mid, hybrid_id)
+
+    # Premisa: el corte lo ocupan solo-léxicas, que es lo que engañaba al
+    # recuento por `semantic_rank`.
+    assert [r["score_parts"]["semantic_rank"] for r in rows] == [None] * 3
+    assert exact_fallbacks["n"] == 0
+
+
+def test_short_semantic_arm_runs_exact_fallback_and_logs_it(
+    db, exact_fallbacks, monkeypatch, caplog
+):
+    factory, created = db
+    pid, mid, hybrid_id = _hybrid_corpus_with_lexical_only_on_top(factory, created)
+    # El brazo ANN se queda corto DE VERDAD (como un scan HNSW acotado que se
+    # inanió): una sola fila frente a un objetivo de 3. El léxico sigue
+    # llenando la unión, así que solo la suficiencia por brazo lo detecta.
+    starved = matching.HYBRID_CANDIDATES_SQL.replace(
+        "    LIMIT :k\n), lexical", "    LIMIT 1\n), lexical"
+    )
+    assert starved != matching.HYBRID_CANDIDATES_SQL
+    monkeypatch.setattr(matching, "HYBRID_CANDIDATES_SQL", starved)
+
+    with caplog.at_level("WARNING", logger="jobhunt_core.matching"):
+        rows = _hybrid_feed(factory, pid, mid, hybrid_id)
+
+    assert len(rows) == 3
+    assert exact_fallbacks["n"] == 1
+    messages = [r.getMessage() for r in caplog.records]
+    warnings = [m for m in messages if "respaldo" in m]
+    assert warnings == [
+        f"matching: respaldo exacto profile={pid} rows=3 ann_rows=1 target=3"
+    ]
+
+
+def test_skipping_the_fallback_returns_the_same_candidates(db, monkeypatch):
+    factory, created = db
+    pid, mid, hybrid_id = _hybrid_corpus_with_lexical_only_on_top(factory, created)
+
+    without_fallback = _hybrid_feed(factory, pid, mid, hybrid_id)
+    # El comportamiento anterior: el respaldo exacto se ejecutaba siempre.
+    monkeypatch.setattr(matching, "_semantic_arm_filled", lambda *_a: False)
+    with_fallback = _hybrid_feed(factory, pid, mid, hybrid_id)
+
+    assert without_fallback == with_fallback
+    assert len(without_fallback) == 3
