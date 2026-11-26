@@ -791,6 +791,16 @@ class RawListingSink:
             ]
         return pairs
 
+    async def repair_after_close(self, session, vacancy_ids) -> None:
+        """Lo que el reciclado hace tras cerrar encarnaciones, para un cierre
+        hecho FUERA del sink (D7: `archive.close_disappeared`): la vacante que
+        conserva otra encarnación activa reasigna su primary y la canónica lo
+        sigue. Exige los locks de vacante YA tomados por el llamador (mismo
+        protocolo que `handle`). Sin activas no hace nada: archivarla es del
+        llamador, igual que en el reciclado lo es del barrido ADR-07."""
+        repaired = await self._repair_primary_pointers(session, vacancy_ids)
+        await self._rebuild_canonical_after_repair(session, repaired)
+
     async def _repair_primary_pointers(self, session, vacancy_ids) -> list:
         """Reasigna el puntero primario de vacantes cuyo primary quedó CERRADO
         pero que conservan incarnaciones ACTIVAS (vacante compartida

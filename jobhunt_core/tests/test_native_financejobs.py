@@ -174,12 +174,15 @@ def test_page_full_of_unparseable_offers_is_a_failure_too(monkeypatch):
 def test_empty_list_is_a_legitimate_end_of_pagination(monkeypatch):
     result, seen = fetch([page([JOB]), page([])], monkeypatch=monkeypatch)
     assert len(seen) == 2 and result.complete is True and result.error is None
+    # D7: la página vacía es el fin del listado entero.
+    assert result.exhaustive is True
 
 
 def test_late_failure_preserves_the_valid_prefix(monkeypatch):
     result, _ = fetch([page([JOB]), httpx.Response(503)], monkeypatch=monkeypatch)
     assert len(result.listings) == 1 and result.complete is False
     assert result.error == "HTTPStatusError"
+    assert result.exhaustive is False
 
 
 def test_first_page_failure_is_raised_not_swallowed(monkeypatch):
@@ -191,6 +194,9 @@ def test_declared_budget_bounds_the_sweep(monkeypatch):
     result, seen = fetch([page([JOB])] * 5, {"max_pages": 2}, monkeypatch)
     assert len(seen) == 2 and result.pages_fetched == 2
     assert result.complete is True and result.error is None
+    # D7: agotar el presupuesto declarado es completo, pero NO prueba que lo
+    # no visto se haya retirado del portal.
+    assert result.exhaustive is False
 
 
 def test_unknown_parameter_is_a_configuration_error():

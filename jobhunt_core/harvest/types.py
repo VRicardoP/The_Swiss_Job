@@ -38,6 +38,14 @@ class FetchResult:
     para siempre (auditoría DT-148 A2). Lo rellena el provider con
     `blocking_status(exc)` al preservar lo cosechado.
     Invariante: `blocked_with is not None` ⇒ `error is not None`.
+
+    `exhaustive` afirma algo MÁS fuerte que `complete`: el barrido recorrió el
+    listado ENTERO del portal para los parámetros del scope (fin de la
+    paginación), así que una oferta que no viene YA NO está publicada (D7).
+    `complete` no lo dice: también es completo un barrido que agota un
+    presupuesto de páginas declarado o una ventana de fechas. Por defecto
+    False — sólo lo pone el productor que lo sabe, y el runner sólo lo cuenta
+    junto a `complete`.
     """
 
     listings: tuple[RawListing, ...]
@@ -46,6 +54,7 @@ class FetchResult:
     complete: bool = True
     error: str | None = None
     blocked_with: int | None = None
+    exhaustive: bool = False
 
 
 @dataclass

@@ -7,8 +7,13 @@ recoge la vacante muerta") pero el barrido no existía: el único
 servía ~4.000 vacantes activas MÁS que el legacy — todo lo que el legacy
 cerró entraba como cierre de encarnación y nadie archivaba la vacante.
 
-Dos ramas, ambas set-based e idempotentes:
+Tres ramas, todas set-based e idempotentes:
 
+0. DESAPARECIDAS (D7, `close_disappeared`) — la oferta dejó de publicarse en
+   un portal que recorremos ENTERO. Ver su docstring: sólo cuenta en fuentes
+   cuyo productor declara barridos exhaustivos; las incrementales (ventana de
+   fechas, presupuesto de páginas, búsqueda por palabra) siguen esperando a la
+   rama 2, porque en ellas no ver una oferta no prueba nada.
 1. MUERTAS — sin encarnación activa (el legacy/portal las cerró). Archivar
    es SEGURO respecto a la reactivación: un slot cerrado que revive abre una
    encarnación NUEVA con vacante NUEVA (sink `_open_incarnations`) — jamás
@@ -45,12 +50,122 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jobhunt_core.config import settings
+from jobhunt_core.harvest.runner import EXHAUSTIVE_SWEEPS
+from jobhunt_core.harvest.sink import RawListingSink
 
 logger = logging.getLogger(__name__)
 
+# Corte por FUENTE (D7): el sello del N-ésimo barrido exhaustivo más reciente
+# de CADA uno de sus scopes, y el más antiguo de ellos. Una encarnación es de
+# la fuente, no del scope (dos scopes de arbeitnow con keywords distintas ven
+# filas distintas del mismo listado), así que sólo puede darse por retirada si
+# NINGÚN scope la ha visto en sus N últimos barridos exhaustivos. Un scope sin
+# N sellos —incremental, deshabilitado antes de acumularlos o recién creado—
+# excluye a su fuente entera. Las `legacy:*` no tienen scopes: nunca entran.
+_CUTOFF_BY_SOURCE = (
+    "SELECT hs.source_id, "
+    "       min(sss.exhaustive_sweep_at[CAST(:n AS int)]) AS cutoff "
+    "FROM harvest_scopes hs "
+    "LEFT JOIN source_scope_state sss ON sss.scope_id = hs.id "
+    "GROUP BY hs.source_id "
+    "HAVING bool_and(COALESCE(cardinality(sss.exhaustive_sweep_at), 0) "
+    "                >= CAST(:n AS int))"
+)
+
+
+async def close_disappeared(session: AsyncSession) -> dict:
+    """D7: cierra las encarnaciones que su portal ya no publica.
+
+    Criterio: fuente de barrido EXHAUSTIVO (`FetchResult.exhaustive`, sellado
+    por el runner en `source_scope_state.exhaustive_sweep_at`) cuya encarnación
+    no se ha visto en los `EXHAUSTIVE_SWEEPS` últimos barridos exhaustivos de
+    ninguno de sus scopes. El sello es el `now()` de la transacción que escribe
+    `last_seen_at`, así que la condición es `last_seen_at < corte`, exacta.
+
+    El cierre produce lo mismo que los cierres que ya existían, por sus mismos
+    caminos:
+    - vacante que conserva otra encarnación activa (compartida entre fuentes):
+      primary reasignado y canónica que lo sigue, como en el reciclado
+      (`RawListingSink.repair_after_close`);
+    - vacante que se queda sin ninguna: archivada YA, con el mismo UPDATE que
+      la rama de rancias. Sin gracia, porque la gracia de la rama 1 cubre un
+      cierre→reapertura del mismo día y aquí hacen falta N barridos de
+      ausencia; una reaparición posterior abre vacante nueva igual que hoy.
+      Sin eximir el adjunto, como la rama 1 (G4-P2-3): es una muerte en el
+      portal, no una rancia, y `applications.resolve_direct` sigue resolviendo
+      la vacante archivada para el perfil que la tiene adjunta.
+    El UPDATE de `vacancies` dispara `bump_corpus_generation()` como siempre.
+
+    Concurrencia: mismo protocolo que el sink y que la rama 2 — se bloquean
+    primero las vacantes (ORDER BY id, SKIP LOCKED) y el cierre RE-EVALÚA
+    `last_seen_at < corte` sobre la fila vigente: una cosecha que refrescó la
+    encarnación entre la selección y el lock la deja abierta.
+    """
+    params = {"n": EXHAUSTIVE_SWEEPS}
+    vac_ids = (
+        (
+            await session.execute(
+                sa.text(
+                    f"WITH cut AS ({_CUTOFF_BY_SOURCE}) "
+                    "SELECT v.id FROM vacancies v "
+                    "WHERE v.archived_at IS NULL AND v.merged_into IS NULL "
+                    "  AND v.id IN ("
+                    "    SELECT i.vacancy_id FROM source_listing_incarnations i "
+                    "    JOIN source_listings sl ON sl.id = i.source_listing_id "
+                    "    JOIN cut c ON c.source_id = sl.source_id "
+                    "    WHERE i.ended_at IS NULL AND i.last_seen_at < c.cutoff) "
+                    "ORDER BY v.id FOR UPDATE OF v SKIP LOCKED"
+                ),
+                params,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not vac_ids:
+        return {"cerradas_desaparecidas": 0, "archivadas_desaparecidas": 0}
+    closed_vacs = (
+        (
+            await session.execute(
+                sa.text(
+                    f"WITH cut AS ({_CUTOFF_BY_SOURCE}) "
+                    "UPDATE source_listing_incarnations i SET ended_at = now() "
+                    "FROM source_listings sl, cut c "
+                    "WHERE i.vacancy_id = ANY(:ids) AND i.ended_at IS NULL "
+                    "  AND sl.id = i.source_listing_id "
+                    "  AND c.source_id = sl.source_id "
+                    "  AND i.last_seen_at < c.cutoff "
+                    "RETURNING i.vacancy_id"
+                ),
+                {**params, "ids": vac_ids},
+            )
+        )
+        .scalars()
+        .all()
+    )
+    touched = sorted(set(closed_vacs), key=str)
+    await RawListingSink().repair_after_close(session, touched)
+    archived = (
+        await session.execute(
+            sa.text(
+                "UPDATE vacancies v SET archived_at = now() "
+                "WHERE v.id = ANY(:ids) AND NOT EXISTS ("
+                "  SELECT 1 FROM source_listing_incarnations i "
+                "  WHERE i.vacancy_id = v.id AND i.ended_at IS NULL)"
+            ),
+            {"ids": touched},
+        )
+    ).rowcount
+    return {
+        "cerradas_desaparecidas": len(closed_vacs),
+        "archivadas_desaparecidas": int(archived),
+    }
+
 
 async def archive_sweep(session: AsyncSession) -> dict:
-    """Ejecuta ambas ramas. Devuelve conteos JSON-serializables (tarea)."""
+    """Ejecuta las tres ramas. Devuelve conteos JSON-serializables (tarea)."""
+    # Rama 0 primero: lo que cierra y archiva aquí ya no lo ven las otras dos.
+    disappeared = await close_disappeared(session)
     grace_days = int(settings.CORE_ARCHIVE_GRACE_DAYS)
     stale_days = int(settings.CORE_CORPUS_STALE_DAYS)
 
@@ -132,7 +247,11 @@ async def archive_sweep(session: AsyncSession) -> dict:
             {"ids": stale_ids},
         )
 
-    result = {"archivadas_muertas": int(dead), "archivadas_rancias": len(stale_ids)}
-    if dead or stale_ids:
+    result = {
+        **disappeared,
+        "archivadas_muertas": int(dead),
+        "archivadas_rancias": len(stale_ids),
+    }
+    if dead or stale_ids or disappeared["cerradas_desaparecidas"]:
         logger.info("archive_sweep: %s", result)
     return result
