@@ -1,5 +1,7 @@
 # Plan: retirar `/share/Public/swissjob` del NAS y llevar su contenido al SSD
 
+> **Ejecutado el 25 y 26-11-2026; no repetir.** Fases 0 a 7 y 9 hechas (PR #52); el crontab y el borrado definitivo los hizo el propietario el 26-11. La fase 6 duró unos 6 minutos. Difiere de lo escrito: el compose de Container Station quedó solo con `postgres` y `redis`. Estado vigente: `docs/unificacion/ESTADO_Y_HOJA_DE_RUTA.md` §49.
+
 Para el agente que ejecuta el traslado. La parte 1 explica qué es ese directorio y qué sobra; la parte 2 dice qué hacer, en qué orden y cómo saber que está hecho. Todo lo afirmado aquí se midió en el NAS el 25 de noviembre de 2026, en solo lectura; no se cambió nada.
 
 Ejecuta las fases en orden. Las fases 0 a 5 no interrumpen el servicio. La fase 6 necesita una ventana de unos 5 minutos con SwissJob parado. Las fases 7 y 8 borran lo antiguo y van separadas por 24 horas.

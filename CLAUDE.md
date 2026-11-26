@@ -57,22 +57,19 @@
   diario de matches y el vertical local de candidaturas (`job_applications`,
   con cero filas en toda su vida)
 - **Core**: paquete `jobhunt_core/` — API v1 FastAPI (`core-api`, puerto 8003 en
-  local) y Celery con **beat embebido** (`-B`) y **13 cadencias incondicionales
-  + 2 condicionales** (re-contadas el 2026-11-02; la segunda condicional,
-  `maintenance-translate-titles`, entra con `CORE_GROQ_API_KEY`, D10): cada
-  **5 min** el despacho del outbox, la salud de la entrega y la recuperación de
-  matching — **el barrido de búsquedas guardadas (`saved-searches-run-due`) es la
-  condicional**: sólo entra al beat si `CORE_SAVED_SEARCH_EXECUTION_ENABLED`, que
-  es `False` por defecto y **no se fija en ningún compose ni `.env*.example` del
-  repo**, aunque SÍ está a `'true'` en los cuatro servicios de producción; cada
-  **hora** la purga de idempotencia (`CORE_IDEMPOTENCY_PURGE_EVERY_S=3600` — *no*
-  cada 5 min), la salud de la cosecha (`jobhunt.harvest.check_health`: alerta si
-  un scope acumula fallos o lleva días sin cosecha completa, y publica SIEMPRE el
-  censo del parque porque `alertas: []` sobre un parque medio invisible se leía
-  como cosecha sana) y la de las credenciales; las **tres ventanas de cosecha**
-  de arriba; y **cuatro citas diarias** en este orden: dedup-scan 05:20 →
-  archive-sweep 05:35 → matching-materialize-ce 06:15 → purga de retención 06:40.
-  Migraciones propias vía `core-migrate`, cadena `core0001..core0057`.
+  local) y Celery con **beat embebido** (`-B`). La agenda es `beat_schedule` en
+  `jobhunt_core/celery_app.py` (14 entradas fijas y 2 condicionales, contadas el
+  2026-11-26). Lo que no se ve leyéndola: `saved-searches-run-due` sólo entra con
+  `CORE_SAVED_SEARCH_EXECUTION_ENABLED` (`False` por defecto, `'true'` en
+  producción) y `maintenance-translate-titles` sólo con `CORE_GROQ_API_KEY` (en
+  producción, sólo en `core-ops-worker`). Orden de las citas diarias: fusión de
+  duplicados 00:30 (espera a que acabe la cosecha de las 23:30 y se salta la noche
+  si a las 01:20 sigue) → archivado y cierre de desaparecidas 05:35 →
+  materialización 06:15 → purga 06:40. La salud de la cosecha publica SIEMPRE el
+  censo del parque, porque `alertas: []` sobre un parque medio invisible se leía
+  como cosecha sana. Migraciones propias vía `core-migrate`; la cabeza al
+  2026-11-26 es **`core0063`** y la cadena NO va en orden numérico al final:
+  `core0059 → 0062 → 0061 → 0060 → 0063`.
   **En PRODUCCIÓN el worker está partido en tres** (`scripts/split_core_workers.py`):
   `swissjob-core-worker-r5`, `swissjob-core-harvest-worker-r5` y
   `swissjob-core-ops-worker-r5`; en local es uno solo. **La imagen del core es
@@ -84,11 +81,15 @@
   `jobhunt_shadow` ni el proyector. Lo único que sobrevive es el handler
   `providers/legacy_shadow.py`, que resuelve la identidad de las encarnaciones
   `legacy:*` que quedan en el corpus, y caduca con ellas (COTAS, ~enero 2027)
+- **Matching activo: sólo `cosine-baseline:v1`** (2026-11-26). La híbrida v4, que
+  no pasó su gate, se desactivó con `python -m jobhunt_core.policy_ctl declare`,
+  que es la única autoridad de activación
 - **«AI Job Match» es la ventana del PORTFOLIO** (`/home/lothar/Public/ReactPortfolio`, tres repos git
   distintos; frontend en Cloudflare Pages desde GitHub), no la `/match` de SwissJob. Lee el mismo
-  feed del core. Título traducido y resumen se sirven allí desde `job_enrichments` (2026-09-23);
+  feed del core. El título en inglés llega del core (`title_en`) y el resumen se sirve desde
+  `job_enrichments`, sólo para lo que el panel muestra (2026-11-26);
   diagnóstico del panel de ofertas: `docs/audits/DIAGNOSTICO_PANEL_OFERTAS_2026-09-23.md`
-- **Documentación de referencia**: **cotas aceptadas y decisiones deliberadas → `docs/COTAS_Y_DECISIONES.md`** (léelo ANTES de "arreglar" cualquier limitación: varias se intentaron cerrar y el intento fue peor que la cota); estado y contadores vigentes → `docs/unificacion/ESTADO_Y_HOJA_DE_RUTA.md` **§48** (la reconciliación del 2026-10-13; §47 y anteriores son fotos previas y NO deben leerse como vigentes), y la deuda viva → `docs/unificacion/DEUDA_TECNICA.md` (DT-148 arriba, con lo ejecutado y lo abierto) — **si vas a RETOMAR DT-148, empieza por `docs/unificacion/DT148_RELEVO.md`**: estado exacto, orden recomendado, los comandos que funcionan de verdad (el de los tests del núcleo tiene tres condiciones y las tres hacen falta) y las trampas ya pisadas; core → `docs/unificacion/PLAN_UNIFICACION_JOBHUNTING.md` (§23–§24) y `docs/unificacion/CONTRATOS_FASE_A.md`, los tres en `/home/lothar/Public/`; legacy → `docs/`
+- **Documentación de referencia**: **cotas aceptadas y decisiones deliberadas → `docs/COTAS_Y_DECISIONES.md`** (léelo ANTES de "arreglar" cualquier limitación: varias se intentaron cerrar y el intento fue peor que la cota); estado y contadores vigentes → `docs/unificacion/ESTADO_Y_HOJA_DE_RUTA.md` **§49** (2026-11-26; las secciones anteriores son fotos previas), qué queda abierto del plan de eficiencia → `docs/PLAN_ACCION_EFICIENCIA_2026-11-26.md` §0, y la deuda viva → `docs/unificacion/DEUDA_TECNICA.md` (DT-148 arriba, con lo ejecutado y lo abierto) — **si vas a RETOMAR DT-148, empieza por `docs/unificacion/DT148_RELEVO.md`**: estado exacto, orden recomendado, los comandos que funcionan de verdad (el de los tests del núcleo tiene tres condiciones y las tres hacen falta) y las trampas ya pisadas; core → `docs/unificacion/PLAN_UNIFICACION_JOBHUNTING.md` (§23–§24) y `docs/unificacion/CONTRATOS_FASE_A.md`, los tres en `/home/lothar/Public/`; legacy → `docs/`
 
 ---
 
@@ -184,6 +185,12 @@ core corren **la misma imagen a la que resuelve el compose**; (2) `/v1/ready`
 responde `ready` —la cabeza de alembic de la base casa con la que espera el
 código—; y (3) la release es nombrable y el código inmutable.
 
+**Tocar `jobhunt_core/requirements.txt` rehace la capa de `pip`** y trae la
+última versión de todo lo que no esté fijado. El 2026-11-26 entró así
+`kombu 5.7.0` y los tres workers murieron al arrancar; el CI no lo ve porque
+ningún test arranca un worker. Antes de desplegar, compara `pip list` de la imagen
+nueva y la anterior; después, busca `CRITICAL` en los logs de los tres workers.
+
 **Construye siempre con el SHA**, o la identidad no significa nada:
 
 ```bash
@@ -263,6 +270,9 @@ solape que lleva más de 7 d sin cerrar.
 - **`backend/.env.prod.example` se GENERA** con `backend/scripts/gen_env_example.py`
   desde `Settings`; `tests/test_env_example_covers_settings.py` falla si alguien lo
   edita a mano y se queda corto. El de la raíz (28 claves de 130) se retiró.
+- **Tras un reinicio del NAS, Container Station arranca unos 6 min después que
+  el sistema** (medido el 2026-11-26, versión 3.1.4): hasta entonces no existen ni
+  `…/container-station/bin/docker` ni el socket. Los 14 contenedores vuelven solos.
 - **El directorio de despliegue del NAS está en el SSD desde el 2026-11-25**:
   `/share/external/DEV3301_1/apps-ssd/swissjob-deploy/` (`.env*`, `bin-docker-compose`,
   tarballs en tránsito, que se borran tras el `docker load`) y `…/compose/` (los
@@ -376,13 +386,9 @@ solape que lleva más de 7 d sin cerrar.
   core por ruta autorizada (credencial partner / feed oficial) y deshabilitado
   sin credencial — hoy no existe ninguno
 - Nunca modificar `.env` ni `docker-compose.yml` sin confirmación explícita
-- Tests siempre contra la DB `swissjobhunter_test` — **pero sólo el NOMBRE está
-  garantizado, no el SERVIDOR** (A-68, 2026-11-02): `backend/tests/conftest.py:36`
-  deriva la base cambiando sólo el nombre de `DATABASE_URL`, y `:89` abre un motor
-  admin contra `…/swissjobhunter` del MISMO servidor para el `CREATE DATABASE`.
-  No hay ninguna aserción sobre el host. **Un `.env` apuntando al NAS bastaría
-  para que el teardown hiciera `TRUNCATE … CASCADE` en producción**, que es un
-  accidente que este proyecto YA tuvo una vez
+- Tests siempre contra la DB `swissjobhunter_test`; `backend/tests/conftest.py`
+  aborta si el SERVIDOR no es local (A-68: un `.env` apuntando al NAS bastaba
+  para truncar producción)
 - Tareas Celery con `def`, no `async def`. Patrón: `def task(): asyncio.run(_impl())`
 - Comentarios en español para lógica no obvia; código y nombres en inglés
 
@@ -493,26 +499,18 @@ Tres cosas que NO deben deshacerse sin medir:
    `backend/tests/test_feed_version_cache.py` y
    `jobhunt_core/tests/test_matches_version.py`.
 
-   **La cuarta cota está ROTA hoy por la puerta de atrás** (A-03, abierto):
-   `warm_feed` (`core_client.py:463-467`) refresca `_feed_verified_at[pid]` por el
-   mero hecho de que exista una entrada en `_feed_cache`, no por haberla
-   confirmado contra la versión. Y `_feed_verified_at` es el ÚNICO criterio de
-   frescura del atajo por categoría. Con el calentador cada 60 s el sello se
-   renueva indefinidamente y `/match/results?category=X` puede servir un
-   recorrido rancio.
+   `_feed_verified_at` es el único criterio de frescura del atajo por categoría:
+   se sella sólo al CONFIRMAR la versión (`_remember_feed` y la coincidencia de
+   versión), nunca porque exista una entrada en caché (A-03).
 
-   **El overlay ESCOLAR es la excepción a la tercera cota** (A-19, abierto):
-   `schools/presentation.py` lo cachea 60 s EN PROCESO y `watchlist_state._write`
-   lo invalida **sólo en su propio proceso** — no publica en `cache_bus`, al
-   contrario que `CoreFeedback._write`. Con gunicorn `-w 2`, marcar «Applied» en
-   un worker puede servirse como «detected» desde el otro hasta 60 s.
+   El calentador sólo calienta a quien tiene la marca `feed:active:<user_id>`
+   (la escriben `/match/results` y `/match/facets`, 24 h): quien vuelve más tarde
+   paga la primera carga en frío. Corre en los dos procesos de gunicorn porque la
+   caché del feed es de cada proceso. El feedback implícito no la invalida.
 
-   **Y `CORE_HTTP_TIMEOUT_SECONDS` NO vale 5 s en producción, vale 120**
-   (`deploy/nas/swissjob.configured.yml:22,152`), que es el defecto del código
-   (`config.py:250`) multiplicado por 24. Tres clientes derivan su presupuesto
-   TOTAL de esa variable con `max(float(...), 1) * 2` → **240 s por operación**
-   (colegios, búsquedas guardadas, documentos), dos de ellos envolviendo bucles
-   de hasta 100 páginas, con sólo dos workers de gunicorn (A-09, abierto).
+   `CORE_HTTP_TIMEOUT_SECONDS` vale **120** en producción, por petición. El
+   presupuesto TOTAL de cada operación contra el core lo acota
+   `CORE_FEED_TOTAL_BUDGET_S` (60 s).
 
 Acta y mediciones: `docs/audits/ACTA_CIERRE_PUNTO5_2026-09-22.md`.
 La cola de latencia restante **no está atribuida**. Ni el loadavg del NAS ni el
@@ -643,15 +641,9 @@ docker compose run --rm --no-deps -v "$PWD:/repo" -w /repo backend \
 docker compose exec backend alembic upgrade head
 docker compose exec backend alembic revision --autogenerate -m "descripcion"
 
-# Migraciones core (cadena core0001..core0057 — las aplica core-migrate al arrancar).
+# Migraciones core (las aplica core-migrate al arrancar; cabeza: ver arriba).
 # Sin override: aplica las migraciones DE LA IMAGEN, que es lo correcto al operar.
 # Para probar una migración nueva del árbol de trabajo, añade los dos -f del perfil dev.
-# La última es core0057 (DT-148 A18-01: índice GIN trgm del filtro de ubicación
-# del catálogo, que pasó a ser alcanzable desde la interfaz y costaba 86 s).
-# Antes, core0056 (DT-148 B6: retira `shadow_inbox`, que se quedó sin
-# escritor al retirarse la CDC sombra y a la que sólo tocaba su propia purga).
-# La anterior, core0055, es el kill-switch de bloqueos (consecutive_blocks,
-# last_blocked_at y disabled_by_blocks_at en source_scope_state).
 docker compose run --rm core-migrate python -m jobhunt_core.migrate
 
 # Logs en tiempo real
@@ -689,7 +681,11 @@ jobhunt_core/        # EL MOTOR. Cosecha, matching, dedup, catálogo y entrega
   matching.py        #   2.684 LOC, único fichero con mantenibilidad C: diez
                      #   responsabilidades (recetas, léxicos, candidatos, cross-encoder,
                      #   políticas, exclusiones, evaluación, feed, estado). DT-148 D1
-  dedup.py           #   3 brazos: ANN (pgvector/HNSW) + exacto intra + léxico (trgm)
+  dedup.py           #   3 brazos detectan; sólo se FUSIONA la regla exacta
+                     #   (mismo texto y ubicación): `merged_into` + `merge_log`
+  archive.py         #   archiva a 120 días y cierra lo que desaparece de un portal
+                     #   que el proveedor declara recorrido entero (`exhaustive`)
+  title_translation.py # título en inglés, una vez por título (`VacancyDTO.title_en`)
   api/v1.py          #   contrato /v1: vacancies (con `category`/`since`), profiles,
                      #   matches, applications, documents, schools, saved_searches
   delivery.py        #   outbox + entregas por destino, dead-letter por veneno

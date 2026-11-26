@@ -1,5 +1,7 @@
 # Análisis conjunto de SwissJob y ReactPortfolio (2026-11-25)
 
+> Foto del 25-11, antes de corregir nada. Qué se corrigió y qué queda: `docs/PLAN_ACCION_EFICIENCIA_2026-11-26.md` §0.
+
 Qué no funciona, dónde se va el consumo y qué código sobra en los tres componentes que trabajan juntos: el núcleo (`jobhunt_core`), el BFF de SwissJob y Portfolio.
 
 ## Cómo se hizo y qué alcance tiene

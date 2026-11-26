@@ -1,5 +1,18 @@
 # Deuda técnica — proyecto jobhunting (SwissJob + jobhunt-core)
 
+> ## DT-150 · Eficiencia y fallos silenciosos (2026-11-26)
+>
+> Análisis de los tres componentes con producción medida:
+> [`../audits/ANALISIS_CONJUNTO_SWISSJOB_PORTFOLIO_2026-11-25.md`](../audits/ANALISIS_CONJUNTO_SWISSJOB_PORTFOLIO_2026-11-25.md).
+> Plan, estado de cada tarea y **lo que queda abierto**:
+> [`../PLAN_ACCION_EFICIENCIA_2026-11-26.md`](../PLAN_ACCION_EFICIENCIA_2026-11-26.md) §0.
+> Decisiones tomadas: [`../COTAS_Y_DECISIONES.md`](../COTAS_Y_DECISIONES.md) §O.
+> Lo pendiente de las limpiezas S1 a S5 del análisis es la fase 5 del plan.
+>
+> Quedan superados por este trabajo, en lo que digan sobre ellos las entradas de
+> abajo: A-03, A-09, A-19 y A-68 (cerrados), DT-148 sobre la traducción del BFF y
+> la CDC sombra (retirada su última pieza, `erasure-cdc` y el esquema `public`).
+
 > ## ⚠ DT-149 · Auditoría del 2026-11-02 — LEER ANTES DE RETOMAR DT-148
 >
 > **Acta: [`../audits/AUDITORIA_2026-11-02.md`](../audits/AUDITORIA_2026-11-02.md)

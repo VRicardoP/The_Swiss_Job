@@ -3237,3 +3237,31 @@ El alcance autorizado está completo. Los commits quedaron publicados en los
 remotos exactos; DT-47, A19-19 y A19-20 permanecen excluidos por instrucción del
 propietario. Método y evidencia final están en DEUDA_TECNICA.md y
 MEMORIA_PROYECTO.md.
+
+## 49. Estado vigente — eficiencia, traslado al SSD y reinicio (2026-11-26)
+
+### En producción
+
+| Componente | Versión |
+|---|---|
+| Núcleo (4 contenedores) | `swissjob-core:point5-5d316c2`, alembic `core0063` |
+| BFF y worker | `swissjob-backend:point5-5d316c2` |
+| Frontend de SwissJob | `swissjob-frontend:point5-303b16c` |
+| Portfolio (backend y worker) | `portfolio-backend:board-7e3e65c` |
+
+14 contenedores del proyecto (`swissjob-erasure-cdc` retirado). Directorio de despliegue y composes vivos en `/share/external/DEV3301_1/apps-ssd/swissjob-deploy/`; supervisor en `/share/homes/Ricardo/swissjob-supervisor/` con el crontab del QTS apuntando allí. `/share/Public/swissjob` ya no existe.
+
+### Qué cambió
+
+- **Traslado al SSD** (25 y 26-11): `docs/PLAN_TRASLADO_SWISSJOB_NAS_A_SSD_2026-11-25.md` y `docs/PLAN_CORRECCIONES_NAS_PENDIENTES_2026-11-25.md`.
+- **Eficiencia y fallos**: `docs/PLAN_ACCION_EFICIENCIA_2026-11-26.md` §0 y `docs/COTAS_Y_DECISIONES.md` §O.
+- **Base del núcleo**: de 7.470 a 6.761 MB al retirar el esquema heredado y `shadow_change_log`.
+
+### Incidencias del 26-11
+
+- Workers del núcleo caídos de 12:34 a 13:00 por `kombu` sin fijar (PR #61).
+- Reinicio del demonio de Docker hacia las 12:59 (actualización de Container Station) y reinicio del NAS a las 14:25: los contenedores volvieron solos.
+
+### Qué queda
+
+La tabla «Abierto» del §0 del plan de eficiencia, su fase 5 y su medición final.
