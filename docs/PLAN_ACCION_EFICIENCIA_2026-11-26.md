@@ -4,6 +4,37 @@ Para los agentes que ejecuten las correcciones del [análisis conjunto del 25 de
 
 Cada tarea es independiente salvo donde se indica. Ejecuta **una tarea por sesión y por PR**, en el orden de las fases. Una tarea termina cuando su comprobación en producción da el valor esperado, no cuando se fusiona el PR.
 
+## 0. Estado a 2026-11-26 — leer antes que el resto
+
+Producción: núcleo y BFF `5d316c2`, frontend `303b16c`, Portfolio `7e3e65c`, base del núcleo en `core0063`.
+
+| Parte | Estado |
+|---|---|
+| Tarea 0 (línea base) | Hecha: `docs/audits/mediciones/pgss-antes-2026-11-26.txt`; contador reiniciado el 26-11 a las 07:29 CET |
+| Fases 1, 2.1 y 3 | Desplegadas |
+| 1.1, reencolar títulos | Se reencolaron solo 945; la purga de D10 lo dejó sin objeto |
+| 2.2 (plan de la consulta híbrida) | No ejecutada: con D1 esa consulta ya no corre. Solo vuelve a importar si se reactiva una política híbrida |
+| Fase 4, D1 a D8 y D10 | Desplegadas. Detalle en `docs/COTAS_Y_DECISIONES.md` §O y en los PR #57 a #61 (SwissJob) y #12 y #13 (Portfolio) |
+| D9 | Sin cambios: en 7 días ningún scope pasó de 9 min de los 30 del límite |
+| **Fase 5 (limpieza)** | **Pendiente entera**, salvo la documentación de 5.8 |
+| **Medición final** | **Pendiente**: desde el 27-11 a las 08:30. Mezclará los efectos de las fases 1 a 3 con los de la fase 4, desplegados el mismo día |
+
+### Abierto, fuera de las fases
+
+| Qué | Cuándo o condición |
+|---|---|
+| Copia diaria de los datos: no hay ninguna programada y no quedan los volúmenes originales (`ReactPortfolio/ops/nas-saturacion/propuesta-backup-ssd.md`) | Cuanto antes |
+| Rotar la contraseña de `swissjob-redis`, el `SECRET_KEY` y la contraseña SMTP de Portfolio (expuestos el 24 y el 25-11) | Propietario |
+| Volver a autorizar Gmail en el QTS: `sendmail` responde `invalid_grant` y el supervisor no avisa | Propietario |
+| Borrar `/share/external/DEV3301_1/apps-ssd/backups/d3-retirada-2026-11-26` (datos personales) | **03-12-2026** |
+| Comprobar la primera fusión nocturna: `merge_log`, `dedup_candidates` por `state`, log `dedup_merge:` | 27-11 |
+| Comprobar el primer cierre de desaparecidas: `cerradas_desaparecidas` en el log de `archive_sweep` | Tras 3 barridos exhaustivos por fuente |
+| Relleno de `title_translations`: 109.152 títulos descubiertos, 200 por pasada | Unos 6 días |
+| El sumidero hace un INSERT y un DELETE inútiles por cada recosecha de una vacante fusionada (revalidación B-3, `harvest/sink.py`) | Sin fecha |
+| Un test del núcleo falló una vez y pasó al repetir; no se guardó cuál | Sin fecha |
+| `swiss_schools_vis` sin cosecha completa (F12 del análisis) | Sin fecha |
+| Quitar `portfolio` de `CORE_DELIVERY_HTTP_DESTINATIONS` | Cuando no queden entregas pendientes a ese destino |
+
 ## Reglas
 
 1. **Puerta de aprobación.** Los pasos marcados con 🔒 cambian producción o fusionan código. Antes de cada uno, enseña al propietario el diff o el comando exacto y espera su «sí» en ese turno. Crear ramas, commits en la rama y PR no necesita aprobación; fusionar y desplegar, sí.

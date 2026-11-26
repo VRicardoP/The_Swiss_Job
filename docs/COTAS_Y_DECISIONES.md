@@ -542,3 +542,22 @@ sin objeto. Cerrada el 2026-10-20 al comprobar el árbol (DT-148 F1).
 funciones en grado D. Son providers de cosecha, no herramientas: su complejidad
 está en el bucle de barrido y la aborda DT-148 C1 al extraer el transporte. El
 estándar de CC ≤ 10 para código NUEVO sigue vigente (`radon cc -s -n C`).
+
+## §O. Decisiones de eficiencia (2026-11-26)
+
+Tomadas por el propietario sobre `docs/PLAN_ACCION_EFICIENCIA_2026-11-26.md`, fase 4.
+
+| Decisión o cota | Por qué |
+|---|---|
+| **Sólo `cosine-baseline:v1` activa** | La híbrida v4 no pasó su gate (NO-GO del 2026-09-02) y evaluaba en sombra: 27 % del tiempo de PostgreSQL |
+| **Se fusiona, no se borra, un duplicado** (`merged_into`, `merge_log`, `merge_transfers`) | Borrar perdía el estado del usuario y dejaba sin destino ids que guardan los clientes |
+| **Sólo se fusiona `rule:merge-exact-v1`** (mismo `text_hash` y ubicación, sin salario ni `remote` contradictorios); lo demás sigue `pending` | El coseno mide plantilla (§2.1) y ningún acta midió la precisión de fusionar por similitud. Un par `rejected` no se fusiona ni por transitividad |
+| **Gana la vacante con encarnación nativa activa**, no la más antigua (se aparta de ADR-04) | La más antigua sería la copia `legacy:*`, que el archivado retira a los 120 días |
+| **No hay «deshacer fusión»** | Los datos para hacerlo están en `merge_transfers` |
+| **Cierre por ausencia sólo en barridos `exhaustive`** (arbeitnow, ostjob, zentraljob, stelle_admin, swissdevjobs, financejobs), tras 3 barridos | `complete` no vale: también lo es un barrido con `max_pages` o ventana de fechas. Las incrementales siguen en 120 días |
+| **Un portal exhaustivo que trunque en silencio** cerraría lo ausente tras 3 barridos | No hay tope de proporción: el primer cierre legítimo ya era el 83 % de arbeitnow |
+| **`legacy:*` no se cierra por ausencia** | Sigue vigente la cota de §N |
+| **Portfolio sólo resume lo que muestra** | La cuota de Groq da para unos 230 resúmenes al día |
+| **`PermanentDeliveryError`**: un 4xx distinto de 408 y 429 muere en el primer intento | Reintentar ocho veces un rechazo permanente no lo arregla |
+| **Los receptores ignoran campos desconocidos** | Permite añadir campos al contrato sin ordenar despliegues. Un campo conocido roto sigue dando 422 |
+| **El núcleo no emite a un destino los tipos que no consume** (`delivery.CONSUMED_TYPES`) | Portfolio guardaba eventos que nada leía. Si empieza a consumirlos, hay que darlos de alta ahí |

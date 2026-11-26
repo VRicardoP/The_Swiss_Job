@@ -1,5 +1,7 @@
 # Plan: correcciones pendientes del NAS tras el estudio del 25 de noviembre
 
+> **Estado a 26-11-2026.** B (Redis), C (manifiestos) y D (verificador y copia versionada) hechas. De A, el script ya registra el error real y la causa está identificada (`invalid_grant`); **falta que el propietario reautorice Gmail**. D3 de este documento (definiciones muertas) también hecha. Sigue pendiente la rotación de la contraseña de Redis.
+
 Para el agente que ejecuta las correcciones. Complementa a [PLAN_TRASLADO_SWISSJOB_NAS_A_SSD_2026-11-25.md](PLAN_TRASLADO_SWISSJOB_NAS_A_SSD_2026-11-25.md), que aquí se llama «el plan de traslado». Léelo antes: este documento usa sus reglas, sus variables de sesión (`D`, `C`, `N`, `S`, `A`, `U`, `F`) y sus fases como puntos de enganche.
 
 Son cuatro correcciones independientes entre sí. Todo lo afirmado se midió en el NAS el 25 de noviembre de 2026 en solo lectura.

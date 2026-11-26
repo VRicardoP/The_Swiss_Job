@@ -110,6 +110,7 @@ puede fijar es que no vuelvan los patrones que costaban caro.
 | I-G4 | El supervisor del NAS está vivo y no ve nada caído | `ssh nas "head -1 /share/homes/Ricardo/swissjob-supervisor/supervisor/estado; echo \$(( \$(date +%s) - \$(cat /share/homes/Ricardo/swissjob-supervisor/supervisor/ultimo_run) ))"` | `ok` · menos de **300** s (corre por el cron del QTS cada 5 min; el contenedor `swissjob-supervisor` se retiró el 2026-10-07) | `SUPERVISOR_DIR=$(mktemp -d) EXTRA_ESPERADOS=x sh /share/homes/Ricardo/swissjob-supervisor/supervisor_contenedores.sh` → `mal` y línea en su log |
 | I-G5 | Los servicios del NAS corren con límite de memoria | `ssh nas "$D inspect swissjob-backend swissjob-postgres swissjob-core-worker-r5 --format '{{.Name}} {{.HostConfig.Memory}}'"` | ninguno en **0** | `docker update --memory 0` a uno → aparece 0 |
 | I-G6 | El job `core-test` del CI es ejecutable en limpio | los pasos del job en un venv nuevo contra `docker/postgres-core` (ver commit 3443127) | `migrate` al día y subconjunto en verde | Un rango en `jobhunt_core/requirements.txt` → SQLAlchemy 2.1 → `No module named 'psycopg'` (ocurrió) |
+| I-G7 | Los tres workers del núcleo están vivos tras un despliegue (`/v1/ready` sólo mira la API) | `ssh nas 'for c in swissjob-core-worker-r5 swissjob-core-ops-worker-r5 swissjob-core-harvest-worker-r5; do $D logs --since 3m $c 2>&1 \| grep -c CRITICAL; done'` y `$D ps` | tres **0** y los tres con más de 3 min de vida | El 2026-11-26, con `kombu 5.7.0`, los tres daban `CRITICAL` en bucle mientras `/v1/ready` respondía |
 
 ---
 
