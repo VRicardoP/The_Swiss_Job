@@ -17,6 +17,7 @@ no pueda servir un feed rancio:
   responder a quien pida más.
 """
 
+import time
 import uuid
 
 import pytest
@@ -514,8 +515,11 @@ async def test_una_coincidencia_de_version_renueva_el_sello(monkeypatch):
     m = _matching(cliente)
     pid = uuid.uuid4()
     await m._fetch_full_feed(pid)  # recorrido completo, confirmado y sellado
-    core_client._feed_verified_at[str(pid)] = 0.0  # pasado el plazo de frescura
-    assert not core_client._warm_cache_is_fresh(0.0)
+    # Pasado el plazo de frescura. No vale 0.0: `time.monotonic()` cuenta desde
+    # el arranque, y en un runner de CI recién arrancado 0.0 aún es «fresco».
+    caducado = time.monotonic() - 10**6
+    core_client._feed_verified_at[str(pid)] = caducado
+    assert not core_client._warm_cache_is_fresh(caducado)
 
     await m._fetch_full_feed(pid)  # la versión coincide: sale de caché
 
