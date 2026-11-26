@@ -10,11 +10,23 @@ import asyncio
 import logging
 from typing import Any
 
+import sqlalchemy as sa
+
 from jobhunt_core import embedding_recipes, embeddings
 from jobhunt_core.celery_app import celery_app
 from jobhunt_core.database import task_session_factory
 
 logger = logging.getLogger(__name__)
+
+# R4 (plan de eficiencia 2026-11-26, tarea 1.3): `pending_offer_texts` es un
+# anti-join sobre todas las revisiones vigentes (~8,5 s en producción) que casi
+# siempre devuelve cero filas. Una oferta solo puede quedar sin vector si cambia
+# `vacancies` (alta, baja, archivado, fusión, canónica) u `offer_embeddings`, y
+# los triggers de core0022/0023 suben `corpus_generation` en todos esos casos.
+# Así que, con la generación quieta, la respuesta vacía sigue siendo vacía.
+# Memoria POR PROCESO y POR MODELO: un modelo recién activado no tiene marca, y
+# reiniciar el worker solo cuesta una consulta de más.
+_offers_drained_at: dict[Any, int] = {}
 
 
 def _model_key(model) -> str:
@@ -49,6 +61,14 @@ async def _run_pending_impl(limit: int, session_factory=None) -> dict[str, Any]:
         return await _run_pending_with(factory, limit)
 
 
+async def _corpus_generation(session) -> int:
+    return (
+        await session.execute(
+            sa.text("SELECT generation FROM corpus_generation WHERE id = 1")
+        )
+    ).scalar_one()
+
+
 async def _run_pending_with(session_factory, limit: int) -> dict[str, Any]:
     embedded: dict[str, int] = {}
     profiles_embedded: dict[str, int] = {}
@@ -74,9 +94,18 @@ async def _run_pending_with(session_factory, limit: int) -> dict[str, Any]:
         backend = None
 
         async with session_factory() as session:
-            pending = await embeddings.pending_offer_texts(
-                session, model.id, limit=limit
-            )
+            # La generación se lee ANTES del anti-join: si algo cambia entre
+            # las dos lecturas, la marca queda en la generación VIEJA y el
+            # siguiente ciclo vuelve a consultar (dirección segura).
+            generation = await _corpus_generation(session)
+            if _offers_drained_at.get(model.id) == generation:
+                pending = []
+            else:
+                pending = await embeddings.pending_offer_texts(
+                    session, model.id, limit=limit
+                )
+                if not pending:
+                    _offers_drained_at[model.id] = generation
         n = 0
         if pending:
             views = [
