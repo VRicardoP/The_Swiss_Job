@@ -2063,3 +2063,66 @@ def test_g8_retire_exhausted_toma_los_locks_en_el_orden_canonico_del_modulo(
     assert n1 == 4 and n2 == 4, (
         f"cada pasada retira las 4 agotadas del corpus (n1={n1}, n2={n2})"
     )
+
+
+def test_d5_un_destino_que_no_consume_el_tipo_no_recibe_ni_el_evento(db, monkeypatch):
+    """D5: Portfolio no lee su buzón, así que el núcleo no le emite nada. Aquí
+    se declara así al consumidor del test para ejercitar el camino de matching
+    (el de `outbox.emit` lo cubre la prueba siguiente)."""
+    factory, created = db
+    monkeypatch.setitem(delivery.CONSUMED_TYPES, "tenant-match", frozenset())
+    pid, vacs = _setup_evaluated(factory, created)
+    n = _rows(
+        factory,
+        "SELECT count(*) AS n FROM integration_outbox WHERE subject_profile_id = :p",
+        p=pid,
+    )[0].n
+    assert n == 0
+
+
+def test_d5_outbox_emit_no_escribe_para_portfolio_y_si_para_el_bff(db):
+    import uuid
+
+    from jobhunt_core import outbox
+
+    factory, created = db
+    assert delivery.consumes("portfolio", "document.changed") is False
+    assert delivery.consumes("swissjob-shadow", "document.changed") is True
+
+    async def go():
+        counts = {}
+        async with factory() as s:
+            for destination in ("portfolio", "swissjob-shadow"):
+                pid = uuid.uuid4()
+                await outbox.emit(
+                    s,
+                    event_type="document.changed",
+                    natural_key=f"d5:{pid}",
+                    aggregate="document",
+                    aggregate_id=str(uuid.uuid4()),
+                    subject_profile_id=pid,
+                    version=1,
+                    payload={},
+                    destination=destination,
+                )
+                counts[destination] = tuple(
+                    (
+                        await s.execute(
+                            sa.text(
+                                "SELECT (SELECT count(*) FROM integration_outbox "
+                                "        WHERE subject_profile_id = :p), "
+                                "       (SELECT count(*) "
+                                "        FROM integration_outbox_deliveries d "
+                                "        JOIN integration_outbox o USING (event_id) "
+                                "        WHERE o.subject_profile_id = :p)"
+                            ),
+                            {"p": pid},
+                        )
+                    ).one()
+                )
+            await s.rollback()  # eventos sintéticos: no quedan en la base
+        return counts
+
+    counts = asyncio.run(go())
+    assert counts["portfolio"] == (0, 0)
+    assert counts["swissjob-shadow"] == (1, 1)

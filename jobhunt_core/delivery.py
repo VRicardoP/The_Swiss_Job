@@ -84,6 +84,18 @@ LEASE_S = 120
 # rastro veraz, no la desaparición del modo de fallo.
 LEASE_RENEW_AFTER_S = LEASE_S / 2  # renovar a mitad de vida, no al filo
 
+# D5 (2026-11-26): tipos de evento que CONSUME cada destino. Un destino que no
+# aparece aquí lo recibe todo (el BFF de SwissJob, `swissjob-shadow`). Portfolio
+# guardaba su buzón entero y nada lo leía (13.659 filas), así que hoy no
+# consume ninguno; el día que lea un tipo, se añade a su conjunto.
+CONSUMED_TYPES: dict[str, frozenset[str]] = {"portfolio": frozenset()}
+
+
+def consumes(destination: str, event_type: str) -> bool:
+    allowed = CONSUMED_TYPES.get(destination)
+    return allowed is None or event_type in allowed
+
+
 _transport = None
 
 
