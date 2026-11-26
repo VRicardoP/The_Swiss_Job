@@ -40,6 +40,7 @@ from services.matching import (
     MatchingUnsupportedError,
     resolve_matching,
 )
+from services.matching.warm import mark_active
 from services.translation_service import TranslationService
 from utils.text import strip_html_tags
 
@@ -48,10 +49,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/match", tags=["match"])
 
 
+def _redis(request: Request):
+    return getattr(request.app.state, "redis_client", None)
+
+
 def _get_groq(request: Request) -> GroqService:
     """Build GroqService with Redis from app state."""
-    redis_client = getattr(request.app.state, "redis_client", None)
-    return GroqService(redis_client=redis_client)
+    return GroqService(redis_client=_redis(request))
 
 
 def _matching_http_error(exc: MatchingError) -> HTTPException:
@@ -242,11 +246,13 @@ async def _build_results_response(
 
 @router.get("/facets", response_model=MatchFacetsResponse)
 async def get_match_facets(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     if not settings.CORE_MATCH_FACETS_ENABLED:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    await mark_active(_redis(request), current_user.id)
     try:
         return await CoreMatching(db).facets(current_user.id)
     except MatchingError as exc:
@@ -270,6 +276,7 @@ async def get_match_results(
     """
     if category is not None and not settings.CORE_MATCH_FACETS_ENABLED:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    await mark_active(_redis(request), current_user.id)
     matching = (
         CoreMatching(db)
         if category is not None

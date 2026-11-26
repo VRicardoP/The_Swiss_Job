@@ -123,3 +123,76 @@ async def test_el_fondo_sin_redis_no_paga_nada():
     backend.cached_feed_titles = AsyncMock(return_value=["A"])
     assert await warm._traducir_en_fondo(None, backend, uuid.uuid4(), None) == 0
     backend.cached_feed_titles.assert_not_called()
+
+
+class _RedisQueApunta(_RedisFalso):
+    """Redis falso que además registra las escrituras."""
+
+    def __init__(self):
+        super().__init__({})
+        self.escritas: list[str] = []
+
+    async def get(self, clave):
+        return self.datos.get(clave)
+
+    async def set(self, clave, valor, ex=None):
+        self.escritas.append(clave)
+        self.datos[clave] = valor
+
+
+@pytest.mark.asyncio
+async def test_los_titulos_en_ingles_no_bloquean_la_ventana(monkeypatch):
+    """F4: los EN/ES nunca se cachean; si entraban en la ventana de 100 la
+    ocupaban en todas las pasadas y los demás no se traducían nunca."""
+    monkeypatch.setattr(settings, "TRANSLATION_WARMUP_MAX_PER_PASS", 100)
+    ingleses = [f"Software Engineer {i}" for i in range(100)]
+    otros = [f"Lehrperson {i}" for i in range(50)]
+    backend = MagicMock()
+    backend.cached_feed_titles = AsyncMock(return_value=ingleses + otros)
+    cache: dict[str, str] = {}
+    pedidos: list[list[str]] = []
+
+    async def translate_titles(self, items, languages=None):
+        titulos = [i["title"] for i in items]
+        pedidos.append(titulos)
+        # Como el real: los EN/ES se descartan sin cachear; el resto se cachea.
+        for t in titulos:
+            if (languages or {}).get(t) != "en":
+                cache[t] = f"EN {t}"
+        return {}
+
+    async def cached(self, titulos):
+        return {t: cache[t] for t in titulos if t in cache}
+
+    monkeypatch.setattr(TranslationService, "translate_titles", translate_titles)
+    monkeypatch.setattr(TranslationService, "cached_translations", cached)
+    monkeypatch.setattr(GroqService, "is_available", property(lambda self: True))
+    idiomas = {t: "en" for t in ingleses}
+    with patch(
+        "services.language_store.lookup", AsyncMock(return_value=(idiomas, set()))
+    ):
+        for _ in range(2):
+            await warm._traducir_en_fondo(None, backend, uuid.uuid4(), _RedisFalso({}))
+
+    assert pedidos == [otros], "la ventana se gastó en títulos que no se traducen"
+    assert set(cache) == set(otros)
+
+
+@pytest.mark.asyncio
+async def test_si_el_proveedor_falla_no_se_marca_nada(monkeypatch):
+    redis = _RedisQueApunta()
+    groq = GroqService(redis_client=redis)
+    groq.client = object()
+
+    async def caido(*_a, **_k):
+        raise RuntimeError("proveedor caído")
+
+    groq.get_chat_response = caido
+    backend = MagicMock()
+    backend.cached_feed_titles = AsyncMock(return_value=["Bäcker", "Lehrperson"])
+    monkeypatch.setattr("services.groq_service.GroqService", lambda **_k: groq)
+    with patch("services.language_store.lookup", AsyncMock(return_value=({}, set()))):
+        n = await warm._traducir_en_fondo(None, backend, uuid.uuid4(), redis)
+
+    assert n == 2
+    assert redis.escritas == [], "un fallo del proveedor dejó claves en Redis"
