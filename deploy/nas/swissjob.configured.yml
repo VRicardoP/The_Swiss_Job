@@ -9,7 +9,7 @@
 # decía 254e826 y lo que corre desde hace semanas es acf48b2.
 services:
   backend:
-    image: swissjob-backend:point5-303b16c
+    image: swissjob-backend:point5-5d316c2
     mem_limit: 1536m
     container_name: swissjob-backend
     environment:
@@ -107,7 +107,7 @@ services:
         soft: 65535
         hard: 65535
   worker:
-    image: swissjob-backend:point5-303b16c
+    image: swissjob-backend:point5-5d316c2
     mem_limit: 1g
     container_name: swissjob-worker
     environment:
