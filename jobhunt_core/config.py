@@ -125,10 +125,15 @@ class CoreSettings(BaseSettings):
     # SIM_MIN hereda el umbral del dedup semántico legado (0,95) como punto
     # de partida operativo — B.3 dejó los SIM_* abiertos y la precisión
     # medida contra el oráculo dirá si hay que subirlo. KNN acota vecinos por
-    # vacante nueva; WINDOW = ventana incremental (48 h ≈ beat diario + margen).
+    # vacante nueva; WINDOW = ventana incremental. D2 (2026-11-26): 26 h = la
+    # cadencia diaria + 2 h de margen; con 48 h cada vacante se escaneaba DOS
+    # veces (~941 s/día, el 11 % del tiempo de PostgreSQL).
     CORE_DEDUP_SIM_MIN: float = 0.95
     CORE_DEDUP_KNN: int = 5
-    CORE_DEDUP_SCAN_WINDOW_H: int = 48
+    CORE_DEDUP_SCAN_WINDOW_H: int = Field(default=26, ge=1)
+    # D2: interruptor de la fusión diaria (dedup_merge.py). La detección sigue
+    # aunque se apague.
+    CORE_DEDUP_MERGE_ENABLED: bool = True
     # Generador LÉXICO cross-portal (TRACK R.2b, medido en development-2:
     # 9/9 dup, 0 FP con trgm>=0.65; el ANN a 0.95 daba 0/9 en ese caso)
     CORE_DEDUP_LEX_TRGM_MIN: float = 0.65

@@ -9,7 +9,8 @@ MÍNIMO que el gate necesita y el MÁXIMO que es seguro hoy:
   cuenta "core dice duplicado" con `state <> 'rejected'` — no hace falta
   fusionar, y el AUTO-merge es exactamente donde el legacy se hizo daño
   (B-2: 664 ofertas desactivadas en falso). La fusión (ADR-04, con
-  transferencia de estado) queda como paso posterior y CONTROLADO.
+  transferencia de estado) es un paso posterior y CONTROLADO: desde D2
+  (2026-11-26) la hace `dedup_merge.py` cada noche, sólo con la regla exacta.
 - ANN SOLO CROSS-SOURCE (el léxico añade además un brazo INTRA con umbral
   propio y regla de ubicación — Track R fase 2): el propósito del dedup
   semántico es la misma
@@ -26,8 +27,8 @@ la fila sondeada con una sonda por id que el planificador convierte en
 InitPlan — el índice HNSW se sigue usando (verificado con EXPLAIN ANALYZE).
 
 Incremental: cada pasada mira las vacantes cuya revisión vigente nació en la
-ventana (`CORE_DEDUP_SCAN_WINDOW_H`, 48 h — un día de margen sobre el beat
-diario); un par nuevo exige al menos un miembro nuevo, así que la ventana
+ventana (`CORE_DEDUP_SCAN_WINDOW_H`, 26 h — la cadencia diaria más 2 h de
+margen; con 48 h cada vacante se escaneaba dos veces); un par nuevo exige al menos un miembro nuevo, así que la ventana
 cubre. `window_hours=None` = pasada COMPLETA (backfill inicial, una vez).
 Idempotente: `uq_dedup_pair` (LEAST/GREATEST) + ON CONFLICT DO NOTHING.
 """
@@ -587,7 +588,7 @@ async def revalidate_pending_candidates(
 async def lexical_backfill(session: AsyncSession) -> int:
     """One-shot POST-DEPLOY del Track R (P1-1 de la revisión): pasada
     COMPLETA del generador LÉXICO sobre todo el corpus. El beat solo mira
-    la ventana de 48 h — sin esto, los pares antiguos (el holdout entero)
+    la ventana de 26 h — sin esto, los pares antiguos (el holdout entero)
     jamás recibirían candidatos léxicos y el gate seguiría midiendo al
     detector viejo. No re-ejecuta el ANN (miles de kNN innecesarios).
     Idempotente (upsert). Devuelve filas insertadas/actualizadas."""

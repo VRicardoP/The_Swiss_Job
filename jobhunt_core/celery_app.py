@@ -72,6 +72,8 @@ celery_app.conf.update(
         "jobhunt.maintenance.*": {"queue": "core.default"},
         "jobhunt.maintenance.archive_sweep": {"queue": "core.default"},
         "jobhunt.maintenance.dedup_scan": {"queue": "core.default"},
+        "jobhunt.maintenance.dedup_nightly": {"queue": "core.default"},
+        "jobhunt.maintenance.dedup_merge": {"queue": "core.default"},
         "jobhunt.maintenance.dedup_lex_backfill": {"queue": "core.default"},
         "jobhunt.maintenance.dedup_revalidate_by_rule": {"queue": "core.default"},
         "jobhunt.maintenance.purge_retention": {"queue": "core.default"},
@@ -176,11 +178,12 @@ celery_app.conf.update(
             "task": "jobhunt.maintenance.archive_sweep",
             "schedule": crontab(hour=5, minute=35),
         },
-        # F-5: candidatos de dedup semántico ANTES del cierre de ciclo (y del
-        # barrido: un candidato sobre vacante recién archivada no estorba).
-        "maintenance-dedup-scan": {
-            "task": "jobhunt.maintenance.dedup_scan",
-            "schedule": crontab(hour=5, minute=20),
+        # D2 (2026-11-26): escaneo de candidatos + fusión, DESPUÉS de la última
+        # cosecha del día (23:30; lunes también 23:45). Sustituye a la cita de
+        # las 05:20: espera a que la cosecha termine y acaba antes de las 01:30.
+        "maintenance-dedup-nightly": {
+            "task": "jobhunt.maintenance.dedup_nightly",
+            "schedule": crontab(hour=0, minute=30),
         },
         # O-4: retención de outbox/entregas/inbox sombra/evaluaciones. DESPUÉS
         # del cierre de ciclo de las 06:05 — el ciclo cuenta evaluaciones y
