@@ -236,7 +236,7 @@ class RawListingSink:
 
         # A-05 · nivel EXACTO: contenido cambiado → DECISIÓN de reciclado
         # (ADR-01). Solo decide: el cierre ocurre bajo el lock de vacantes.
-        fresh_exts, recycled = await self._recycle_guard(
+        fresh_exts, recycled, seen_pairs, current_pairs = await self._recycle_guard(
             session, source_name, slot_by_ext, inc_by_slot, by_ext, prep_by_ext
         )
         recycled_incs = [inc_by_slot[s][0] for s in recycled]
@@ -352,7 +352,13 @@ class RawListingSink:
         await self._write_dedup_candidates(session, pairs)
 
         await self._refresh_and_revise(
-            session, slot_by_ext, inc_by_slot, by_ext, prep_by_ext
+            session,
+            slot_by_ext,
+            inc_by_slot,
+            by_ext,
+            prep_by_ext,
+            seen_pairs,
+            current_pairs,
         )
 
         # A-06 · revisión CANÓNICA + puntero vigente (ADR-01/02).
@@ -463,36 +469,46 @@ class RawListingSink:
         identidad completa NUNCA se recicla (conservador, no corromper).
 
         Devuelve (exts con contenido nuevo en incarnación CONSERVADA, slots
-        reciclados)."""
+        reciclados, pares (incarnación, hash) YA vistos, y el subconjunto de
+        ellos que ya es la revisión VIGENTE de su incarnación)."""
         pairs = []  # (ext, inc_id, chash) de slots con incarnación activa
         for ext, slot_id in slot_by_ext.items():
             info = inc_by_slot.get(slot_id)
             if info is not None:
                 pairs.append((ext, str(info[0]), prep_by_ext[ext][1]))
         if not pairs:
-            return set(), []
+            return set(), [], set(), set()
         # PRE-FILTRO de pares exactos (A-04 #3): contenido ya visto en ESA
-        # incarnación = ni revisión ni guard.
-        existing = {
-            (str(r.incarnation_id), r.content_hash)
-            for r in (
-                await session.execute(
-                    sa.text(
-                        "SELECT r.incarnation_id, r.content_hash "
-                        "FROM source_listing_revisions r "
-                        "JOIN unnest(CAST(:ids AS uuid[]), CAST(:hs AS text[])) "
-                        "  AS t(iid, chash) "
-                        "ON r.incarnation_id = t.iid AND r.content_hash = t.chash"
-                    ),
-                    {"ids": [p[1] for p in pairs], "hs": [p[2] for p in pairs]},
-                )
-            ).all()
-        }
+        # incarnación = ni revisión ni guard. En la MISMA consulta (D8, R8 del
+        # análisis del 2026-11-25): ¿es ese contenido ya la revisión VIGENTE
+        # (la que leen `ORDER BY fetched_at DESC, id`)? Si lo es, revisitarla
+        # no tiene nada que escribir — antes cada revisita reenviaba el raw
+        # entero y reescribía `fetched_at`, columna indexada (core0054), así
+        # que ninguna de esas ~43.000 actualizaciones diarias era HOT.
+        rows = (
+            await session.execute(
+                sa.text(
+                    "SELECT t.iid, t.chash, "
+                    "  EXISTS (SELECT 1 FROM source_listing_revisions r "
+                    "          WHERE r.incarnation_id = t.iid "
+                    "            AND r.content_hash = t.chash) AS seen, "
+                    "  (SELECT r.content_hash FROM source_listing_revisions r "
+                    "   WHERE r.incarnation_id = t.iid "
+                    "   ORDER BY r.fetched_at DESC, r.id LIMIT 1) = t.chash "
+                    "    AS latest "
+                    "FROM unnest(CAST(:ids AS uuid[]), CAST(:hs AS text[])) "
+                    "  AS t(iid, chash)"
+                ),
+                {"ids": [p[1] for p in pairs], "hs": [p[2] for p in pairs]},
+            )
+        ).all()
+        existing = {(str(r.iid), r.chash) for r in rows if r.seen}
+        current = {(str(r.iid), r.chash) for r in rows if r.latest}
         fresh = [
             (ext, iid) for ext, iid, chash in pairs if (iid, chash) not in existing
         ]
         if not fresh:
-            return set(), []
+            return set(), [], existing, current
         # Raw VIGENTE solo de las incarnaciones con contenido nuevo. Sin
         # revisión previa = primer contenido de la incarnación: sin guard.
         latest_raw = {
@@ -525,7 +541,7 @@ class RawListingSink:
                 )
             else:
                 fresh_exts.add(ext)
-        return fresh_exts, recycled
+        return fresh_exts, recycled, existing, current
 
     async def _attach_join(self, session, source_id, urls, candidates=None):
         """JOIN completo del nivel 2: incarnación ACTIVA de OTRA fuente sobre
@@ -1433,6 +1449,8 @@ class RawListingSink:
         inc_by_slot,
         by_ext,
         prep_by_ext,
+        seen_pairs=frozenset(),
+        current_pairs=frozenset(),
     ) -> None:
         """`last_seen_at` (y url/apply) en CADA cosecha + revisión por
         contenido, deduplicada por el ON CONFLICT.
@@ -1450,8 +1468,18 @@ class RawListingSink:
         `fetched_at` es «la última vez que ESTE contenido se vio en esta
         incarnación», que es justo lo que esas lecturas necesitan. El
         pre-filtro del guard (A-04 #3) sigue siendo la optimización de la
-        CREACIÓN y el detector del reciclado."""
-        refresh, candidates = [], []
+        CREACIÓN y el detector del reciclado.
+
+        D8: «SIEMPRE» resultó ser el caso caro. El orden que esas lecturas
+        necesitan sólo cambia cuando el contenido re-visto NO es ya la revisión
+        vigente (la reversión A→B→A). Así que, con los pares que el guard ya
+        clasificó bajo el advisory lock por fuente (el sink es el único escritor
+        de revisiones):
+        - par vigente (`current_pairs`): nada que escribir — el régimen estable;
+        - par visto pero superado (`seen_pairs`): sólo se sube `fetched_at`, sin
+          reenviar el raw (mismo content_hash ⇒ mismo raw);
+        - el resto (contenido nuevo, incarnación nueva o reciclada): INSERT."""
+        refresh, candidates, bumps = [], [], []
         for ext, slot_id in slot_by_ext.items():
             info = inc_by_slot.get(slot_id)
             if info is None:
@@ -1464,6 +1492,12 @@ class RawListingSink:
             # UNA sola serialización Y un solo hash: calculados en la
             # cuarentena de frontera y reutilizados aquí (#3/#5).
             canon, chash, _ = prep_by_ext[ext]
+            pair = (str(inc_id), chash)
+            if pair in current_pairs:
+                continue
+            if pair in seen_pairs:
+                bumps.append({"iid": pair[0], "chash": chash})
+                continue
             candidates.append(
                 {"id": uuid.uuid4(), "iid": str(inc_id), "chash": chash, "raw": canon}
             )
@@ -1477,6 +1511,17 @@ class RawListingSink:
                     "WHERE id = :iid"
                 ),
                 refresh,
+            )
+        if bumps:
+            bumps.sort(key=lambda r: r["iid"])  # orden determinista (#2)
+            # Misma marca monótona que el ON CONFLICT de abajo (G4-N-2/G5-P2-4).
+            await session.execute(
+                sa.text(
+                    "UPDATE source_listing_revisions "
+                    "SET fetched_at = GREATEST(fetched_at, clock_timestamp()) "
+                    "WHERE incarnation_id = :iid AND content_hash = :chash"
+                ),
+                bumps,
             )
         if candidates:
             candidates.sort(key=lambda r: r["iid"])  # orden determinista (#2)

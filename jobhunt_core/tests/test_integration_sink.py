@@ -1015,3 +1015,80 @@ def test_e2e_run_scope_with_real_sink(db):
             ).scalar_one()
 
     assert asyncio.run(state()) is not None
+
+
+def _versiones(factory, ext):
+    """xmin de la revisión vigente, de la vacante y de la encarnación.
+
+    `xmin` cambia con CUALQUIER UPDATE de la fila (también con uno que no
+    cambia valores), así que compararlo prueba que la fila no se reescribió:
+    es lo que `n_tup_upd` mide en producción."""
+    return _exec_sql(
+        factory,
+        "SELECT r.xmin::text AS rev, v.xmin::text AS vac, i.xmin::text AS inc, "
+        "       i.last_seen_at, r.fetched_at "
+        "FROM source_listing_revisions r "
+        "JOIN source_listing_incarnations i ON i.id = r.incarnation_id "
+        "JOIN source_listings l ON l.id = i.source_listing_id "
+        "JOIN vacancies v ON v.id = i.vacancy_id "
+        "WHERE l.external_id = :e ORDER BY r.fetched_at DESC, r.id LIMIT 1",
+        e=ext,
+    ).one()
+
+
+def test_d8_revisita_sin_cambios_no_reescribe_revision_ni_vacante(db):
+    """D8 (R8 del análisis del 2026-11-25): revisitar una oferta SIN cambios
+    reenviaba el raw entero y reescribía `fetched_at` (indexado, core0054):
+    186.101 UPDATE en 4,3 días, ninguno HOT. Ahora la revisión vigente y la
+    vacante no se tocan; sólo la encarnación refresca `last_seen_at`."""
+    from jobhunt_core.harvest.providers import arbeitnow  # noqa: F401
+
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    ext = f"d8same-{uuid.uuid4().hex[:8]}"
+    lst = RawListing(
+        external_id=ext,
+        url=f"https://x/{ext}",
+        payload={"title": "SRE", "company_name": "ACME AG"},
+    )
+    _sink_batch(factory, scope, [lst])
+    antes = _versiones(factory, ext)
+    _sink_batch(factory, scope, [lst])  # revisita: MISMO contenido
+    despues = _versiones(factory, ext)
+
+    assert despues.rev == antes.rev  # la revisión no se reescribió
+    assert despues.fetched_at == antes.fetched_at
+    assert despues.vac == antes.vac  # la vacante tampoco
+    assert despues.inc != antes.inc  # la encarnación sí: last_seen_at
+    assert despues.last_seen_at > antes.last_seen_at
+    assert _counts(factory, created["source"]).revs == 1
+
+
+def test_d8_revisita_con_cambios_crea_revision_nueva(db):
+    """El otro lado de D8: un contenido distinto sigue creando revisión nueva
+    en la MISMA encarnación, y pasa a ser la vigente."""
+    from jobhunt_core.harvest.providers import arbeitnow  # noqa: F401
+
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    ext = f"d8chg-{uuid.uuid4().hex[:8]}"
+
+    def _lst(salario):
+        return RawListing(
+            external_id=ext,
+            url=f"https://x/{ext}",
+            payload={
+                "title": "SRE",
+                "company_name": "ACME AG",
+                "salary_original": salario,
+            },
+        )
+
+    _sink_batch(factory, scope, [_lst("80k")])
+    antes = _versiones(factory, ext)
+    _sink_batch(factory, scope, [_lst("90k")])
+    c = _counts(factory, created["source"])
+    assert (c.incs, c.revs) == (1, 2)
+    assert _versiones(factory, ext).fetched_at > antes.fetched_at
+    vigente = _exec_sql(factory, _VIGENTE_SQL, e=ext).one()
+    assert vigente.raw["salary_original"] == "90k"
