@@ -73,7 +73,32 @@ _CUTOFF_BY_SOURCE = (
 )
 
 
-async def close_disappeared(session: AsyncSession) -> dict:
+# Tope de vacantes por transacción del cierre D7. El primer barrido tras
+# desplegar cierra de golpe el atraso acumulado (~48.000 encarnaciones medidas
+# el 2026-11-25): en una sola transacción retendría FOR UPDATE sobre todas esas
+# vacantes y generaría un pico de WAL. Por lotes, cada uno confirma y suelta.
+CLOSE_DISAPPEARED_BATCH = 2000
+
+
+async def close_disappeared(
+    session: AsyncSession, batch: int = CLOSE_DISAPPEARED_BATCH
+) -> dict:
+    """D7 por lotes acotados: ver `_close_disappeared_batch`. Confirma tras cada
+    lote; para cuando un lote sale más corto que el tope (no queda trabajo o lo
+    que queda está bloqueado por una cosecha, que lo verá mañana)."""
+    total = {"cerradas_desaparecidas": 0, "archivadas_desaparecidas": 0}
+    while True:
+        lote, vistas = await _close_disappeared_batch(session, batch)
+        for k in total:
+            total[k] += lote[k]
+        await session.commit()
+        if vistas < batch:
+            return total
+
+
+async def _close_disappeared_batch(
+    session: AsyncSession, batch: int
+) -> tuple[dict, int]:
     """D7: cierra las encarnaciones que su portal ya no publica.
 
     Criterio: fuente de barrido EXHAUSTIVO (`FetchResult.exhaustive`, sellado
@@ -101,7 +126,7 @@ async def close_disappeared(session: AsyncSession) -> dict:
     `last_seen_at < corte` sobre la fila vigente: una cosecha que refrescó la
     encarnación entre la selección y el lock la deja abierta.
     """
-    params = {"n": EXHAUSTIVE_SWEEPS}
+    params = {"n": EXHAUSTIVE_SWEEPS, "lim": int(batch)}
     vac_ids = (
         (
             await session.execute(
@@ -114,7 +139,7 @@ async def close_disappeared(session: AsyncSession) -> dict:
                     "    JOIN source_listings sl ON sl.id = i.source_listing_id "
                     "    JOIN cut c ON c.source_id = sl.source_id "
                     "    WHERE i.ended_at IS NULL AND i.last_seen_at < c.cutoff) "
-                    "ORDER BY v.id FOR UPDATE OF v SKIP LOCKED"
+                    "ORDER BY v.id LIMIT :lim FOR UPDATE OF v SKIP LOCKED"
                 ),
                 params,
             )
@@ -123,7 +148,7 @@ async def close_disappeared(session: AsyncSession) -> dict:
         .all()
     )
     if not vac_ids:
-        return {"cerradas_desaparecidas": 0, "archivadas_desaparecidas": 0}
+        return {"cerradas_desaparecidas": 0, "archivadas_desaparecidas": 0}, 0
     closed_vacs = (
         (
             await session.execute(
@@ -159,7 +184,7 @@ async def close_disappeared(session: AsyncSession) -> dict:
     return {
         "cerradas_desaparecidas": len(closed_vacs),
         "archivadas_desaparecidas": int(archived),
-    }
+    }, len(vac_ids)
 
 
 async def archive_sweep(session: AsyncSession) -> dict:

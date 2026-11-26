@@ -573,3 +573,24 @@ def test_d7_vacante_compartida_reasigna_primary_y_sigue_viva(db):
     despues = _vacante()
     assert despues.id == antes.id and despues.archived_at is None
     assert despues.primary_incarnation_id == despues.superviviente
+
+
+def test_d7_el_cierre_va_por_lotes_y_los_completa_todos(db, monkeypatch):
+    """El primer barrido tras desplegar cierra de golpe todo el atraso. Va por
+    lotes (cada uno confirma y suelta sus FOR UPDATE) y no deja ninguno: con un
+    tope de 1 y tres ofertas desaparecidas, cierra las tres en una pasada."""
+    from jobhunt_core import archive
+
+    monkeypatch.setattr(archive, "CLOSE_DISAPPEARED_BATCH", 1)
+    monkeypatch.setattr(archive.close_disappeared, "__defaults__", (1,))
+    factory, created = db
+    scope = _seed_scope(factory, created)
+    _barrer(factory, scope, ["sigue", "a", "b", "c"])
+    for _ in range(EXHAUSTIVE_SWEEPS):
+        _barrer(factory, scope, ["sigue"])
+    r = _sweep(factory)
+    assert r["cerradas_desaparecidas"] == 3
+    assert r["archivadas_desaparecidas"] == 3
+    for ext in ("a", "b", "c"):
+        assert tuple(_estado(factory, ext)) == (True, False)
+    assert tuple(_estado(factory, "sigue")) == (False, True)
