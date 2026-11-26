@@ -179,32 +179,6 @@ async def assert_not_erased(session, consumer_id, external_ref):
         raise ProfileErasedError("profile has been erased")
 
 
-async def scrub_capture(session, profile_id, external_ref):
-    # Capture takes staging locks only. Wait for in-flight INSERTs, then scrub
-    # their committed contents; future INSERTs are redacted by the DB trigger.
-    await session.execute(
-        sa.text("LOCK TABLE shadow_change_log IN SHARE ROW EXCLUSIVE MODE")
-    )
-    params = {"pid": profile_id, "ref": external_ref}
-    await session.execute(
-        sa.text(
-            "UPDATE profile_erasure_receipts SET source_profile_pks=ARRAY("
-            "SELECT unnest(source_profile_pks) UNION SELECT pk FROM shadow_change_log "
-            "WHERE src_table='user_profiles' AND payload->>'user_id'=:ref) "
-            "WHERE profile_id=:pid"
-        ),
-        params,
-    )
-    await session.execute(
-        sa.text(
-            "UPDATE shadow_change_log SET payload='{}'::jsonb WHERE src_table='user_profiles' "
-            "AND (payload->>'user_id'=:ref OR pk=ANY(SELECT unnest(source_profile_pks) "
-            "FROM profile_erasure_receipts WHERE profile_id=:pid))"
-        ),
-        params,
-    )
-
-
 async def erase_external_identity(session, consumer_id, external_ref):
     """Also fence a not-yet-projected account: missing enrollment is not safety."""
     import uuid
@@ -240,11 +214,6 @@ async def erase_external_identity(session, consumer_id, external_ref):
         .mappings()
         .one()
     )
-    consumer = await session.scalar(
-        sa.text("SELECT name FROM consumers WHERE id=:cid"), {"cid": consumer_id}
-    )
-    if consumer == "swissjob-shadow":
-        await scrub_capture(session, receipt["profile_id"], external_ref)
     return receipt
 
 
@@ -314,8 +283,6 @@ async def erase_owned_profile(session, consumer_id, profile_id):
         ),
         {**params, "ref": owner.external_ref},
     )
-    if owner.name == "swissjob-shadow":
-        await scrub_capture(session, profile_id, owner.external_ref)
     if owner.name == "portfolio":
         await scrub_portfolio_manifests(session, owner.external_ref, profile_id)
     await _erase_profile_graph(session, owner.external_ref, owner.name)

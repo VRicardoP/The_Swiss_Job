@@ -193,7 +193,7 @@ class _FeedPageDTO(BaseModel):
 
 
 class _FacetDTO(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     id: str
     label: str
@@ -202,7 +202,7 @@ class _FacetDTO(BaseModel):
 
 
 class _FacetsDTO(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     version: str
     total: int = Field(ge=0)

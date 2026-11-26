@@ -12,6 +12,7 @@ import uuid
 
 import sqlalchemy as sa
 
+from jobhunt_core.delivery import consumes
 from jobhunt_core.matching import event_id_for
 
 
@@ -27,8 +28,13 @@ async def emit(
     payload: dict,
     destination: str,
 ) -> uuid.UUID:
-    """Inserta el evento + su entrega (misma tx del llamador; sin commit)."""
+    """Inserta el evento + su entrega (misma tx del llamador; sin commit).
+
+    Si el destino no consume el tipo (D5), no se escribe nada: un evento sin
+    entrega solo esperaría a la purga de retención."""
     eid = event_id_for(event_type, natural_key)
+    if not consumes(destination, event_type):
+        return eid
     await session.execute(
         sa.text(
             "INSERT INTO integration_outbox "

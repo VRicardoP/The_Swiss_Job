@@ -1967,7 +1967,10 @@ async def _persist_eval_rows(
     }
     fresh = [r for r in eval_rows if winners.get((r["vid"], r["key"])) == r["id"]]
     new_evals = len(fresh)
-    if fresh:
+    from jobhunt_core.delivery import consumes
+
+    # D5: un destino que no consume `match.evaluated` no recibe ni el evento.
+    if fresh and consumes(consumer_name, "match.evaluated"):
         # OUTBOX en la MISMA transacción que la escritura (A-10, ADR-05):
         # event_id determinista por eval_key + DO NOTHING = re-emisión
         # imposible; el estado de entrega va POR destino (ADR-06) — el BFF del

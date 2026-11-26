@@ -291,13 +291,14 @@ def test_full_downgrade_upgrade_cycle_on_populated_copy():
                             "'ix_pract_profile_seq', 'ix_profrev_text_hash_id', "
                             "'ix_outbox_deliv_pending', 'ix_outbox_deliv_inflight', "
                             "'ix_incarnation_vacancy_active', 'uq_labeled_dedup_pair', "
-                            "'ix_shadow_change_unapplied', 'ix_saved_searches_profile', "
+                            # core0063 retiró `shadow_change_log` y su índice.
+                            "'ix_saved_searches_profile', "
                             "'ix_idem_expires_at', 'ix_vacancies_feed_keyset')"
                         ),
                         {"s": settings.CORE_DB_SCHEMA},
                     )
                 ).scalar_one()
-                assert idx == 11
+                assert idx == 10
 
         asyncio.run(verify_after_cycle())
         asyncio.run(temp_engine.dispose())

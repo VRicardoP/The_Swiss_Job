@@ -84,6 +84,26 @@ LEASE_S = 120
 # rastro veraz, no la desaparición del modo de fallo.
 LEASE_RENEW_AFTER_S = LEASE_S / 2  # renovar a mitad de vida, no al filo
 
+# D5 (2026-11-26): tipos de evento que CONSUME cada destino. Un destino que no
+# aparece aquí lo recibe todo (el BFF de SwissJob, `swissjob-shadow`). Portfolio
+# guardaba su buzón entero y nada lo leía (13.659 filas), así que hoy no
+# consume ninguno; el día que lea un tipo, se añade a su conjunto.
+CONSUMED_TYPES: dict[str, frozenset[str]] = {"portfolio": frozenset()}
+
+
+class PermanentDeliveryError(Exception):
+    """El destino rechazó el evento para siempre (un 4xx que no es 408 ni 429).
+
+    D6: reintentarlo ocho veces solo retrasaba su dead-letter, y su alerta,
+    unas cuatro horas. Va a DEAD-LETTER en el primer intento; el gate
+    `outbox_dead` lo cuenta igual que a uno agotado."""
+
+
+def consumes(destination: str, event_type: str) -> bool:
+    allowed = CONSUMED_TYPES.get(destination)
+    return allowed is None or event_type in allowed
+
+
 _transport = None
 
 
@@ -663,7 +683,7 @@ async def mark_delivered(session, marks: list, lease_token=None) -> int:
 
 
 async def mark_failed(session, fails: list, lease_token) -> dict:
-    """fails = [{'eid', 'dest', 'error'}] (se tolera el campo legacy
+    """fails = [{'eid', 'dest', 'error', 'permanent'?}] (se tolera el campo legacy
     attempts, pero la BD asigna el ordinal real con un incremento atómico).
     Este mark persiste cada transporte fallido (G2-P3-4: el claim no consume
     intentos). Con fencing: un mark TARDÍO de un claim
@@ -679,8 +699,9 @@ async def mark_failed(session, fails: list, lease_token) -> dict:
     # alcanzaba jamás. Los UPDATE fenceados de abajo reescriben el MISMO
     # valor cuando el claim sigue siendo nuestro.
     persisted = await _persist_attempts(session, fails)
-    dead = [f for f in persisted if f["attempts"] >= MAX_ATTEMPTS]
-    retry = [f for f in persisted if f["attempts"] < MAX_ATTEMPTS]
+    # D6: un rechazo permanente (`permanent`) no espera a agotar intentos.
+    dead = [f for f in persisted if f["attempts"] >= MAX_ATTEMPTS or f.get("permanent")]
+    retry = [f for f in persisted if f not in dead]
     dead_done = []
     if dead:
         dead_done = (

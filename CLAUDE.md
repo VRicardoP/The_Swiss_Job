@@ -246,21 +246,20 @@ solape que lleva más de 7 d sin cerrar.
   El del Portfolio vive en su repo (`ReactPortfolio/backend/deploy/nas/`).
 
   **PERO esa copia NO es completa, y decir «la topología REAL» es falso**
-  (medido el 2026-11-02, A-61/A-14). Le faltan dos cosas:
-  1. **`swissjob.configured.yml` define sólo TRES servicios** (`backend`,
-     `worker`, `frontend`). **No define `redis` ni `postgres`** del BFF, que son
-     los que de verdad guardan los datos. Los únicos ficheros de `deploy/nas/`
-     con una definición de redis son `containerstation-swissjob.yml` y
-     `rehearsal-r5.yml`.
-  2. **`swissjob-erasure-cdc` no está en ningún sitio.** Es un TERCER proyecto de
-     compose (`swissjob-erasure`), corre el borrado GDPR
-     (`python -m services.profile_erasure --watch`) desde la imagen
-     `swissjob-backend:d2a38e9` (de 2026-09-13), y su compose vivía en
-     `/share/CACHEDEV1_DATA/Public/unification-e10.XXkEjw88/e13-erasure/replica.yml`
-     — **directorio que ya NO existe** (nombre de `mktemp -d`, se limpió). Está
-     en la lista del supervisor, así que su muerte se notaría; pero **no se
-     podría recrear**, no hay definición. `deploy_nas.sh` (`core|bff`) no lo
-     toca, así que nunca se actualiza.
+  (medido el 2026-11-02, A-61): **`swissjob.configured.yml` define sólo TRES
+  servicios** (`backend`, `worker`, `frontend`). **No define `redis` ni
+  `postgres`** del BFF, que son los que de verdad guardan los datos. Los únicos
+  ficheros de `deploy/nas/` con una definición de redis son
+  `containerstation-swissjob.yml` y `rehearsal-r5.yml`.
+
+  **`swissjob-erasure-cdc` se RETIRÓ (D3, 2026-11-26).** Era la réplica
+  `swissjob-cdc` del borrado GDPR y apuntaba a la base del NÚCLEO, donde sólo
+  protegía las 22 tablas `public` que copió la CDC sombra (retirada el
+  2026-10-13). Nada del núcleo esperaba su acuse: un borrado lo confirma el
+  recibo, y las copias de SwissJob lo aplican por `reconcile_replica`, que hoy
+  corre sólo en el BFF (`swissjob-live`). `core0063` retiró `shadow_change_log`
+  y el `/v1` rechaza ya la réplica `swissjob-cdc` (400). Procedimiento de la
+  retirada en producción: el PR de D3/D5/D6.
 - **`backend/.env.prod.example` se GENERA** con `backend/scripts/gen_env_example.py`
   desde `Settings`; `tests/test_env_example_covers_settings.py` falla si alguien lo
   edita a mano y se queda corto. El de la raíz (28 claves de 130) se retiró.
@@ -282,11 +281,12 @@ solape que lleva más de 7 d sin cerrar.
 - **Supervisor de contenedores (A19-17)**: lo ejecuta el **crontab del QTS** cada
   5 min (`/etc/config/crontab` → `/share/homes/Ricardo/swissjob-supervisor/supervisor_contenedores.sh`,
   en el disco interno a propósito: si cae el SSD USB, que es donde están los datos, el supervisor debe seguir hablando),
-  y alerta si falta o no corre cualquiera de los **15** esperados (contados en
-  `scripts/nas/supervisor_contenedores.sh` el 2026-11-25; eran 16 con `portfolio_redis`,
-  borrado ese día al fusionar su Redis en `swissjob-redis`) —
-  incluidos `portfolio_worker`, el proceso de fondo del Portfolio (ver su
-  `backend/CLAUDE.md`), y `swissjob-erasure-cdc`, el del aviso de arriba —,
+  y alerta si falta o no corre cualquiera de los **14** esperados (contados en
+  `scripts/nas/supervisor_contenedores.sh` el 2026-11-26; eran 16 con `portfolio_redis`,
+  borrado el 2026-11-25 al fusionar su Redis en `swissjob-redis`, y con
+  `swissjob-erasure-cdc`, retirado en D3) —
+  incluido `portfolio_worker`, el proceso de fondo del Portfolio (ver su
+  `backend/CLAUDE.md`) —,
   con anti-ruido (sólo cambios de estado + recordatorio cada 6 h). Fuente:
   `scripts/nas/`; al host se sube con `scp` y 700.
   **NO levantes además el contenedor `swissjob-supervisor`** (retirado el
@@ -350,7 +350,12 @@ solape que lleva más de 7 d sin cerrar.
   corregidos el mismo día** (`docs/unificacion/DEUDA_TECNICA.md` §0.C, con una prueba
   por hallazgo en `backend/tests/test_a20_fixes.py`). Lo que cambia para quien opere:
   el `/v1` acepta `profile` opcional en PATCH/DELETE de candidaturas y el BFF lo
-  envía en vez de drenar el feed — **desplegar el núcleo ANTES que el BFF**; el
+  envía en vez de drenar el feed. *(La regla «desplegar el núcleo ANTES que el
+  BFF» que nacía de aquí ya no aplica: hoy el BFF no llama a esos endpoints, y
+  desde D6 (2026-11-26) los receptores ignoran los campos que no conocen —el
+  buzón del BFF, el de Portfolio y las facetas—, así que un núcleo más nuevo ya
+  no rompe a un BFF más viejo. Lo que sigue valiendo es desplegar el núcleo
+  antes cuando el BFF empiece a USAR un campo o endpoint nuevo.)*; el
   oyente SSE se reconecta solo tras un fallo de Redis; bcrypt y el parseo del CV
   van al threadpool; `alembic check` es paso del CI (los modelos declaran ya el
   índice HNSW, el GIN del `search_vector` y `ix_match_results_application_status`,
