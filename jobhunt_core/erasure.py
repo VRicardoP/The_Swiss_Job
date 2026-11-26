@@ -18,6 +18,8 @@ _ERASE_TABLES = (
     "profile_revisions",
     "applications",
     "saved_searches",
+    # D2: imágenes antes/después del estado trasladado al fusionar duplicados.
+    "merge_transfers",
 )
 
 

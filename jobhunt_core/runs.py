@@ -41,6 +41,23 @@ def _alive_at(alias: str = "") -> str:
     return f"COALESCE({p}heartbeat_at, {p}started_at)"
 
 
+async def any_scope_running(session) -> bool:
+    """¿Hay ahora mismo algún scope cosechando? Mismo lease que `claim_scope_run`:
+    un 'running' cuyo worker murió no bloquea para siempre a quien espera."""
+    return bool(
+        (
+            await session.execute(
+                sa.text(
+                    "SELECT EXISTS (SELECT 1 FROM source_harvest_runs "
+                    "WHERE status = 'running' AND finished_at IS NULL AND "
+                    f"{_alive_at()} >= clock_timestamp() - make_interval(secs => :lease))"
+                ),
+                {"lease": SCOPE_LEASE_S},
+            )
+        ).scalar_one()
+    )
+
+
 def run_id_for(run_key: str) -> uuid.UUID:
     """ID determinista del run lógico: mismo run_key ⇒ misma fila."""
     return uuid.uuid5(RUNS_NAMESPACE, run_key)
