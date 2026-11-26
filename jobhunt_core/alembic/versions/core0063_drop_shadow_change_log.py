@@ -35,7 +35,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from jobhunt_core.config import settings
 
 revision = "core0063"
-down_revision = "core0059"
+down_revision = "core0060"
 branch_labels = None
 depends_on = None
 
