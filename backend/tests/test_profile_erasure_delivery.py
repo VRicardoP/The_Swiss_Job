@@ -75,6 +75,24 @@ async def test_background_without_credentials_keeps_requests_offline(monkeypatch
     drain.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_background_polls_every_fifteen_minutes(monkeypatch):
+    import asyncio
+    from config import settings
+
+    monkeypatch.setattr(settings, "CORE_CONSUMER_KEY", "")
+    slept = []
+
+    async def stop(seconds):
+        slept.append(seconds)
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(sync.asyncio, "sleep", stop)
+    with pytest.raises(asyncio.CancelledError):
+        await sync.run_erasure_delivery()
+    assert slept == [900]
+
+
 class Core:
     status_code = 200
     fail = False
