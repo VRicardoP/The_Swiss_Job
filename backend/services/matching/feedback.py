@@ -161,13 +161,20 @@ class CoreFeedback:
         # version del core (que cubre `updated_at`) cambiara igualmente. Se
         # invalida aqui ademas, para no depender de la siguiente consulta de
         # version — y tambien en el 404, que no prueba que nada cambiara.
-        from services.matching.core_client import clear_feed_cache
+        #
+        # R14: SOLO el explicito. El implicito solo inserta en
+        # `profile_vacancy_events`: no toca `profile_vacancy_state` (lo que
+        # cubre la version) ni el reloj de intencion explicita
+        # (`jobhunt_core/feedback.py`), asi que el recorrido cacheado sigue
+        # describiendo lo que el core sirve.
+        if kind == "feedback":
+            from services.matching.core_client import clear_feed_cache
 
-        clear_feed_cache(pid)
-        # M3/T12: y se avisa al OTRO worker de gunicorn, cuya caché es suya.
-        from services.matching.cache_bus import publicar
+            clear_feed_cache(pid)
+            # M3/T12: y se avisa al OTRO worker de gunicorn, cuya caché es suya.
+            from services.matching.cache_bus import publicar
 
-        await publicar(pid)
+            await publicar(pid)
         if response.status_code == 404:
             return None
         try:

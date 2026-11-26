@@ -336,6 +336,53 @@ async def test_una_escritura_de_feedback_invalida_el_recorrido_cacheado(
     )
 
 
+async def test_un_evento_implicito_no_invalida_el_recorrido_cacheado(
+    db_session, monkeypatch
+):
+    """R14: el feedback implícito sólo inserta en `profile_vacancy_events`; no
+    toca `profile_vacancy_state`, que es lo que cubre la versión del feed, ni
+    el reloj de intención explícita (`jobhunt_core/feedback.py`). Vaciar la
+    caché y avisar al otro worker por cada «opened» forzaba recorridos en
+    balde. El explícito SÍ invalida (caso de arriba)."""
+    import json
+    from unittest.mock import AsyncMock
+
+    import httpx
+
+    from services.matching import cache_bus
+    from services.matching import feedback as fb
+
+    pid = uuid.uuid4()
+    vid = uuid.uuid4()
+    core_client._feed_cache[str(pid)] = ("v1", [_item(0)], 1)
+    aviso = AsyncMock()
+    monkeypatch.setattr(cache_bus, "publicar", aviso)
+
+    async def perfil(self, user_id):
+        return pid
+
+    monkeypatch.setattr(fb.CoreFeedback, "_profile", perfil)
+
+    def handler(request):
+        if request.url.path == "/v1/school-jobs":
+            return httpx.Response(200, json={"items": [], "next_cursor": None})
+        data = json.loads(request.content)
+        return httpx.Response(
+            200, json={"profile_id": str(pid), "vacancy_id": str(vid), **data}
+        )
+
+    core = fb.CoreFeedback(
+        db_session,
+        client_factory=lambda: httpx.AsyncClient(
+            base_url="http://core.test/v1", transport=httpx.MockTransport(handler)
+        ),
+    )
+
+    assert await core.record_implicit_feedback(uuid.uuid4(), str(vid), "opened")
+    assert str(pid) in core_client._feed_cache, "un evento implícito vació la caché"
+    aviso.assert_not_awaited()
+
+
 async def test_borrar_la_cache_mientras_se_recorre_no_deja_entrada_vieja():
     """Carrera: `clear_feed_cache(pid)` entre la última página y
     `_remember_feed`. La entrada purgada no debe reaparecer."""
