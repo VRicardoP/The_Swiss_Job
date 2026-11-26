@@ -154,11 +154,13 @@ async def test_a20_05_el_perfil_publica_los_pesos_por_defecto_del_motor(
 
 
 @pytest.mark.parametrize("ruta", ["/api/v1/match/history", "/api/v1/match/saved"])
-async def test_a20_09_history_y_saved_no_llaman_al_llm_con_translate_false(
+async def test_a20_09_d10_history_y_saved_nunca_llaman_al_llm(
     client, db_session, monkeypatch, ruta
 ):
+    """D10: la traducción la sirve el core (`title_en`); ninguna forma de
+    `translate` llega ya al LLM. Antes, sin `translate=false`, SÍ se traducía
+    en la petición: ese era el control negativo de A20-09 y ahora es el fallo."""
     from services.groq_service import GroqService
-    from services.translation_service import TranslationService
 
     headers, user_id = await _registrar(client)
     h = uuid.uuid4().hex
@@ -188,11 +190,11 @@ async def test_a20_09_history_y_saved_no_llaman_al_llm_con_translate_false(
 
     llamadas: list[list[str]] = []
 
-    async def translate_titles(self, titulos, *_a, **_kw):
-        llamadas.append(list(titulos))
-        return {}
+    async def get_chat_response(self, *a, **kw):
+        llamadas.append(kw.get("user_message") or a[:1])
+        return "{}"
 
-    monkeypatch.setattr(TranslationService, "translate_titles", translate_titles)
+    monkeypatch.setattr(GroqService, "get_chat_response", get_chat_response)
     monkeypatch.setattr(GroqService, "is_available", property(lambda self: True))
     from services.match_result_service import MatchResultService
 
@@ -214,12 +216,10 @@ async def test_a20_09_history_y_saved_no_llaman_al_llm_con_translate_false(
 
     monkeypatch.setattr("routers.match.overlay_school_results", no_school_overlay)
 
-    r = await client.get(f"{ruta}?translate=false", headers=headers)
-    assert r.status_code == 200, r.text
-    assert r.json()["total"] == 1
-    assert llamadas == [], "con translate=false el LLM no se toca"
-
-    # Control negativo: por defecto SÍ se traduce (la ruta llega al servicio).
-    r = await client.get(ruta, headers=headers)
-    assert r.status_code == 200, r.text
-    assert len(llamadas) == 1
+    for sufijo in ("?translate=false", "?translate=true", ""):
+        r = await client.get(f"{ruta}{sufijo}", headers=headers)
+        assert r.status_code == 200, r.text
+        assert r.json()["total"] == 1
+        # Fila del archivo local `jobs`: sin `title_en`, se sirve el original.
+        assert r.json()["data"][0]["job_title_en"] is None
+    assert llamadas == [], "servir nunca llama al LLM (D10)"

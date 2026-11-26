@@ -20,5 +20,8 @@ sentence-transformers==3.4.1
 # (torch-cpu descartado con evidencia; paridad ONNX 6e-06 sellada). Import
 # perezoso: solo se paga si CE_BACKEND=onnx-cpu.
 onnxruntime==1.30.0
+# D10: detección local del idioma del título antes de pagar el LLM (mismo
+# detector y versión que el BFF). Puro Python; import perezoso.
+langdetect==1.0.9
 # tests (la imagen dev los ejecuta; podar en una imagen prod slim si hace falta)
 httpx==0.28.1
