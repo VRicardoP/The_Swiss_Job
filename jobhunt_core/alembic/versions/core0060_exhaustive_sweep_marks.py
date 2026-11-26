@@ -27,7 +27,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from jobhunt_core.config import settings
 
 revision = "core0060"
-down_revision = "core0059"
+down_revision = "core0061"
 branch_labels = None
 depends_on = None
 
