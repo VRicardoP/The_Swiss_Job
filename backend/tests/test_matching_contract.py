@@ -941,3 +941,11 @@ async def test_core_broken_item_types_are_unavailable(
     core = make_core_matching(db_session, httpx.MockTransport(handler))
     with pytest.raises(CoreUnavailableError, match="payload invalido"):
         await core.results(user_id)
+
+
+def test_no_queda_endpoint_de_analisis_interactivo():
+    """F6: el matching lo recalcula el core; `POST /match/analyze` sólo
+    devolvía 409 y su botón engañaba al usuario. Se retiró entero."""
+    from routers.match import router
+
+    assert not [r.path for r in router.routes if r.path.endswith("/analyze")]

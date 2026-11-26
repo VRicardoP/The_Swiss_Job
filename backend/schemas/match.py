@@ -6,12 +6,6 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class MatchAnalyzeRequest(BaseModel):
-    """Request body for POST /api/v1/match/analyze."""
-
-    min_score: float = Field(default=35.0, ge=0, le=100)
-
-
 class MatchScoreBreakdown(BaseModel):
     """Individual score components."""
 
@@ -90,14 +84,6 @@ class GenerateDraftResponse(BaseModel):
     status: str
     job_hash: str
     draft_letter: str
-
-
-class MatchAnalyzeResponse(BaseModel):
-    """Response for POST /api/v1/match/analyze."""
-
-    status: str
-    total_candidates: int = 0
-    results_count: int = 0
 
 
 class MatchResultsResponse(BaseModel):

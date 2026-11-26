@@ -6,7 +6,6 @@ import {
   Inbox,
 } from "lucide-react";
 import {
-  useAnalyze,
   useMatchFacets,
   useMatchResults,
   useSubmitFeedback,
@@ -58,7 +57,6 @@ export default function MatchPage() {
     legacyMode || (facetsEnabled && Boolean(activeCategory)),
   );
 
-  const analyze = useAnalyze();
   const submitFeedback = useSubmitFeedback();
   const clearFeedback = useClearFeedback();
   const submitImplicit = useSubmitImplicit();
@@ -224,22 +222,6 @@ export default function MatchPage() {
         eyebrow="AI Matching"
         title="Your matches"
         description="Curated jobs ranked against your CV using semantic search, salary fit and recency."
-        actions={
-          <Button
-            variant="primary"
-            size="lg"
-            leftIcon={<Sparkles className="h-4 w-4" />}
-            loading={analyze.isPending}
-            disabled={!hasCvEmbedding || analyze.isPending}
-            onClick={() => {
-              setActiveCategory(null);
-              setCategoryOffset(0);
-              analyze.mutate();
-            }}
-          >
-            {analyze.isPending ? "Analyzing" : "Find new matches"}
-          </Button>
-        }
       />
 
       {/* CV warning */}
@@ -272,19 +254,6 @@ export default function MatchPage() {
           >
             Go to Profile
           </LinkButton>
-        </div>
-      )}
-
-      {/* Estado del análisis */}
-      {analyze.isSuccess && (
-        <p className="mt-3 text-sm text-success">
-          Found {analyze.data.results_count} new matches from{" "}
-          {analyze.data.total_candidates} candidates.
-        </p>
-      )}
-      {analyze.isError && (
-        <div className="mt-3 rounded-xl border border-error-border bg-error-light p-3 text-sm text-error">
-          {analyze.error?.message || "Analysis failed"}
         </div>
       )}
 
@@ -322,20 +291,11 @@ export default function MatchPage() {
             title={hasCvEmbedding ? "No matches yet" : "Add your CV first"}
             description={
               hasCvEmbedding
-                ? 'Click "Find new matches" to analyze your CV against the latest jobs.'
+                ? "Matches are recomputed automatically when your CV or the job corpus changes."
                 : "Upload your CV in your profile to get AI-powered job recommendations."
             }
             action={
-              hasCvEmbedding ? (
-                <Button
-                  variant="primary"
-                  leftIcon={<Sparkles className="h-4 w-4" />}
-                  loading={analyze.isPending}
-                  onClick={() => analyze.mutate()}
-                >
-                  Find matches
-                </Button>
-              ) : (
+              hasCvEmbedding ? null : (
                 <LinkButton to="/profile" variant="primary">
                   Go to Profile
                 </LinkButton>

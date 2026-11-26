@@ -1,6 +1,6 @@
 """Core matching feed, facets, saved items and feedback endpoints.
 
-Core owns matching computation, so the interactive analyze endpoint is closed.
+Core owns matching computation; there is no interactive analyze endpoint.
 The retained feedback switch and local application overlay preserve the state
 whose separate migration gates are still active.
 """
@@ -11,15 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
-from core.rate_limit import limiter
 from core.security import get_current_user
 from database import get_db
 from models.user import User
 from schemas.match import (
     ImplicitFeedbackRequest,
     ImplicitFeedbackResponse,
-    MatchAnalyzeRequest,
-    MatchAnalyzeResponse,
     MatchFeedbackRequest,
     MatchFeedbackResponse,
     MatchFacetsResponse,
@@ -71,30 +68,6 @@ def _matching_http_error(exc: MatchingError) -> HTTPException:
             detail="Operation not available on the active matching backend",
         )
     raise exc  # error de programacion: no enmascarar como HTTP
-
-
-@router.post("/analyze", response_model=MatchAnalyzeResponse)
-@limiter.limit("3/minute")
-async def analyze_matches(
-    request: Request,
-    body: MatchAnalyzeRequest = MatchAnalyzeRequest(),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Trigger AI matching pipeline for the current user.
-
-    Stage 1: pgvector cosine similarity on ALL active jobs
-    Stage 2: Multi-factor scoring (embedding + salary + location + recency)
-    Stage 3: LLM re-ranking via Groq (if API key configured) — top-K only
-    """
-    raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail=(
-            "Matching for this profile is governed by the core engine; "
-            "results recompute automatically when your CV or the job "
-            "corpus changes. Local analysis is disabled."
-        ),
-    )
 
 
 def _presentation_description(job) -> str | None:
