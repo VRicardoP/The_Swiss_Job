@@ -36,7 +36,6 @@ async def test_calienta_cada_usuario_enrolado():
         "calentados": 2,
         "facetas": 0,
         "fallos": 0,
-        "traducidos": 0,
     }
     assert backend.warm_feed.await_count == 2
     # NO se construyen vistas: sólo se calienta el recorrido
@@ -61,7 +60,6 @@ async def test_un_usuario_que_falla_no_arrastra_a_los_demas():
         "calentados": 2,
         "facetas": 0,
         "fallos": 1,
-        "traducidos": 0,
     }
 
 
@@ -83,7 +81,6 @@ async def test_backend_local_no_tiene_recorrido_que_calentar():
         "calentados": 0,
         "facetas": 0,
         "fallos": 0,
-        "traducidos": 0,
     }
 
 
@@ -106,11 +103,9 @@ async def _pasada(usuarios, redis):
     backend = MagicMock()
     backend.warm_feed = AsyncMock(return_value=1800)
     backend.warm_facets = AsyncMock(return_value=False)
-    backend.cached_feed_titles = None
     with (
         patch.object(warm, "_usuarios_enrolados", AsyncMock(return_value=usuarios)),
         patch("services.matching.resolve_matching", AsyncMock(return_value=backend)),
-        patch.object(warm, "_traducir_en_fondo", AsyncMock(return_value=0)),
     ):
         await warm.calentar_una_vez(redis)
     return [c.args[0] for c in backend.warm_feed.await_args_list]
@@ -160,9 +155,7 @@ async def test_servir_el_feed_y_las_facetas_marca_actividad(monkeypatch):
     db.refresh = AsyncMock()
 
     await router.get_match_facets(request, user, db)
-    await router.get_match_results(
-        request, user, db, limit=20, offset=0, translate=False, category="A"
-    )
+    await router.get_match_results(request, user, db, limit=20, offset=0, category="A")
 
     clave = f"feed:active:{user.id}"
     assert redis.puestas == [(clave, 86_400), (clave, 86_400)]

@@ -134,6 +134,21 @@ async def purge_source_graph(
             ),
             {"v": vac_ids},
         )
+        # D2: merge_log.winner_id → vacancies (sin CASCADE).
+        await s.execute(
+            sa.text(
+                "DELETE FROM merge_transfers WHERE merge_log_id IN ("
+                "SELECT id FROM merge_log "
+                "WHERE winner_id = ANY(:v) OR loser_id = ANY(:v))"
+            ),
+            {"v": vac_ids},
+        )
+        await s.execute(
+            sa.text(
+                "DELETE FROM merge_log WHERE winner_id = ANY(:v) OR loser_id = ANY(:v)"
+            ),
+            {"v": vac_ids},
+        )
         # A-06: el puntero FK-compuesto bloquea el borrado de revisiones —
         # canónicas fuera ANTES de borrar vacantes.
         await s.execute(

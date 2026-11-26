@@ -225,7 +225,7 @@ def default_client_factory() -> httpx.AsyncClient:
 @dataclass
 class CoreJobView:
     """Vista duck-type de models.job.Job con los campos que consume el
-    mapeo del router (_to_match_response / traduccion de titulos)."""
+    mapeo del router (_to_match_response)."""
 
     title: str
     company: str | None
@@ -237,6 +237,9 @@ class CoreJobView:
     # Lo sirve el core desde la canonica (_language_of); si viene ausente
     # —o con una forma invalida— el router lo detecta por titulo.
     language: str | None = None
+    # D10: titulo en ingles traducido UNA vez por el core (VacancyDTO.title_en).
+    # Ausente => se sirve el original; el BFF ya no traduce.
+    title_en: str | None = None
     category: str | None = None  # no expuesto por el /v1 (cota, como catalogo)
     salary_min_chf: int | None = None  # idem: el core sirve salario en texto
     salary_max_chf: int | None = None
@@ -331,6 +334,15 @@ def _language_of(vacancy: dict) -> str | None:
     return value.strip().lower() or None
 
 
+def _title_en_of(vacancy: dict) -> str | None:
+    """`title_en` del core, sólo si es una cadena con contenido. Un valor con
+    otra forma se sirve como ausente: es un adorno, no la identidad."""
+    value = vacancy.get("title_en")
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None
+
+
 def _job_view(vacancy: dict, job_ref_source: str | None) -> CoreJobView:
     primary = vacancy.get("primary_listing") or {}
     listings = vacancy.get("listings") or []
@@ -350,6 +362,7 @@ def _job_view(vacancy: dict, job_ref_source: str | None) -> CoreJobView:
         # linea el campo existia y era SIEMPRE None, y el router detectaba el
         # idioma por titulo en cada oferta servida.
         language=_language_of(vacancy),
+        title_en=_title_en_of(vacancy),
         category=vacancy.get("job_category"),
     )
 
@@ -818,21 +831,6 @@ class CoreMatching:
         )
 
     # ------------------------------------------------------------------ feed
-
-    async def cached_feed_titles(self, user_id: uuid.UUID) -> list[str]:
-        """Títulos del recorrido YA cacheado de este usuario (A19-15 §D).
-
-        Lee `_feed_cache` en proceso: no pide nada al core. Si no hay recorrido
-        cacheado devuelve `[]`; calentar es cosa de `warm_feed`, no de esto.
-        """
-        pid = await resolve_core_profile_id(self._db, user_id)
-        if pid is None:
-            return []
-        cacheado = _feed_cache.get(str(pid))
-        if not cacheado:
-            return []
-        _version, items, _total = cacheado
-        return [t for t in (it.get("vacancy", {}).get("title") for it in items) if t]
 
     async def _fetch_full_feed(
         self,

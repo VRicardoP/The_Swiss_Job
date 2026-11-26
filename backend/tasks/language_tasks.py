@@ -38,7 +38,7 @@ def resolve_pending_languages(self, batch: int = DEFAULT_BATCH) -> dict[str, Any
 async def _resolve(batch: int) -> dict[str, Any]:
     from database import task_session
     from services import language_store
-    from services.translation_service import TranslationService
+    from services.language_detection import LanguageDetector
 
     async with task_session() as db:
         titulos = await language_store.pending_titles(db, batch)
@@ -46,7 +46,7 @@ async def _resolve(batch: int) -> dict[str, Any]:
             return {"resolved": 0, "pending_left": 0}
         # La detección es lo ÚNICO caro de esta tarea y es CPU pura: se hace
         # aquí, en el worker, nunca en el camino de una petición.
-        resueltos = {t: (TranslationService._detect_language(t) or "") for t in titulos}
+        resueltos = {t: (LanguageDetector._detect_language(t) or "") for t in titulos}
         await language_store.store_resolved(db, resueltos)
         quedan = await language_store.pending_count(db)
 

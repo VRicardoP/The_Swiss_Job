@@ -13,9 +13,9 @@ ya ha sufrido). El doble responde con la FORMA que el contrato exige y con
 contenido derivado de la ENTRADA, así que la lógica de arriba sigue siendo
 observable y falsable.
 
-Que la forma que el doble finge sea la del proveedor REAL lo comprueba
-`backend/tests_live/test_llm_contract_live.py`, que queda fuera de `testpaths`
-y es el único autorizado a gastar dinero y a depender de la red.
+D10 (2026-11-26): el único contrato EN VIVO que había
+(`tests_live/test_llm_contract_live.py`) era el de la traducción de títulos, y
+se fue con ella: los títulos los traduce el core.
 """
 
 import json
@@ -24,25 +24,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from services.cv_analyzer import _SYSTEM_PROMPT as CV_SYSTEM_PROMPT
-from services.translation_service import (
-    _RETRY_SYSTEM_PROMPT,
-    TRANSLATION_SYSTEM_PROMPT,
-)
 
 # Texto genérico para las tareas de PROSA (CV, carta, borrador de watchlist):
 # su contrato es «una cadena no vacía», y eso es lo que se devuelve.
 GENERIC_TEXT = "# Documento de prueba\n\nContenido generado por el doble LLM."
-
-
-def _translation_response(user_prompt: str) -> str:
-    """Identidad: la regla 5 del prompt real es «si ya está en inglés, tal cual».
-
-    Devolver el título sin cambiar es una salida VÁLIDA del contrato, y no
-    inventa traducciones que ningún test podría comprobar. La lógica de mapeo
-    y rescate de la traducción la cubre `tests/test_translation_service.py`
-    con dobles propios.
-    """
-    return json.dumps(json.loads(user_prompt), ensure_ascii=False)
 
 
 def _cv_response(_user_prompt: str) -> str:
@@ -63,8 +48,6 @@ def _cv_response(_user_prompt: str) -> str:
 # reescribe el prompt, el doble le sigue automáticamente en vez de quedarse
 # respondiendo a una forma que ya no se pide.
 _BY_SYSTEM_PROMPT = {
-    TRANSLATION_SYSTEM_PROMPT: _translation_response,
-    _RETRY_SYSTEM_PROMPT: _translation_response,
     CV_SYSTEM_PROMPT: _cv_response,
 }
 

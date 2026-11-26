@@ -1,7 +1,8 @@
 """GroqService — una sola cosa: hablar con la API de Groq por chat.
 
 `settings.GROQ_RERANK_MODEL` (qwen3.8-27b, rápido) es el modelo por defecto y
-lo usan la traducción de títulos y el calentamiento del feed;
+lo usa la carta de colegios (`letter_generator`). D10: la traducción de títulos
+que también lo usaba se fue al core (`CORE_TITLE_TRANSLATION_MODEL`);
 `settings.GROQ_MODEL` (gpt-oss-120b) lo piden explícitamente las tareas de
 documentos. El SDK de Groq es SINCRONO: cada llamada va a `run_in_threadpool`.
 
