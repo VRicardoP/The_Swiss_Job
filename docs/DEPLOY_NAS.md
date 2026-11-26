@@ -162,7 +162,7 @@ grep -E "^POSTGRES_|^DATABASE_URL" /share/Public/swissjob/.env.prod
 | Concepto | Ruta |
 |---|---|
 | Directorio de despliegue | `/share/external/DEV3301_1/apps-ssd/swissjob-deploy/` (`.env*`, `bin-docker-compose`, tarballs en tránsito) |
-| Composes vivos (`core`, `swissjob`, `portfolio`, `erasure`) | `/share/external/DEV3301_1/apps-ssd/swissjob-deploy/compose/` |
+| Composes vivos (`core`, `swissjob`, `portfolio`; `erasure` se retiró en D3, 2026-11-26) | `/share/external/DEV3301_1/apps-ssd/swissjob-deploy/compose/` |
 | Compose de Container Station (solo `postgres` y `redis`) | `/share/CACHEDEV1_DATA/.qpkg/container-station/data/application/swissjob/docker-compose.yml` |
 | Script init pgvector | `/share/external/DEV3301_1/apps-ssd/swissjob-deploy/docker/postgres/init-pgvector.sql` |
 | Datos | `/share/external/DEV3301_1/pgdata-swissjob`, `…/apps-ssd/redis-legacy`, `…/apps-ssd/redis-core` |
@@ -1405,7 +1405,8 @@ $p -c 'ALTER DATABASE swissjobhunter RESET max_parallel_maintenance_workers'
 
 # 5. NO arrancar todavía. Con el esquema de borrado coordinado desplegado,
 #    re-aplicar el inventario VIGENTE de supresiones (fuera del dump restaurado),
-#    sanear core + BFF + origen CDC y verificar las confirmaciones.
+#    sanear core + BFF y verificar la confirmación de `swissjob-live` (la copia
+#    CDC y su réplica `swissjob-cdc` se retiraron en D3, 2026-11-26).
 #    BORRADO_COORDINADO_E13.md contiene el procedimiento y su estado de implantación.
 #    Sin inventario válido o procedimiento probado: conservar aislamiento.
 # 6. Solo después: re-bootstrap controlado y arranque. La base apartada es otra

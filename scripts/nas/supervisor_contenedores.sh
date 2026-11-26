@@ -47,7 +47,7 @@ DIR="${SUPERVISOR_DIR:-/share/homes/Ricardo/swissjob-supervisor/supervisor}"
 ESTADO="$DIR/estado"
 LOG="$DIR/supervisor.log"
 RECORDATORIO_S=21600
-ESPERADOS="swissjob-backend swissjob-worker portfolio_worker swissjob-core-api-r5 swissjob-core-worker-r5 swissjob-core-harvest-worker-r5 swissjob-core-ops-worker-r5 swissjob-postgres swissjob-redis swissjob-redis-core-r5 swissjob-frontend swissjob-erasure-cdc portfolio_backend portfolio_db portfolio_ngrok ${EXTRA_ESPERADOS:-}"
+ESPERADOS="swissjob-backend swissjob-worker portfolio_worker swissjob-core-api-r5 swissjob-core-worker-r5 swissjob-core-harvest-worker-r5 swissjob-core-ops-worker-r5 swissjob-postgres swissjob-redis swissjob-redis-core-r5 swissjob-frontend portfolio_backend portfolio_db portfolio_ngrok ${EXTRA_ESPERADOS:-}"
 
 mkdir -p "$(dirname "$ESTADO")"
 ahora=$(date -u +%s)

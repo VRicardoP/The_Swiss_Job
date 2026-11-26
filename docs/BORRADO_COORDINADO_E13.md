@@ -34,6 +34,16 @@ preceden a ese despliegue.
 
 ## Topología que requiere dos confirmaciones
 
+> **Vigente desde el 2026-11-26 (D3): UNA sola confirmación.** La copia CDC
+> (`swissjob-cdc`, contenedor `swissjob-erasure-cdc`) se retiró junto con las
+> tablas `public` que protegía en la base del núcleo y con `shadow_change_log`
+> (`core0063`). El `/v1` rechaza ya un acuse de `swissjob-cdc` (400) y el BFF
+> no admite ese valor en `CORE_ERASURE_REPLICA_ID`. Nada del núcleo esperaba
+> todos los acuses para dar un borrado por hecho: lo confirma el recibo, y
+> `profile_erasure_acks` es un registro de qué copia lo aplicó. El acuse
+> histórico de `swissjob-cdc` se conserva. Lo que sigue en esta sección y en la
+> de restauración describe la topología de 2026-09-13.
+
 La aplicación pública usa `swissjobhunter`; la captura lee
 `swissjobhunter_r5_rehearsal`. No se debe suponer que borrar en la primera genera
 un evento CDC en la segunda.
@@ -83,7 +93,7 @@ y la protección de la migración, no deshacer el esquema a ciegas.
 5. En CADA BFF SwissJob restaurado, con su base, credencial core y réplica correctas:
    `python -m services.profile_erasure`
    El comando debe terminar con éxito antes de arrancar ingress y workers.
-6. Verificar ambas confirmaciones, ausencia del grafo personal y del texto del
+6. Verificar la confirmación de `swissjob-live` (desde D3 ya no hay otra), ausencia del grafo personal y del texto del
    staging, conservación del otro usuario y del corpus, y reintento idempotente.
 7. Solo entonces abrir tráfico. Si no se dispone de inventario actual e íntegro,
    el restore NO está habilitado para servir cuentas: reconstruir los borrados

@@ -163,15 +163,8 @@ async def reconcile(session, bundle):
             ),
             {"pid": pid, "pks": row["source_profile_pks"]},
         )
-        if row["consumer"] == "swissjob-shadow":
-            await session.execute(
-                sa.text(
-                    "UPDATE shadow_change_log SET payload='{}'::jsonb "
-                    "WHERE src_table='user_profiles' AND "
-                    "(payload->>'user_id'=:ref OR pk=ANY(:pks))"
-                ),
-                {"ref": row["external_ref"], "pks": row["source_profile_pks"]},
-            )
+        # core0063 retiró `shadow_change_log`: un volcado anterior la trae, pero
+        # el paso 3 del procedimiento (migraciones vigentes) la elimina antes.
         if await session.scalar(
             sa.text("SELECT 1 FROM profiles WHERE id=:pid"), {"pid": pid}
         ):

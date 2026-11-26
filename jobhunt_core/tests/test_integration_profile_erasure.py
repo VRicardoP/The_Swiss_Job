@@ -1,4 +1,4 @@
-"""Live erasure: owned, transactional, retryable, and irreversible to stale CDC."""
+"""Live erasure: owned, transactional, retryable, and irreversible to stale writers."""
 
 import asyncio
 import uuid
@@ -8,7 +8,7 @@ import pytest
 import sqlalchemy as sa
 
 from jobhunt_core import profiles
-from jobhunt_core.erasure import erase_owned_profile
+from jobhunt_core.erasure import erase_external_identity, erase_owned_profile
 from jobhunt_core.tests import test_integration_api as tia
 from jobhunt_core.tests.test_integration_api_saved_searches import (
     db,  # noqa: F401  (fixture/marca de pytest: se importa para que la resuelva por nombre)
@@ -99,46 +99,39 @@ def test_owned_erasure_retry_and_cross_tenant(db):  # noqa: F811  (la fixture, n
     )
 
 
-def test_cdc_buffer_scrub_and_future_capture(db):  # noqa: F811  (la fixture, no una redefinición)
+def test_swissjob_erasure_no_longer_needs_the_capture_staging(db):  # noqa: F811  (la fixture, no una redefinición)
+    """D3: core0063 retiró `shadow_change_log`. Borrar un perfil de SwissJob,
+    con perfil o sin él, ya no puede depender de esa tabla: antes los dos
+    caminos la bloqueaban y fallaban con «relation does not exist»."""
     f, made = db
 
     async def run():
         async with f() as s:
+            assert (
+                await s.scalar(sa.text("SELECT to_regclass('shadow_change_log')"))
+                is None
+            )
             cid = await profiles.ensure_consumer(s, "swissjob-shadow")
-            ref = str(uuid.uuid4())
-            pid = await profiles.upsert_profile(s, cid, ref)
-            pk = str(uuid.uuid4())
-            base = 900000000 + uuid.uuid4().int % 100000000
-            sql = sa.text(
-                "INSERT INTO shadow_change_log "
-                "(lsn,seq_in_tx,src_table,op,pk,payload) VALUES "
-                "(:l,0,'user_profiles','I',:pk,CAST(:body AS jsonb))"
-            )
-            import json
-
-            payload = json.dumps({"user_id": ref, "cv_text": "private synthetic CV"})
-            await s.execute(sql, {"l": base, "pk": pk, "body": payload})
-            await erase_owned_profile(s, cid, pid)
-            # A later full capture and an omitted-user_id update are scrubbed.
-            await s.execute(sql, {"l": base + 1, "pk": pk, "body": payload})
-            await s.execute(
-                sql,
-                {"l": base + 2, "pk": pk, "body": '{"cv_text":"late synthetic CV"}'},
-            )
-            rows = (
-                (
-                    await s.execute(
-                        sa.text("SELECT payload FROM shadow_change_log WHERE pk=:pk"),
-                        {"pk": pk},
-                    )
-                )
-                .scalars()
-                .all()
-            )
-            assert rows == [{}, {}, {}]
-            await s.rollback()  # synthetic CDC fixture, no real user affected
+            pid = await profiles.upsert_profile(s, cid, str(uuid.uuid4()))
+            assert await erase_owned_profile(s, cid, pid)
+            assert await erase_external_identity(s, cid, str(uuid.uuid4()))
+            await s.rollback()  # synthetic identities, no real user affected
 
     asyncio.run(run())
+
+
+def test_retired_cdc_replica_cannot_acknowledge(db):  # noqa: F811  (la fixture, no una redefinición)
+    """D3: `swissjob-cdc` dejó de ser una réplica. La validación va antes de
+    buscar el recibo, así que un tenant cualquiera distingue los dos casos:
+    la réplica retirada es 400 y la viva llega a buscar su recibo (404)."""
+    f, made = db
+    token, _, _ = _seed_profile(f, made, scopes=["profiles:write"])
+    url = f"/v1/profile-erasures/{uuid.uuid4()}/acks/"
+    retired = tia._api(f, url + "swissjob-cdc", token=token, method="POST")
+    assert retired.status_code == 400, retired.text
+    assert retired.json()["code"] == "invalid_replica"
+    live = tia._api(f, url + "swissjob-live", token=token, method="POST")
+    assert live.status_code == 404, live.text
 
 
 def test_erasure_inventory_owned_and_paginated(db):  # noqa: F811  (la fixture, no una redefinición)
@@ -216,53 +209,6 @@ def test_repeatable_read_cannot_recreate_erased_identity(db, direct):  # noqa: F
                 else:
                     await profiles.upsert_profile(stale, cid, "user-1")
             await stale.rollback()
-
-    asyncio.run(run())
-
-
-def test_repeatable_read_capture_cannot_restore_erased_payload(db):  # noqa: F811  (la fixture, no una redefinición)
-    from jobhunt_core.erasure import erase_external_identity
-    import json
-
-    f, made = db
-
-    async def run():
-        ref = str(uuid.uuid4())
-        async with f() as seed:
-            cid = await profiles.ensure_consumer(seed, "swissjob-shadow")
-            await seed.commit()
-        async with f() as stale, f() as eraser:
-            await stale.execute(
-                sa.text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-            )
-            await stale.execute(
-                sa.text("SELECT count(*) FROM profile_erasure_receipts")
-            )
-            await erase_external_identity(eraser, cid, ref)
-            await eraser.commit()
-            with pytest.raises(sa.exc.DBAPIError, match="serialize"):
-                await stale.execute(
-                    sa.text(
-                        "INSERT INTO shadow_change_log(lsn,seq_in_tx,src_table,op,pk,payload) "
-                        "VALUES (:lsn,0,'user_profiles','I',:pk,CAST(:payload AS jsonb))"
-                    ),
-                    {
-                        "lsn": 900000000 + uuid.uuid4().int % 100000000,
-                        "pk": str(uuid.uuid4()),
-                        "payload": json.dumps(
-                            {"user_id": ref, "cv_text": "synthetic secret"}
-                        ),
-                    },
-                )
-            await stale.rollback()
-        async with f() as cleanup:
-            await cleanup.execute(
-                sa.text(
-                    "DELETE FROM profile_erasure_receipts WHERE consumer_id=:cid AND external_ref=:ref"
-                ),
-                {"cid": cid, "ref": ref},
-            )
-            await cleanup.commit()
 
     asyncio.run(run())
 

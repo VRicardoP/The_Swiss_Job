@@ -18,8 +18,8 @@ from services.profiles.core_client import default_client_factory
 
 logger = logging.getLogger(__name__)
 
-# Pausa entre pasadas del reconciliador. Corre en cada proceso de gunicorn y en
-# swissjob-erasure-cdc, y cada pasada lee recibos y reescribe acuses en el core:
+# Pausa entre pasadas del reconciliador. Corre en cada proceso de gunicorn (la
+# copia `swissjob-erasure-cdc` se retiró en D3), y cada pasada lee recibos y reescribe acuses en el core:
 # a 30 s eran ~17.000 peticiones/día para un recibo. No hay plazo de propagación
 # comprometido (BORRADO_COORDINADO_E13.md, COTAS_Y_DECISIONES.md).
 ERASURE_POLL_SECONDS = 900

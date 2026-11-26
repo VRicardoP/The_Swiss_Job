@@ -865,7 +865,10 @@ async def acknowledge_profile_erasure(
     session=Depends(get_session),
     principal: Principal = Depends(require_scope("profiles:write")),
 ):
-    if replica_id not in {"swissjob-live", "swissjob-cdc"}:
+    # D3 (2026-11-26): `swissjob-cdc` era la copia de la CDC sombra y se retiró
+    # con ella. Su ack histórico sigue en la tabla (el CHECK de core0046 lo
+    # admite); uno nuevo es una réplica que ya no existe.
+    if replica_id != "swissjob-live":
         raise ApiError(400, "invalid_replica", "réplica desconocida")
     receipt = await session.scalar(
         sa.text(
