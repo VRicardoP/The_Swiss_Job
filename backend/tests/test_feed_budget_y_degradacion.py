@@ -66,6 +66,94 @@ async def test_sin_presupuesto_agotado_no_estorba(db_session, monkeypatch):
     assert "presupuesto" not in str(fallo.value)
 
 
+class _FabricaLenta:
+    """Abre un cliente cuya petición tarda `demora` segundos."""
+
+    def __init__(self, demora):
+        self._demora = demora
+
+    def __call__(self):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return False
+
+    async def request(self, *_args, **_kwargs):
+        await asyncio.sleep(self._demora)
+        raise AssertionError("cliente falso: no responde de verdad")
+
+
+@pytest.fixture
+def _presupuesto_corto(monkeypatch):
+    """A-09: con el timeout por petición de PRODUCCIÓN (120 s), el presupuesto
+    total de colegios, búsquedas guardadas y documentos era 240 s. Ahora es
+    `CORE_FEED_TOTAL_BUDGET_S`, el mismo que el del feed."""
+    monkeypatch.setattr(settings, "CORE_HTTP_TIMEOUT_SECONDS", 120.0)
+    monkeypatch.setattr(settings, "CORE_FEED_TOTAL_BUDGET_S", 0.1)
+    monkeypatch.setattr(settings, "CORE_CONSUMER_KEY", "k.s")
+
+
+async def _corta_a_tiempo(corrutina, error):
+    inicio = asyncio.get_running_loop().time()
+    with pytest.raises(error):
+        await corrutina
+    transcurrido = asyncio.get_running_loop().time() - inicio
+    assert transcurrido < 1.0, transcurrido
+
+
+@pytest.mark.asyncio
+async def test_colegios_usan_el_presupuesto_total(_presupuesto_corto, monkeypatch):
+    from services.schools.http_client import SchoolClient
+    from services.schools.port import CoreUnavailableError as SchoolError
+
+    cliente = SchoolClient(client_factory=_FabricaLenta(2.0))
+    await _corta_a_tiempo(cliente.request("GET", "/x"), SchoolError)
+
+    async def pagina_lenta(*_a, **_k):
+        await asyncio.sleep(2.0)
+
+    monkeypatch.setattr(cliente, "request", pagina_lenta)
+    await _corta_a_tiempo(cliente.pages("/x"), SchoolError)
+
+
+@pytest.mark.asyncio
+async def test_documentos_usan_el_presupuesto_total(_presupuesto_corto):
+    from services.documents.core_client import CoreDocuments
+    from services.documents.port import CoreUnavailableError as DocumentsError
+
+    documentos = CoreDocuments(client_factory=_FabricaLenta(2.0))
+
+    async def usar():
+        async with documentos._client() as client:
+            await client.request("GET", "/x")
+
+    await _corta_a_tiempo(usar(), DocumentsError)
+
+
+@pytest.mark.asyncio
+async def test_busquedas_guardadas_usan_el_presupuesto_total(
+    _presupuesto_corto, monkeypatch
+):
+    from services import saved_searches
+
+    async def perfil(*_a):
+        return uuid.uuid4()
+
+    monkeypatch.setattr(saved_searches, "resolve_core_profile_id", perfil)
+    busquedas = saved_searches.CoreSavedSearches(
+        None, uuid.uuid4(), client_factory=_FabricaLenta(2.0)
+    )
+
+    async def usar():
+        async with busquedas._client() as (client, _pid):
+            await client.request("GET", "/x")
+
+    await _corta_a_tiempo(usar(), saved_searches.SearchCoreError)
+
+
 def test_el_recorte_no_muta_lo_que_recorta():
     """La caché declara que sus items NO se mutan jamás: se copia."""
     from services.matching.core_client import _DESCRIPCION_MAX, _recortado

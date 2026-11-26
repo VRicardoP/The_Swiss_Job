@@ -110,9 +110,7 @@ class CoreDocuments:
     async def _client(self):
         try:
             # End-to-end bound, not one fresh timeout per page.
-            async with asyncio.timeout(
-                max(float(settings.CORE_HTTP_TIMEOUT_SECONDS), 1) * 2
-            ):
+            async with asyncio.timeout(settings.CORE_FEED_TOTAL_BUDGET_S):
                 async with self._client_factory() as client:
                     yield client
         except (httpx.HTTPError, TimeoutError, ValueError, TypeError):

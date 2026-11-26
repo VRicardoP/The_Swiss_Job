@@ -259,6 +259,9 @@ class Settings(BaseSettings):
     # acota cada petición; esto acota la suma. Sin él, un core lento dejaba
     # ocupado el worker de gunicorn hasta que terminara —y sólo hay dos—.
     # Agotarlo da un 503, que el consumidor ya sabe tratar.
+    # A-09: acota también la operación entera de colegios, búsquedas guardadas
+    # y documentos. Derivarlo de CORE_HTTP_TIMEOUT_SECONDS (×2) daba 240 s en
+    # producción, donde ese timeout vale 120.
     CORE_FEED_TOTAL_BUDGET_S: float = 60.0
     CORE_HTTP_TIMEOUT_SECONDS: float = 5.0
     # Opt-in after aggregate parity has been measured against the legacy UI.
