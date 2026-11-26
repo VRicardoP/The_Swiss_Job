@@ -1,0 +1,24 @@
+Thu Nov 26 07:29:00 CET 2026
+ventana_s|404555|2026-11-21 14:06:27.71678+00
+total|138091|2693172
+176|37318|212033|27|WITH ann AS MATERIALIZED ( SELECT v.id AS vacancy_id, v.current_offer_revision_id AS offer_revision_id, $6 - (oe.vector 
+10097|23081|2286|17|WITH fb AS (SELECT DISTINCT ON (vacancy_id) vacancy_id,intent.feedback FROM ( SELECT _fs.vacancy_id,CASE WHEN _fs.dismis
+792|15475|19539|11|WITH source_rows AS MATERIALIZED ( SELECT i.id AS incarnation_id, sl.external_id, i.url, i.apply_url, i.first_seen_at, i
+10617|14402|1357|10|SELECT v.id AS vacancy_id, sl.source_id, $7 - (oe.vector <=> (SELECT oe2.vector FROM vacancies v2 JOIN offer_revisions o
+30547|13455|440|10|WITH fb AS (SELECT DISTINCT ON (vacancy_id) vacancy_id,intent.feedback FROM ( SELECT _fs.vacancy_id,CASE WHEN _fs.dismis
+1237|9906|8008|7|SELECT DISTINCT ON (o.text_hash) o.text_hash, o.content FROM vacancies v JOIN offer_revisions o ON o.id = v.current_offe
+3851|3993|1037|3|SELECT v.id AS vid, s.name AS source, sl.external_id, i.url, i.apply_url, i.first_seen_at, i.last_seen_at FROM vacancies
+3851|2738|711|2|SELECT v.id, o.content FROM vacancies v JOIN offer_revisions o ON o.id = v.current_offer_revision_id WHERE v.id = ANY($1
+973|2130|2189|2|SELECT v.id, v.created_at FROM vacancies v JOIN offer_revisions o ON o.id = v.current_offer_revision_id JOIN (WITH sourc
+19959|1802|90|1|INSERT INTO offer_embeddings (text_hash, model_id, vector) VALUES ($1, $2, CAST($3 AS vector)) ON CONFLICT (text_hash, m
+2528|1575|623|1|SELECT e.vacancy_id, e.score_final, e.id AS eval_id, e.scores, e.offer_revision_id, s.saved_at, (SELECT intent.feedback 
+89|1556|17479|1|SELECT v.id AS vacancy_id, v.current_offer_revision_id AS offer_revision_id, $5 - (oe.vector <=> CAST($1 AS vector)) AS 
+5|894|178884|1|WITH corpus AS ( SELECT v.id, sl.source_id, orv.text_hash AS th, orv.content->>$5 AS title, btrim(regexp_replace(regexp_
+2866|812|283|1|SELECT e.id, e.eval_key, e.explanation, m.name AS model_name, m.version AS model_version, p.name AS policy_name, p.promp
+530|753|1421|1|WITH candidates AS MATERIALIZED ( SELECT i.id AS incarnation_id, i.last_seen_at, latest.published_at, latest.source_orde
+346|732|2115|1|SELECT e.vacancy_id, e.score_final, e.id AS eval_id, e.scores, e.offer_revision_id, s.saved_at, (SELECT intent.feedback 
+1|699|698680|1|COPY jobhunt.source_listing_revisions (id, incarnation_id, content_hash, raw, fetched_at) TO stdout
+3851|602|156|0|SELECT i.vacancy_id, s.name AS source, sl.external_id, i.url, i.apply_url FROM source_listing_incarnations i JOIN source
+346|431|1245|0|WITH fb AS (SELECT DISTINCT ON (vacancy_id) vacancy_id,intent.feedback FROM ( SELECT _fs.vacancy_id,CASE WHEN _fs.dismis
+120|406|3387|0|SELECT v.id, sl.source_id, orv.created_at, coalesce(orv.content->>$7, $8) AS title, coalesce(orv.content->>$9, $10) AS l
+respaldo_off|88
