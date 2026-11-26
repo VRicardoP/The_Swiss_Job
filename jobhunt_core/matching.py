@@ -105,6 +105,9 @@ _LEXICAL_WEIGHT = 1.15
 # aún no tienen embedding. RRF evita comparar escalas incompatibles y el peso
 # léxico, apenas superior, desempata a favor de coincidencias explícitas de
 # título/skills cuando solo una rama recupera la oferta.
+# `ann_rows` es el tamaño REAL del brazo semántico: una ventana se evalúa antes
+# del LIMIT final, así que cuenta las filas de `ann` y no las del corte
+# fusionado, donde las solo-léxicas ocupan plazas (tarea 2.1, R1).
 HYBRID_CANDIDATES_SQL = f"""
 WITH ann AS MATERIALIZED (
     SELECT v.id AS vacancy_id,
@@ -146,7 +149,8 @@ SELECT COALESCE(a.vacancy_id, l.vacancy_id) AS vacancy_id,
          + {_LEXICAL_WEIGHT} *
            COALESCE(1.0 / ({_RRF_K} + l.lexical_rank), 0.0)
        ) * (100.0 * ({_RRF_K} + 1) / (1.0 + {_LEXICAL_WEIGHT}))
-         AS rank_score
+         AS rank_score,
+       count(a.vacancy_id) OVER () AS ann_rows
 FROM ann a
 FULL OUTER JOIN lexical l
   ON l.vacancy_id = a.vacancy_id
@@ -988,11 +992,18 @@ def _semantic_arm_filled(filas, target: int, hybrid: bool) -> bool:
     la unión mientras el ANN volvió medio vacío por el scan acotado — y ese
     underfill semántico es EXACTAMENTE el que pierde a los relevantes sin señal
     léxica (ofertas sin descripción, términos fuera de la consulta). El brazo
-    ANN está lleno solo si aporta por sí mismo tantas filas como el objetivo."""
+    ANN está lleno solo si aporta por sí mismo tantas filas como el objetivo.
+
+    Se mide con `ann_rows` (tamaño del CTE `ann`, igual en todas las filas) y
+    no contando `semantic_rank` en `filas`: esas ya vienen fusionadas y
+    cortadas por `LIMIT :k`, y las solo-léxicas ocupan parte del corte, así
+    que la cuenta no llegaba nunca al objetivo y el respaldo exacto se
+    disparaba siempre (85 de 85 evaluaciones el 2026-11-25, tarea 2.1)."""
     if not hybrid:
         return True
-    semanticas = sum(1 for c in filas if c.semantic_rank is not None)
-    return semanticas >= target
+    if not filas:
+        return False
+    return filas[0].ann_rows >= target
 
 
 def _lexical_query(content: dict) -> str:
@@ -1611,6 +1622,13 @@ async def _fetch_candidates(session, candidate_sql, params, limit, target, hybri
 
     if len(candidates) < target or not _semantic_arm_filled(candidates, target, hybrid):
         # Inanición REAL del scan acotado: el exacto responde siempre bien.
+        logger.warning(
+            "matching: respaldo exacto profile=%s rows=%d ann_rows=%s target=%d",
+            params.get("pid"),
+            len(candidates),
+            candidates[0].ann_rows if hybrid and candidates else None,
+            target,
+        )
         await session.execute(sa.text("SET LOCAL enable_indexscan = off"))
         await session.execute(sa.text("SET LOCAL enable_bitmapscan = off"))
         candidates = (await session.execute(sa.text(candidate_sql), params)).all()

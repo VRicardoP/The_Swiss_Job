@@ -10,10 +10,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jobhunt_core import embeddings, profiles
 from jobhunt_core.config import settings
+from jobhunt_core.harvest.sink import RawListingSink
 from jobhunt_core.tasks import matching as matching_tasks
 from jobhunt_core.tests import dbcleanup
 from jobhunt_core.tests.test_integration_matching import (
     DirectionalBackend,
+    _listing,
     _setup,
 )
 
@@ -152,3 +154,113 @@ def test_all_consumers_share_deterministic_fair_recovery(db):
     assert asyncio.run(_targets(factory)) == [
         second if expected_first == first else first
     ]
+
+
+# Tarea 1.3 (R4): el anti-join de ofertas pendientes no se repite mientras la
+# generación del corpus siga siendo la misma en la que devolvió cero filas.
+
+
+@pytest.fixture()
+def offer_queries(monkeypatch):
+    """Cuenta las ejecuciones REALES de `pending_offer_texts` por modelo."""
+    calls = []
+    real = embeddings.pending_offer_texts
+
+    async def counting(session, model_id, limit=200):
+        calls.append(model_id)
+        return await real(session, model_id, limit=limit)
+
+    monkeypatch.setattr(embeddings, "pending_offer_texts", counting)
+    return calls
+
+
+def _drain(factory):
+    embeddings.set_backend_factory(lambda _name, _version: DirectionalBackend())
+    try:
+        asyncio.run(matching_tasks._drain_embeddings(factory))
+    finally:
+        embeddings.set_backend_factory(None)
+
+
+def _bump_generation(factory):
+    async def go():
+        async with factory() as session:
+            await session.execute(
+                sa.text(
+                    "UPDATE corpus_generation SET generation = generation + 1 "
+                    "WHERE id = 1"
+                )
+            )
+            await session.commit()
+
+    asyncio.run(go())
+
+
+def test_drain_skips_offer_query_while_generation_is_unchanged(db, offer_queries):
+    factory, created = db
+    _pid, model_id, _policy_id, _vacancies = _setup(
+        factory, created, ["backend python"]
+    )
+    offer_queries.clear()
+
+    _drain(factory)  # la generación cambió al guardar los vectores: consulta
+    _drain(factory)  # nada cambió desde la respuesta vacía: no consulta
+
+    assert offer_queries.count(model_id) == 1
+
+
+def test_drain_queries_offers_again_after_generation_bump(db, offer_queries):
+    factory, created = db
+    _pid, model_id, _policy_id, _vacancies = _setup(
+        factory, created, ["backend python"]
+    )
+    _drain(factory)
+    offer_queries.clear()
+
+    _bump_generation(factory)
+    _drain(factory)
+
+    assert offer_queries.count(model_id) == 1
+
+
+def test_new_offer_after_generation_bump_gets_embedded(db, offer_queries):
+    factory, created = db
+    _pid, model_id, _policy_id, _vacancies = _setup(
+        factory, created, ["backend python"]
+    )
+    _drain(factory)
+    _drain(factory)  # marca puesta: la siguiente consulta depende de la generación
+
+    async def harvest_new_offer():
+        # El alta de la vacante sube la generación por su trigger (core0022).
+        async with factory() as session:
+            await RawListingSink().handle(
+                session,
+                str(created["scopes"][0]),
+                (_listing("new-1", "kubernetes engineer"),),
+            )
+            await session.commit()
+
+    async def vectors_missing():
+        async with factory() as session:
+            return (
+                await session.execute(
+                    sa.text(
+                        "SELECT count(*) FROM vacancies v "
+                        "JOIN offer_revisions o ON o.id = v.current_offer_revision_id "
+                        "JOIN source_listing_incarnations i ON i.vacancy_id = v.id "
+                        "JOIN source_listings l ON l.id = i.source_listing_id "
+                        "LEFT JOIN offer_embeddings e "
+                        "  ON e.text_hash = o.text_hash AND e.model_id = :m "
+                        "WHERE l.source_id = :src AND e.text_hash IS NULL"
+                    ),
+                    {"m": model_id, "src": created["sources"][0]},
+                )
+            ).scalar_one()
+
+    asyncio.run(harvest_new_offer())
+    assert asyncio.run(vectors_missing()) == 1
+
+    _drain(factory)
+
+    assert asyncio.run(vectors_missing()) == 0

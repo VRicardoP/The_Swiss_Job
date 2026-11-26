@@ -44,8 +44,9 @@ def test_matching_task_uses_canonical_limit():
 # accidental del JSON expulsaba 'teacher' de la consulta de la persona 1.
 # --------------------------------------------------------------------------
 class _Fila:
-    def __init__(self, semantic_rank):
+    def __init__(self, semantic_rank, ann_rows):
         self.semantic_rank = semantic_rank
+        self.ann_rows = ann_rows
 
 
 def test_un_rol_repetido_solo_en_el_cv_entra_en_la_consulta_v2():
@@ -123,11 +124,20 @@ def test_v1_permanece_inmutable():
 def test_el_fts_lleno_no_oculta_el_underfill_semantico():
     """El caso adversarial de la auditoría R8 §2.2.4: la unión llega al target
     pero el brazo ANN volvió medio vacío. El control combinado (len>=target)
-    lo daba por bueno; la suficiencia POR BRAZO lo detecta."""
-    llenas_por_fts = [_Fila(None)] * 10  # todo vino del FTS
-    mixtas = [_Fila(1), _Fila(2), _Fila(None)] + [_Fila(i) for i in range(3, 11)]
+    lo daba por bueno; la suficiencia POR BRAZO lo detecta.
+
+    Tarea 2.1 (2026-11-26): la suficiencia se mide con `ann_rows`, el tamaño
+    del brazo ANN ANTES del corte. Contar `semantic_rank` en el corte fusionado
+    daba siempre corto en cuanto una solo-léxica ocupaba una plaza."""
+    llenas_por_fts = [_Fila(None, 0)] * 10  # todo vino del FTS
+    # El brazo ANN trajo 10, pero 3 solo-léxicas mejor situadas ocupan plazas
+    # del corte: en `filas` solo quedan 7 con `semantic_rank`.
+    corte_mixto = [_Fila(None, 10)] * 3 + [_Fila(i, 10) for i in range(1, 8)]
+    ann_corto = [_Fila(i, 5) for i in range(1, 6)] + [_Fila(None, 5)] * 5
     assert matching._semantic_arm_filled(llenas_por_fts, 10, hybrid=True) is False
-    assert matching._semantic_arm_filled(mixtas, 10, hybrid=True) is True
+    assert matching._semantic_arm_filled(corte_mixto, 10, hybrid=True) is True
+    assert matching._semantic_arm_filled(ann_corto, 10, hybrid=True) is False
+    assert matching._semantic_arm_filled([], 10, hybrid=True) is False
     # En modo no híbrido el control combinado ya basta: no se duplica.
     assert matching._semantic_arm_filled(llenas_por_fts, 10, hybrid=False) is True
 
